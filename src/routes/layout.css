@@ -1,3 +1,18 @@
 @import 'tailwindcss';
 @plugin '@tailwindcss/forms';
 @plugin '@tailwindcss/typography';
+
+body {
+	background-color: #0a0a0f;
+	color: #f1f5f9;
+	font-family:
+		system-ui,
+		-apple-system,
+		sans-serif;
+	min-height: 100vh;
+}
+
+/* Tailwind forms plugin resets — override for dark selects */
+select {
+	color-scheme: dark;
+}
