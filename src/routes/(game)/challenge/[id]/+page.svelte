@@ -4,6 +4,16 @@
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
+	const teamColors: Record<string, string> = {
+		blue: '#3b82f6',
+		yellow: '#eab308',
+		green: '#22c55e',
+		red: '#ef4444',
+		indigo: '#6366f1',
+		black: '#1e293b'
+	};
+	const teamHex = $derived(teamColors[data.team.color] ?? '#ef4444');
+
 	// ── Audio player ─────────────────────────────────────────────────────────
 	let audio = $state<HTMLAudioElement | undefined>(undefined);
 	let currentTime = $state(0);
@@ -60,7 +70,8 @@
 	<div class="mx-auto min-h-screen max-w-lg p-4">
 		<div class="pb-6 pt-4">
 			<span
-				class="rounded-full bg-red-600 px-3 py-1 text-xs font-bold uppercase tracking-widest text-white"
+				class="rounded-full px-3 py-1 text-xs font-bold uppercase tracking-widest text-white"
+				style="background-color: {teamHex};"
 			>
 				{data.team.label}
 			</span>
@@ -147,14 +158,14 @@
 		</div>
 
 		<!-- Total score card -->
-		<div class="mb-6 rounded-2xl border border-red-600/40 bg-red-900/20 p-6 text-center">
+		<div class="mb-6 rounded-2xl border p-6 text-center" style="border-color: {teamHex}40; background-color: {teamHex}1a;">
 			<div class="mb-1 text-sm text-zinc-400">Total Score</div>
 			<div class="tabular-nums text-6xl font-black text-white">{result.score}</div>
 			<div class="mt-1 text-sm text-zinc-400">out of 20 pts</div>
 		</div>
 
 		<div class="text-center">
-			<a href="/leaderboard" class="text-sm text-red-400 underline underline-offset-2"
+			<a href="/leaderboard" class="text-sm underline underline-offset-2" style="color: {teamHex};"
 				>View leaderboard →</a
 			>
 		</div>
@@ -164,7 +175,8 @@
 	<div class="mx-auto min-h-screen max-w-lg p-4">
 		<div class="pb-6 pt-4">
 			<span
-				class="rounded-full bg-red-600 px-3 py-1 text-xs font-bold uppercase tracking-widest text-white"
+				class="rounded-full px-3 py-1 text-xs font-bold uppercase tracking-widest text-white"
+				style="background-color: {teamHex};"
 			>
 				{data.team.label}
 			</span>
@@ -179,7 +191,8 @@
 				<button
 					type="button"
 					onclick={togglePlay}
-					class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-red-600 transition-colors hover:bg-red-500"
+					class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full transition-colors hover:opacity-90"
+					style="background-color: {teamHex};"
 					aria-label={isPlaying ? 'Pause' : 'Play'}
 				>
 					{#if isPlaying}
@@ -205,7 +218,8 @@
 						onclick={seek}
 					>
 						<div
-							class="h-full rounded-full bg-red-500 transition-all duration-100"
+							class="h-full rounded-full transition-all duration-100"
+								style="background-color: {teamHex};"
 							style="width: {progressPct}%"
 						></div>
 					</button>
@@ -290,7 +304,8 @@
 					max="2025"
 					value={selectedYear}
 					oninput={(e) => (selectedYear = +(e.currentTarget as HTMLInputElement).value)}
-					class="w-full accent-red-500"
+					class="w-full"
+					style="accent-color: {teamHex};"
 				/>
 				<div class="mt-1 flex justify-between text-xs text-zinc-600">
 					<span>1950</span>
@@ -302,7 +317,8 @@
 			<button
 				type="submit"
 				disabled={submitting}
-				class="w-full rounded-xl bg-red-600 py-4 text-lg font-black uppercase tracking-widest text-white transition-colors hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
+				class="w-full rounded-xl py-4 text-lg font-black uppercase tracking-widest text-white transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+				style="background-color: {teamHex};"
 			>
 				{submitting ? 'Submitting…' : 'Submit'}
 			</button>

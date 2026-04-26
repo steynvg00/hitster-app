@@ -1,4 +1,4 @@
-import { error, fail } from '@sveltejs/kit';
+import { error, fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { createPublicClient, createAdminClient } from '$lib/server/supabase';
 
@@ -26,7 +26,9 @@ function scoreSubmission(
 	return { breakdown, total: breakdown.artist + breakdown.title + breakdown.year };
 }
 
-export const load: PageServerLoad = async ({ params, cookies }) => {
+export const load: PageServerLoad = async ({ params, cookies, locals }) => {
+	if (!locals.teamId) redirect(302, `/join?redirect=/challenge/${params.id}`);
+
 	const supabase = createPublicClient(cookies);
 
 	const { data: challenge, error: challengeErr } = await supabase
@@ -67,10 +69,13 @@ export const load: PageServerLoad = async ({ params, cookies }) => {
 		.select('*')
 		.eq('challenge_id', params.id);
 
-	// Hardcoded to Red team for session 3 — replaced by cookie lookup in session 4
-	const { data: team } = await supabase.from('teams').select('*').eq('color', 'red').single();
+	const { data: team } = await supabase
+		.from('teams')
+		.select('*')
+		.eq('id', locals.teamId)
+		.single();
 
-	if (!team) error(500, 'Red team not found — run supabase/seed.sql first');
+	if (!team) redirect(302, '/join');
 
 	// Check if this team already submitted
 	const { data: existing } = await supabase
