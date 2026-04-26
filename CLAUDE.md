@@ -88,16 +88,44 @@ src/
 5. Randomizer entry card
 6. Stretch: Battle variant, team-built rounds
 
+## NFC sticker URLs
+Write these URLs to physical NFC stickers with NFC Tools (or any NFC writer app):
+
+| Sticker purpose       | URL to write                                      |
+|-----------------------|---------------------------------------------------|
+| Team Blue identity    | `https://<domain>/nfc/team-blue`                  |
+| Team Yellow identity  | `https://<domain>/nfc/team-yellow`                |
+| Team Green identity   | `https://<domain>/nfc/team-green`                 |
+| Team Red identity     | `https://<domain>/nfc/team-red`                   |
+| Team Indigo identity  | `https://<domain>/nfc/team-indigo`                |
+| Team Black identity   | `https://<domain>/nfc/team-black`                 |
+| Round 1 station       | `https://<domain>/nfc/station-mainstage-1`        |
+| Randomizer entry card | `https://<domain>/nfc/random-entry`               |
+
+Replace `<domain>` with the Vercel deployment URL (e.g. `hitster-app-xyz.vercel.app`).
+
+To add a new challenge station:
+1. Insert a row into `nfc_tags`: `id = 'station-<name>'`, `purpose = 'challenge'`, `challenge_id = <uuid>`
+2. Write `https://<domain>/nfc/station-<name>` to the sticker.
+
+## Cookie
+- Name: `hitster_team` — httpOnly, `sameSite=lax`, 7-day expiry
+- Value: team UUID signed with HMAC-SHA256 (key = `COOKIE_SECRET` env var)
+- Set by: `/nfc/[tag]` (team_identity or team_entry tap) or `/join` (manual picker)
+- Read by: `hooks.server.ts` → `locals.teamId` (available in every load function)
+
 ## Session log
 | Date       | Done |
 |------------|------|
 | 2026-04-26 | SvelteKit + TypeScript + Tailwind v4 scaffold; folder structure; TypeScript types; git + GitHub repo created |
 | 2026-04-26 | Supabase project + schema migration; Supabase client (public + admin); Vercel project linked |
 | 2026-04-26 | Session 3 vertical slice: seed data, challenge page (audio/dropdowns/year/scoring), leaderboard (realtime), dark theme |
+| 2026-04-26 | Session 4 NFC + team identity: cookie helper (HMAC-signed), hooks.server.ts, NFC handler (all 3 tag types), /join picker, /team home, challenge wired to real team, NFC seed migration |
 
 ## Next session
-- Wire up NFC team-identity cookie: read `team_color` from cookie in challenge load, fall back to Red if missing
-- Replace hardcoded Red team in `+page.server.ts` load function (TODO comment in place)
-- Fix database.ts: run `npx supabase gen types typescript --project-id tyeejaqahrslrpwfozex` and replace the hand-written types (important for accurate FK relationships)
+- Run `0002_nfc_tags.sql` in Supabase SQL editor to seed the NFC tag rows
+- Add `COOKIE_SECRET` to Vercel environment variables (copy from `.env`)
+- Program a real NFC sticker with NFC Tools → tap → verify cookie + /team page
 - Swap placeholder audio URL in seed for a real clip
+- Fix database.ts: run `npx supabase gen types typescript --project-id tyeejaqahrslrpwfozex` and replace the hand-written types (important for accurate FK relationships)
 - Test on mobile (Bluetooth speaker flow)
