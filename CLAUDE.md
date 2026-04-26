@@ -92,8 +92,12 @@ src/
 | Date       | Done |
 |------------|------|
 | 2026-04-26 | SvelteKit + TypeScript + Tailwind v4 scaffold; folder structure; TypeScript types; git + GitHub repo created |
+| 2026-04-26 | Supabase project + schema migration; Supabase client (public + admin); Vercel project linked |
+| 2026-04-26 | Session 3 vertical slice: seed data, challenge page (audio/dropdowns/year/scoring), leaderboard (realtime), dark theme |
 
 ## Next session
-- Set up Supabase project, create schema (tables listed above), generate TypeScript types from DB
-- Wire up Supabase client in `src/lib/server/supabase.ts`
-- Set up Vercel project linked to GitHub repo
+- Wire up NFC team-identity cookie: read `team_color` from cookie in challenge load, fall back to Red if missing
+- Replace hardcoded Red team in `+page.server.ts` load function (TODO comment in place)
+- Fix database.ts: run `npx supabase gen types typescript --project-id tyeejaqahrslrpwfozex` and replace the hand-written types (important for accurate FK relationships)
+- Swap placeholder audio URL in seed for a real clip
+- Test on mobile (Bluetooth speaker flow)
