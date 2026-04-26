@@ -219,8 +219,7 @@
 					>
 						<div
 							class="h-full rounded-full transition-all duration-100"
-								style="background-color: {teamHex};"
-							style="width: {progressPct}%"
+							style="background-color: {teamHex}; width: {progressPct}%"
 						></div>
 					</button>
 					<div class="font-mono text-xs text-zinc-500">{timeLabel}</div>
