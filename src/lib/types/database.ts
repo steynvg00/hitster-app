@@ -1,5 +1,6 @@
 // Auto-replaceable: run `npx supabase gen types typescript --project-id <id>`
 // and paste the output here to keep this in sync with your live schema.
+// Note: @supabase/supabase-js 2.60+ requires Relationships: [] on every table.
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
@@ -34,6 +35,7 @@ export type Database = {
 					score?: number;
 					created_at?: string;
 				};
+				Relationships: [];
 			};
 			players: {
 				Row: {
@@ -54,6 +56,7 @@ export type Database = {
 					name?: string;
 					created_at?: string;
 				};
+				Relationships: [];
 			};
 			tracks: {
 				Row: {
@@ -86,6 +89,7 @@ export type Database = {
 					vocal_source?: string | null;
 					created_at?: string;
 				};
+				Relationships: [];
 			};
 			clips: {
 				Row: {
@@ -112,6 +116,7 @@ export type Database = {
 					position?: number | null;
 					created_at?: string;
 				};
+				Relationships: [];
 			};
 			challenges: {
 				Row: {
@@ -138,6 +143,7 @@ export type Database = {
 					is_active?: boolean;
 					created_at?: string;
 				};
+				Relationships: [];
 			};
 			challenge_tracks: {
 				Row: {
@@ -164,6 +170,7 @@ export type Database = {
 					sort_order?: number;
 					created_at?: string;
 				};
+				Relationships: [];
 			};
 			nfc_tags: {
 				Row: {
@@ -187,6 +194,7 @@ export type Database = {
 					challenge_id?: string | null;
 					created_at?: string;
 				};
+				Relationships: [];
 			};
 			answer_options: {
 				Row: {
@@ -210,6 +218,7 @@ export type Database = {
 					value?: string;
 					created_at?: string;
 				};
+				Relationships: [];
 			};
 			submissions: {
 				Row: {
@@ -239,6 +248,7 @@ export type Database = {
 					submitted_at?: string;
 					created_at?: string;
 				};
+				Relationships: [];
 			};
 			activity_log: {
 				Row: {
@@ -265,11 +275,13 @@ export type Database = {
 					payload?: Json | null;
 					created_at?: string;
 				};
+				Relationships: [];
 			};
 		};
-		Views: Record<string, never>;
-		Functions: Record<string, never>;
-		Enums: Record<string, never>;
+		Views: { [_ in never]: never };
+		Functions: { [_ in never]: never };
+		Enums: { [_ in never]: never };
+		CompositeTypes: { [_ in never]: never };
 	};
 };
 
