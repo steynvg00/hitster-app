@@ -2,12 +2,15 @@ import { redirect } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
 import { setTeamCookie, getTeamIdFromCookie } from '$lib/server/team';
+import type { Database } from '$lib/types/database';
+
+type TeamColor = Database['public']['Tables']['teams']['Row']['color'];
 
 // Snake order: blue,yellow,green,red,indigo,black,black,indigo,red,green,yellow,blue,blue,...
 // Turnaround duplicates the endpoint team, balancing 28 arrivals as 5,5,5,5,4,4 per team.
-const TEAM_COLORS = ['blue', 'yellow', 'green', 'red', 'indigo', 'black'] as const;
+const TEAM_COLORS: TeamColor[] = ['blue', 'yellow', 'green', 'red', 'indigo', 'black'];
 
-function snakeColorAt(position: number): string {
+function snakeColorAt(position: number): TeamColor {
 	const period = TEAM_COLORS.length * 2 - 2; // 10
 	const pos = position % period;
 	return pos < TEAM_COLORS.length ? TEAM_COLORS[pos] : TEAM_COLORS[period - pos];
