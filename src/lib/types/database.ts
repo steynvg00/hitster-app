@@ -67,6 +67,8 @@ export type Database = {
 					record_label: string | null;
 					festival: string | null;
 					vocal_source: string | null;
+					genre: string | null;
+					subgenre: string | null;
 					created_at: string;
 				};
 				Insert: {
@@ -77,6 +79,8 @@ export type Database = {
 					record_label?: string | null;
 					festival?: string | null;
 					vocal_source?: string | null;
+					genre?: string | null;
+					subgenre?: string | null;
 					created_at?: string;
 				};
 				Update: {
@@ -87,6 +91,8 @@ export type Database = {
 					record_label?: string | null;
 					festival?: string | null;
 					vocal_source?: string | null;
+					genre?: string | null;
+					subgenre?: string | null;
 					created_at?: string;
 				};
 				Relationships: [];
@@ -125,6 +131,9 @@ export type Database = {
 					title: string;
 					timer_seconds: number;
 					is_active: boolean;
+					stage_label: string | null;
+					status: string;
+					points_config: Json;
 					created_at: string;
 				};
 				Insert: {
@@ -133,6 +142,9 @@ export type Database = {
 					title: string;
 					timer_seconds?: number;
 					is_active?: boolean;
+					stage_label?: string | null;
+					status?: string;
+					points_config?: Json;
 					created_at?: string;
 				};
 				Update: {
@@ -141,6 +153,9 @@ export type Database = {
 					title?: string;
 					timer_seconds?: number;
 					is_active?: boolean;
+					stage_label?: string | null;
+					status?: string;
+					points_config?: Json;
 					created_at?: string;
 				};
 				Relationships: [];
