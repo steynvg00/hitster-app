@@ -7,6 +7,8 @@
 		{ href: '/admin/challenges', label: 'Challenges', icon: '🎯' },
 		{ href: '/admin/tracks', label: 'Tracks', icon: '🎵' },
 		{ href: '/admin/teams', label: 'Teams', icon: '👥' },
+		{ href: '/admin/pools', label: 'Pools', icon: '🗂️' },
+		{ href: '/admin/review', label: 'Review', icon: '🔍' },
 		{ href: '/admin/live', label: 'Live', icon: '📡' }
 	];
 

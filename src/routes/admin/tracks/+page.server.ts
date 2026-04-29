@@ -68,6 +68,22 @@ export const actions: Actions = {
 		return { success: true };
 	},
 
+	saveAcceptedTitles: async ({ request }) => {
+		const db = createAdminClient();
+		const data = await request.formData();
+		const id = data.get('id') as string;
+		const raw = (data.get('accepted_titles') as string) ?? '';
+
+		if (!id) return fail(400, { error: 'Missing track id' });
+
+		const accepted_titles = raw.split('\n').map((s) => s.trim()).filter(Boolean);
+		if (accepted_titles.length === 0) return fail(400, { error: 'At least one title is required' });
+
+		const { error } = await db.from('tracks').update({ accepted_titles }).eq('id', id);
+		if (error) return fail(500, { error: error.message });
+		return { success: true };
+	},
+
 	deleteTrack: async ({ request }) => {
 		const db = createAdminClient();
 		const data = await request.formData();

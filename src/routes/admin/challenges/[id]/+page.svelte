@@ -6,20 +6,38 @@
 
 	const VARIANTS = ['normal','label','anthem','vocal','fragments','kick','mashup','battle'] as const;
 	const STATUS_OPTIONS = ['draft', 'active', 'completed'] as const;
+	const INPUT_MODES = ['combobox', 'multiple_choice', 'open_text', 'slider', 'typeable_number'] as const;
 
 	type ChallengeTrack = (typeof data.challengeTracks)[number];
 
 	// Fields relevant per variant
 	const VARIANT_FIELDS: Record<string, string[]> = {
 		normal:    ['artist', 'title', 'year'],
-		label:     ['label'],
+		label:     ['label', 'artist', 'title', 'year'],
 		anthem:    ['festival', 'artist', 'title', 'year'],
-		vocal:     ['vocal_source'],
+		vocal:     ['vocal_source', 'artist', 'year'],
 		fragments: ['title', 'artist'],
 		kick:      ['artist'],
 		mashup:    ['artist', 'title'],
 		battle:    ['artist', 'title', 'year']
 	};
+
+	// Default input modes per variant (must stay in sync with +page.server.ts)
+	const DEFAULT_MODES: Record<string, Record<string, string>> = {
+		normal:    { artist: 'combobox', title: 'open_text', year: 'slider' },
+		label:     { label: 'combobox', artist: 'combobox', title: 'open_text', year: 'slider' },
+		anthem:    { festival: 'combobox', artist: 'combobox', title: 'open_text', year: 'slider' },
+		vocal:     { vocal_source: 'combobox', artist: 'combobox', year: 'slider' },
+		fragments: { title: 'open_text', artist: 'combobox' },
+		kick:      { artist: 'multiple_choice' },
+		mashup:    { artist: 'combobox', title: 'open_text' },
+		battle:    { artist: 'combobox', title: 'open_text', year: 'slider' }
+	};
+
+	function currentMode(field: string): string {
+		const savedModes = ((data.challenge.points_config ?? {}) as Record<string, unknown>).field_modes as Record<string, string> | undefined;
+		return savedModes?.[field] ?? DEFAULT_MODES[data.challenge.variant]?.[field] ?? 'open_text';
+	}
 
 	const fields = $derived(VARIANT_FIELDS[data.challenge.variant] ?? ['artist', 'title']);
 
@@ -225,7 +243,32 @@
 		{/if}
 	</section>
 
-	<!-- ── Section 3: Answer options ──────────────────────────────── -->
+	<!-- ── Section 3: Input modes ────────────────────────────────── -->
+	<section class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 mb-5">
+		<h2 class="admin-section-title">Input Modes</h2>
+		<p class="text-zinc-500 text-xs mb-4">
+			Choose how players answer each field. Combobox = search pool; Multiple choice = buttons from
+			Answer Options; Open text = free type (fuzzy scored); Slider / Typeable = year.
+		</p>
+
+		{#each fields as field}
+			<div class="flex items-center gap-3 py-2 border-b border-zinc-800 last:border-0">
+				<span class="w-28 text-sm text-zinc-300 capitalize">{field.replace('_', ' ')}</span>
+				<form method="POST" action="?/saveInputMode" use:enhance class="flex items-center gap-2 flex-1">
+					<input type="hidden" name="field" value={field} />
+					<select name="mode" class="input-field w-auto text-sm">
+						{#each INPUT_MODES as m}
+							<option value={m} selected={m === currentMode(field)}>{m}</option>
+						{/each}
+					</select>
+					<button type="submit" class="btn-ghost text-xs whitespace-nowrap">Set</button>
+				</form>
+				<span class="text-xs text-zinc-600 w-24 text-right">now: {currentMode(field)}</span>
+			</div>
+		{/each}
+	</section>
+
+	<!-- ── Section 4: Answer options ──────────────────────────────── -->
 	<section class="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
 		<h2 class="admin-section-title">Answer Options</h2>
 		<p class="text-zinc-500 text-xs mb-4">

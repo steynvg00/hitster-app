@@ -11,6 +11,7 @@
 
 	let expandedTrack = $state<string | null>(null);
 	let editingTrack = $state<string | null>(null);
+	let editingTitles = $state<string | null>(null);
 	let showAddForm = $state(false);
 	let showAddClipFor = $state<string | null>(null);
 
@@ -197,6 +198,44 @@
 								onended={() => (previewUrl = null)}
 							></audio>
 						{/if}
+
+						<!-- Accepted titles editor -->
+						<div class="mt-4 border-t border-zinc-800 pt-3">
+							<div class="mb-2 flex items-center justify-between">
+								<div class="text-xs uppercase tracking-widest text-zinc-500">Accepted Titles</div>
+								<button
+									onclick={() => (editingTitles = editingTitles === track.id ? null : track.id)}
+									class="text-xs text-zinc-400 transition-colors hover:text-zinc-200"
+								>
+									{editingTitles === track.id ? 'Cancel' : 'Edit'}
+								</button>
+							</div>
+							{#if editingTitles === track.id}
+								<form method="POST" action="?/saveAcceptedTitles" use:enhance class="flex gap-2">
+									<input type="hidden" name="id" value={track.id} />
+									<textarea
+										name="accepted_titles"
+										rows="3"
+										placeholder="One title per line"
+										class="input-field flex-1 font-mono text-xs"
+									>{(track.accepted_titles ?? [track.title]).join('\n')}</textarea>
+									<button type="submit" class="btn-primary self-start text-xs">Save</button>
+								</form>
+								<p class="mt-1 text-xs text-zinc-600">
+									Fuzzy-matched against open-text submissions (90% similarity = correct). Include alternate spellings.
+								</p>
+							{:else}
+								<div class="flex flex-wrap gap-1">
+									{#each (track.accepted_titles ?? []) as t}
+										<span class="rounded bg-zinc-800 px-2 py-0.5 font-mono text-xs text-zinc-300">{t}</span>
+									{:else}
+										<span class="text-xs text-zinc-600"
+											>None set — defaults to canonical title at scoring time</span
+										>
+									{/each}
+								</div>
+							{/if}
+						</div>
 
 						<!-- Add clip form -->
 						{#if showAddClipFor === track.id}

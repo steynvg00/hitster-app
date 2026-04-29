@@ -207,5 +207,32 @@ export const actions: Actions = {
 			if (e) return fail(500, { error: e.message });
 		}
 		return { success: true, action: 'saveOptions' };
+	},
+
+	// Saves per-field input mode into challenge.points_config.field_modes.
+	// We store here (not answer_options.input_mode) to avoid ambiguity with
+	// the migration-default 'multiple_choice' that all existing rows carry.
+	saveInputMode: async ({ request, params }) => {
+		const db = createAdminClient();
+		const data = await request.formData();
+		const field = data.get('field') as string;
+		const mode = data.get('mode') as string;
+
+		const VALID_MODES = ['multiple_choice', 'combobox', 'open_text', 'typeable_number', 'slider'];
+		if (!field || !VALID_MODES.includes(mode)) return fail(400, { error: 'Invalid field or mode' });
+
+		const { data: challenge } = await db.from('challenges').select('points_config').eq('id', params.id).single();
+		if (!challenge) return fail(404, { error: 'Challenge not found' });
+
+		const pc = (challenge.points_config ?? {}) as Record<string, unknown>;
+		const fieldModes = ((pc.field_modes ?? {}) as Record<string, string>);
+		fieldModes[field] = mode;
+
+		const { error: e } = await db.from('challenges')
+			.update({ points_config: { ...pc, field_modes: fieldModes } as never })
+			.eq('id', params.id);
+		if (e) return fail(500, { error: e.message });
+
+		return { success: true, action: 'saveInputMode' };
 	}
 };
