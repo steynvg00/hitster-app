@@ -75,7 +75,22 @@ export interface AnswerOption {
 	input_mode: InputMode;
 }
 
+// ─── Answer pools (global shared combobox data) ──────────────────────────────
+
+export interface AnswerPoolEntry {
+	id: string;
+	name: string;
+	created_at: string;
+}
+
 // ─── Submissions & Scoring ───────────────────────────────────────────────────
+
+export type SubmissionStatus =
+	| 'auto_correct'
+	| 'auto_wrong'
+	| 'review_requested'
+	| 'review_approved'
+	| 'review_rejected';
 
 export interface Submission {
 	id: string;
@@ -83,7 +98,35 @@ export interface Submission {
 	team_id: string;
 	answers: Record<AnswerField, string>;
 	score?: number;
+	status: SubmissionStatus;
 	submitted_at: string;
+}
+
+export interface ReviewRequest {
+	id: string;
+	submission_id: string;
+	field_name: string;
+	player_message?: string | null;
+	created_at: string;
+	resolved: boolean;
+}
+
+// Unified per-field scoring result (used in challenge form response + priorResult)
+export interface FieldResult {
+	field: AnswerField;
+	submitted: string;
+	correct: string;
+	score: number;
+	maxScore: number;
+	fuzzyScore?: number; // 0–1 similarity for open_text fields
+}
+
+export interface ChallengeResult {
+	total: number;
+	maxTotal: number;
+	fields: FieldResult[];
+	status: SubmissionStatus;
+	submissionId: string;
 }
 
 // ─── NFC ─────────────────────────────────────────────────────────────────────

@@ -39,6 +39,7 @@
 	},
 	"dependencies": {
 		"@supabase/ssr": "^0.10.2",
-		"@supabase/supabase-js": "^2.104.1"
+		"@supabase/supabase-js": "^2.104.1",
+		"fuse.js": "^7.3.0"
 	}
 }

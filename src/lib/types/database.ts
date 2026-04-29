@@ -9,6 +9,7 @@ type ClipType = 'snippet' | 'fragment' | 'kick' | 'vocal' | 'mashup';
 type ChallengeVariant = 'normal' | 'label' | 'anthem' | 'vocal' | 'fragments' | 'kick' | 'mashup' | 'battle';
 type AnswerField = 'artist' | 'title' | 'year' | 'label' | 'festival' | 'vocal_source';
 type NfcTagPurpose = 'team_identity' | 'team_entry' | 'challenge';
+type SubmissionStatus = 'auto_correct' | 'auto_wrong' | 'review_requested' | 'review_approved' | 'review_rejected';
 
 export type Database = {
 	public: {
@@ -72,6 +73,7 @@ export type Database = {
 					vocal_source: string | null;
 					genre: string | null;
 					subgenre: string | null;
+					accepted_titles: string[];
 					created_at: string;
 				};
 				Insert: {
@@ -84,6 +86,7 @@ export type Database = {
 					vocal_source?: string | null;
 					genre?: string | null;
 					subgenre?: string | null;
+					accepted_titles?: string[];
 					created_at?: string;
 				};
 				Update: {
@@ -96,6 +99,7 @@ export type Database = {
 					vocal_source?: string | null;
 					genre?: string | null;
 					subgenre?: string | null;
+					accepted_titles?: string[];
 					created_at?: string;
 				};
 				Relationships: [];
@@ -248,6 +252,7 @@ export type Database = {
 					team_id: string;
 					answers: Json;
 					score: number | null;
+					status: SubmissionStatus;
 					submitted_at: string;
 					created_at: string;
 				};
@@ -257,6 +262,7 @@ export type Database = {
 					team_id: string;
 					answers?: Json;
 					score?: number | null;
+					status?: SubmissionStatus;
 					submitted_at?: string;
 					created_at?: string;
 				};
@@ -266,9 +272,61 @@ export type Database = {
 					team_id?: string;
 					answers?: Json;
 					score?: number | null;
+					status?: SubmissionStatus;
 					submitted_at?: string;
 					created_at?: string;
 				};
+				Relationships: [];
+			};
+			review_requests: {
+				Row: {
+					id: string;
+					submission_id: string;
+					field_name: string;
+					player_message: string | null;
+					created_at: string;
+					resolved: boolean;
+				};
+				Insert: {
+					id?: string;
+					submission_id: string;
+					field_name: string;
+					player_message?: string | null;
+					created_at?: string;
+					resolved?: boolean;
+				};
+				Update: {
+					id?: string;
+					submission_id?: string;
+					field_name?: string;
+					player_message?: string | null;
+					created_at?: string;
+					resolved?: boolean;
+				};
+				Relationships: [];
+			};
+			answer_pool_artists: {
+				Row: { id: string; name: string; created_at: string };
+				Insert: { id?: string; name: string; created_at?: string };
+				Update: { id?: string; name?: string; created_at?: string };
+				Relationships: [];
+			};
+			answer_pool_labels: {
+				Row: { id: string; name: string; created_at: string };
+				Insert: { id?: string; name: string; created_at?: string };
+				Update: { id?: string; name?: string; created_at?: string };
+				Relationships: [];
+			};
+			answer_pool_festivals: {
+				Row: { id: string; name: string; created_at: string };
+				Insert: { id?: string; name: string; created_at?: string };
+				Update: { id?: string; name?: string; created_at?: string };
+				Relationships: [];
+			};
+			answer_pool_vocal_sources: {
+				Row: { id: string; name: string; created_at: string };
+				Insert: { id?: string; name: string; created_at?: string };
+				Update: { id?: string; name?: string; created_at?: string };
 				Relationships: [];
 			};
 			activity_log: {
@@ -316,3 +374,8 @@ export type AnswerOptionRow = Database['public']['Tables']['answer_options']['Ro
 export type SubmissionRow = Database['public']['Tables']['submissions']['Row'];
 export type NfcTagRow = Database['public']['Tables']['nfc_tags']['Row'];
 export type ActivityLogRow = Database['public']['Tables']['activity_log']['Row'];
+export type ReviewRequestRow = Database['public']['Tables']['review_requests']['Row'];
+export type AnswerPoolArtistRow = Database['public']['Tables']['answer_pool_artists']['Row'];
+export type AnswerPoolLabelRow = Database['public']['Tables']['answer_pool_labels']['Row'];
+export type AnswerPoolFestivalRow = Database['public']['Tables']['answer_pool_festivals']['Row'];
+export type AnswerPoolVocalSourceRow = Database['public']['Tables']['answer_pool_vocal_sources']['Row'];
