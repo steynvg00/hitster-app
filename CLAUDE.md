@@ -122,12 +122,13 @@ To add a new challenge station:
 | 2026-04-26 | Session 3 vertical slice: seed data, challenge page (audio/dropdowns/year/scoring), leaderboard (realtime), dark theme |
 | 2026-04-26 | Session 4 NFC + team identity: cookie helper (HMAC-signed), hooks.server.ts, NFC handler (all 3 tag types), /join picker, /team home, challenge wired to real team, NFC seed migration |
 | 2026-04-29 | Session 5 host admin: /admin/login (HOST_PASSWORD), signed host cookie (24h), auth guard, sidebar layout, tracks manager (CRUD + clips), challenges manager (list/create/editor with track picker + answer options), teams manager (score adjustment + reset-all), live console (realtime scores/submissions/activity), migration 0003 (stage_label, status, points_config, genre, subgenre) |
+| 2026-04-29 | Session 5b fixes: clip panel error surfacing (bug was silent Supabase query failure), display_name on teams (migration 0004 + edit in /admin/teams + shown everywhere), input_mode on answer_options (migration 0005, data-model only) |
 
 ## Next session
-- Run `0003_admin_fields.sql` in Supabase SQL editor
+- Run pending migrations in Supabase SQL editor (in order): `0003_admin_fields.sql`, `0004_team_display_name.sql`, `0005_input_mode.sql`
 - Add `HOST_PASSWORD` to Vercel environment variables
 - Test /admin flow end-to-end in browser (login → create challenge → add track → publish)
 - Swap placeholder audio URL in seed for a real clip
 - Fix database.ts: run `npx supabase gen types typescript --project-id tyeejaqahrslrpwfozex` and replace hand-written types
-- Build challenge page variants (label, anthem, vocal, mashup)
+- Build challenge page variants (label, anthem, vocal, mashup) — input_mode column ready for session 6 UI
 - Test on mobile (Bluetooth speaker flow)
