@@ -152,7 +152,9 @@
 					<div class="border-t border-zinc-800 bg-zinc-950 px-4 py-3">
 						<div class="text-xs text-zinc-500 uppercase tracking-widest mb-3">Clips</div>
 
-						{#if clipsFor(track.id).length === 0}
+						{#if data.clipsError}
+							<p class="text-red-400 text-xs mb-3">Clips failed to load: {data.clipsError}</p>
+						{:else if clipsFor(track.id).length === 0}
 							<p class="text-zinc-600 text-sm mb-3">No clips yet.</p>
 						{:else}
 							<div class="space-y-2 mb-3">

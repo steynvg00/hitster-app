@@ -7,12 +7,14 @@ export const load: PageServerLoad = async () => {
 
 	const [tracksResult, clipsResult] = await Promise.all([
 		db.from('tracks').select('*').order('artist'),
-		db.from('clips').select('*').order('created_at')
+		db.from('clips').select('*').order('track_id, created_at')
 	]);
 
 	return {
 		tracks: tracksResult.data ?? [],
-		clips: clipsResult.data ?? []
+		clips: clipsResult.data ?? [],
+		tracksError: tracksResult.error?.message ?? null,
+		clipsError: clipsResult.error?.message ?? null
 	};
 };
 
