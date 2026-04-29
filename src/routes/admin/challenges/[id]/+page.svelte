@@ -1,0 +1,335 @@
+<script lang="ts">
+	import { enhance } from '$app/forms';
+	import type { PageData, ActionData } from './$types';
+
+	let { data, form }: { data: PageData; form: ActionData } = $props();
+
+	const VARIANTS = ['normal','label','anthem','vocal','fragments','kick','mashup','battle'] as const;
+	const STATUS_OPTIONS = ['draft', 'active', 'completed'] as const;
+
+	type ChallengeTrack = (typeof data.challengeTracks)[number];
+
+	// Fields relevant per variant
+	const VARIANT_FIELDS: Record<string, string[]> = {
+		normal:    ['artist', 'title', 'year'],
+		label:     ['label'],
+		anthem:    ['festival', 'artist', 'title', 'year'],
+		vocal:     ['vocal_source'],
+		fragments: ['title', 'artist'],
+		kick:      ['artist'],
+		mashup:    ['artist', 'title'],
+		battle:    ['artist', 'title', 'year']
+	};
+
+	const fields = $derived(VARIANT_FIELDS[data.challenge.variant] ?? ['artist', 'title']);
+
+	function optionsFor(field: string): string[] {
+		return data.answerOptions.filter((o) => o.field === field).map((o) => o.value);
+	}
+
+	function clipsFor(trackId: string) {
+		return data.clips.filter((c) => c.track_id === trackId);
+	}
+
+	// Tracks not yet in this challenge
+	const usedTrackIds = $derived(new Set(data.challengeTracks.map((ct) => ct.track_id)));
+	const availableTracks = $derived(data.allTracks.filter((t) => !usedTrackIds.has(t.id)));
+
+	let selectedTrackId = $state('');
+	let selectedClipId = $state('');
+	let clipsForSelected = $derived(selectedTrackId ? clipsFor(selectedTrackId) : []);
+
+	$effect(() => {
+		// Reset clip when track changes
+		selectedClipId = clipsForSelected[0]?.id ?? '';
+	});
+
+	// Points JSON editor
+	let pointsJson = $state(JSON.stringify(data.challenge.points_config ?? {}, null, 2));
+
+	// Options editor
+	let editingField = $state<string | null>(null);
+	let optionsText = $state('');
+
+	function startEditOptions(field: string) {
+		editingField = field;
+		optionsText = optionsFor(field).join('\n');
+	}
+
+	const statusColor: Record<string, string> = {
+		draft: 'text-zinc-400',
+		active: 'text-green-400',
+		completed: 'text-blue-400'
+	};
+
+	function trackForCt(ct: ChallengeTrack) {
+		return data.allTracks.find((t) => t.id === ct.track_id);
+	}
+
+	function clipForCt(ct: ChallengeTrack) {
+		return data.clips.find((c) => c.id === ct.clip_id);
+	}
+
+	let previewUrl = $state<string | null>(null);
+</script>
+
+<div class="p-6 max-w-4xl">
+	<!-- Header -->
+	<div class="flex items-start justify-between mb-6">
+		<div>
+			<a href="/admin/challenges" class="text-zinc-500 hover:text-zinc-300 text-sm transition-colors">← Challenges</a>
+			<h1 class="text-2xl font-bold text-white mt-1">{data.challenge.title}</h1>
+			<div class="flex items-center gap-2 mt-1">
+				<span class="text-sm font-mono text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded">{data.challenge.variant}</span>
+				<span class="text-sm {statusColor[data.challenge.status] ?? 'text-zinc-400'}">{data.challenge.status}</span>
+			</div>
+		</div>
+
+		<!-- Status control -->
+		<form method="POST" action="?/setStatus" use:enhance class="flex gap-2 items-center">
+			<select name="status" class="input-field w-auto text-sm">
+				{#each STATUS_OPTIONS as s}
+					<option value={s} selected={s === data.challenge.status}>{s}</option>
+				{/each}
+			</select>
+			<button type="submit" class="btn-primary text-sm">Set status</button>
+		</form>
+	</div>
+
+	{#if form?.error}
+		<div class="bg-red-950 border border-red-800 text-red-300 text-sm rounded-lg px-4 py-3 mb-4">{form.error}</div>
+	{/if}
+
+	<!-- ── Section 1: Meta ─────────────────────────────────────────── -->
+	<section class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 mb-5">
+		<h2 class="admin-section-title">Settings</h2>
+		<form method="POST" action="?/updateMeta" use:enhance class="space-y-3">
+			<div class="grid grid-cols-2 gap-3">
+				<input name="title" value={data.challenge.title} placeholder="Name *" required class="input-field" />
+				<input name="stage_label" value={data.challenge.stage_label ?? ''} placeholder="Stage label" class="input-field" />
+			</div>
+			<div class="grid grid-cols-2 gap-3">
+				<div>
+					<label class="block text-xs text-zinc-400 mb-1">Variant</label>
+					<select name="variant" class="input-field">
+						{#each VARIANTS as v}
+							<option value={v} selected={v === data.challenge.variant}>{v}</option>
+						{/each}
+					</select>
+				</div>
+				<div>
+					<label class="block text-xs text-zinc-400 mb-1">Timer (seconds)</label>
+					<input name="timer_seconds" type="number" value={data.challenge.timer_seconds} min="10" max="600" class="input-field" />
+				</div>
+			</div>
+			<div>
+				<label class="block text-xs text-zinc-400 mb-1">Points config (JSON)</label>
+				<textarea name="points_config" bind:value={pointsJson} rows="5" class="input-field font-mono text-xs"></textarea>
+			</div>
+			<div class="flex justify-end">
+				<button type="submit" class="btn-primary">Save settings</button>
+			</div>
+		</form>
+	</section>
+
+	<!-- ── Section 2: Tracks ───────────────────────────────────────── -->
+	<section class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 mb-5">
+		<h2 class="admin-section-title">Tracks ({data.challengeTracks.length})</h2>
+
+		<!-- Assigned tracks -->
+		{#if data.challengeTracks.length > 0}
+			<div class="space-y-2 mb-4">
+				{#each data.challengeTracks as ct, i (ct.id)}
+					{@const track = trackForCt(ct)}
+					{@const clip = clipForCt(ct)}
+					<div class="flex items-center gap-3 bg-zinc-800/60 rounded-lg px-3 py-2">
+						<span class="text-zinc-500 text-sm w-5 text-center">{i + 1}</span>
+						<div class="flex-1 min-w-0">
+							<div class="text-white text-sm font-medium truncate">
+								{track?.artist ?? '?'} — {track?.title ?? '?'}
+								<span class="text-zinc-500 font-normal">({track?.year})</span>
+							</div>
+							<div class="text-zinc-500 text-xs">
+								Clip: {clip?.type ?? '?'}
+								{#if clip?.position != null} #{clip.position}{/if}
+								· {clip?.storage_path ? clip.storage_path.slice(-40) : '—'}
+							</div>
+						</div>
+
+						{#if clip}
+							<button
+								onclick={() => previewUrl = previewUrl === clip.storage_path ? null : clip.storage_path}
+								class="text-amber-400 hover:text-amber-300 text-xs px-2 py-0.5 rounded border border-amber-400/30 transition-colors shrink-0"
+							>
+								{previewUrl === clip.storage_path ? '■' : '▶'}
+							</button>
+						{/if}
+
+						<!-- Reorder -->
+						<form method="POST" action="?/reorderTrack" use:enhance>
+							<input type="hidden" name="ct_id" value={ct.id} />
+							<input type="hidden" name="direction" value="up" />
+							<button type="submit" disabled={i === 0} class="text-zinc-500 hover:text-zinc-300 disabled:opacity-30 text-xs px-1">↑</button>
+						</form>
+						<form method="POST" action="?/reorderTrack" use:enhance>
+							<input type="hidden" name="ct_id" value={ct.id} />
+							<input type="hidden" name="direction" value="down" />
+							<button type="submit" disabled={i === data.challengeTracks.length - 1} class="text-zinc-500 hover:text-zinc-300 disabled:opacity-30 text-xs px-1">↓</button>
+						</form>
+
+						<form method="POST" action="?/removeTrack" use:enhance>
+							<input type="hidden" name="ct_id" value={ct.id} />
+							<button
+								type="submit"
+								onclick={(e) => { if (!confirm('Remove this track from the challenge?')) e.preventDefault(); }}
+								class="text-red-700 hover:text-red-400 text-xs px-2 py-1 rounded hover:bg-zinc-700 transition-colors"
+							>✕</button>
+						</form>
+					</div>
+				{/each}
+			</div>
+		{:else}
+			<p class="text-zinc-600 text-sm mb-4">No tracks yet — add one below.</p>
+		{/if}
+
+		{#if previewUrl}
+			<!-- svelte-ignore a11y_media_has_caption -->
+			<audio src={previewUrl} autoplay controls class="w-full h-8 mb-4" onended={() => previewUrl = null}></audio>
+		{/if}
+
+		<!-- Add track picker -->
+		{#if availableTracks.length > 0}
+			<form method="POST" action="?/addTrack" use:enhance class="flex gap-2 flex-wrap items-end border-t border-zinc-800 pt-4">
+				<div class="flex-1 min-w-40">
+					<label class="block text-xs text-zinc-400 mb-1">Track</label>
+					<select name="track_id" bind:value={selectedTrackId} required class="input-field">
+						<option value="">— choose track —</option>
+						{#each availableTracks as t}
+							<option value={t.id}>{t.artist} — {t.title} ({t.year})</option>
+						{/each}
+					</select>
+				</div>
+				<div class="flex-1 min-w-40">
+					<label class="block text-xs text-zinc-400 mb-1">Clip</label>
+					<select name="clip_id" bind:value={selectedClipId} required class="input-field" disabled={!selectedTrackId}>
+						<option value="">— choose clip —</option>
+						{#each clipsForSelected as c}
+							<option value={c.id}>{c.type}{c.position != null ? ` #${c.position}` : ''} — {c.storage_path.slice(-30)}</option>
+						{/each}
+					</select>
+				</div>
+				<button type="submit" class="btn-primary" disabled={!selectedTrackId || !selectedClipId}>Add</button>
+			</form>
+		{:else}
+			<p class="text-zinc-600 text-xs border-t border-zinc-800 pt-4">All library tracks are already in this challenge.</p>
+		{/if}
+	</section>
+
+	<!-- ── Section 3: Answer options ──────────────────────────────── -->
+	<section class="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
+		<h2 class="admin-section-title">Answer Options</h2>
+		<p class="text-zinc-500 text-xs mb-4">
+			Curate the dropdown values players see. Click "Auto-generate" to populate from the track library
+			(correct answer + up to 7 distractors). Then edit manually if needed.
+		</p>
+
+		{#if data.challengeTracks.length === 0}
+			<p class="text-zinc-600 text-sm">Add tracks first.</p>
+		{:else}
+			{#each data.challengeTracks as ct, i (ct.id)}
+				{@const track = trackForCt(ct)}
+				<div class="mb-5">
+					<div class="text-sm font-medium text-white mb-2">
+						Track {i + 1}: {track?.artist} — {track?.title}
+					</div>
+
+					{#each fields as field}
+						{#if field !== 'year'}
+							<div class="mb-3 ml-3">
+								<div class="flex items-center gap-3 mb-1">
+									<span class="text-xs text-zinc-400 w-24 capitalize">{field.replace('_', ' ')}</span>
+									<span class="text-xs text-zinc-600">{optionsFor(field).length} options</span>
+
+									<form method="POST" action="?/generateOptions" use:enhance>
+										<input type="hidden" name="ct_id" value={ct.id} />
+										<input type="hidden" name="field" value={field} />
+										<button type="submit" class="text-xs text-amber-400 hover:text-amber-300 transition-colors">
+											Auto-generate
+										</button>
+									</form>
+
+									<button
+										onclick={() => startEditOptions(field)}
+										class="text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
+									>
+										Edit manually
+									</button>
+								</div>
+
+								{#if editingField === field}
+									<form method="POST" action="?/saveOptions" use:enhance class="flex gap-2">
+										<input type="hidden" name="field" value={field} />
+										<textarea
+											name="options"
+											bind:value={optionsText}
+											rows="5"
+											placeholder="One option per line"
+											class="input-field font-mono text-xs flex-1"
+										></textarea>
+										<div class="flex flex-col gap-1">
+											<button type="submit" class="btn-primary text-xs">Save</button>
+											<button type="button" onclick={() => editingField = null} class="btn-ghost text-xs">Cancel</button>
+										</div>
+									</form>
+								{:else if optionsFor(field).length > 0}
+									<div class="flex flex-wrap gap-1 ml-0">
+										{#each optionsFor(field) as opt}
+											<span class="text-xs bg-zinc-800 text-zinc-300 px-2 py-0.5 rounded">{opt}</span>
+										{/each}
+									</div>
+								{:else}
+									<p class="text-zinc-600 text-xs">No options yet.</p>
+								{/if}
+							</div>
+						{/if}
+					{/each}
+				</div>
+			{/each}
+		{/if}
+	</section>
+</div>
+
+<style>
+	:global(.admin-section-title) {
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: #a1a1aa;
+		text-transform: uppercase;
+		letter-spacing: 0.1em;
+		margin-bottom: 1rem;
+	}
+	:global(.input-field) {
+		background: #27272a;
+		border: 1px solid #3f3f46;
+		border-radius: 0.5rem;
+		padding: 0.5rem 0.75rem;
+		color: #f4f4f5;
+		font-size: 0.875rem;
+		width: 100%;
+		transition: border-color 0.15s;
+	}
+	:global(.input-field:focus) { outline: none; border-color: #fbbf24; }
+	:global(.btn-primary) {
+		background: #fbbf24; color: #09090b; font-weight: 700;
+		padding: 0.4rem 1rem; border-radius: 0.5rem; font-size: 0.875rem;
+		transition: background 0.15s;
+	}
+	:global(.btn-primary:hover) { background: #fcd34d; }
+	:global(.btn-primary:disabled) { opacity: 0.4; cursor: not-allowed; }
+	:global(.btn-ghost) {
+		background: transparent; border: 1px solid #3f3f46; color: #a1a1aa;
+		font-weight: 500; padding: 0.4rem 1rem; border-radius: 0.5rem;
+		font-size: 0.875rem; transition: all 0.15s;
+	}
+	:global(.btn-ghost:hover) { border-color: #71717a; color: #f4f4f5; }
+</style>
