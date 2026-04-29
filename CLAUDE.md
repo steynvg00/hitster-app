@@ -123,12 +123,42 @@ To add a new challenge station:
 | 2026-04-26 | Session 4 NFC + team identity: cookie helper (HMAC-signed), hooks.server.ts, NFC handler (all 3 tag types), /join picker, /team home, challenge wired to real team, NFC seed migration |
 | 2026-04-29 | Session 5 host admin: /admin/login (HOST_PASSWORD), signed host cookie (24h), auth guard, sidebar layout, tracks manager (CRUD + clips), challenges manager (list/create/editor with track picker + answer options), teams manager (score adjustment + reset-all), live console (realtime scores/submissions/activity), migration 0003 (stage_label, status, points_config, genre, subgenre) |
 | 2026-04-29 | Session 5b fixes: clip panel error surfacing (bug was silent Supabase query failure), display_name on teams (migration 0004 + edit in /admin/teams + shown everywhere), input_mode on answer_options (migration 0005, data-model only) |
+| 2026-04-29 | Session 6: combobox + open text + per-field input modes + manual review queue. Migrations 0006–0009. Combobox/MultipleChoice/OpenText/YearInput components. Dynamic per-field scoring (Levenshtein fuzzy for open_text). Field modes stored in points_config.field_modes. /admin/pools CRUD, /admin/review queue with realtime, /admin/tracks accepted_titles editor, /admin/challenges/[id] input mode picker. |
 
 ## Next session
-- Run pending migrations in Supabase SQL editor (in order): `0003_admin_fields.sql`, `0004_team_display_name.sql`, `0005_input_mode.sql`
-- Add `HOST_PASSWORD` to Vercel environment variables
-- Test /admin flow end-to-end in browser (login → create challenge → add track → publish)
-- Swap placeholder audio URL in seed for a real clip
-- Fix database.ts: run `npx supabase gen types typescript --project-id tyeejaqahrslrpwfozex` and replace hand-written types
-- Build challenge page variants (label, anthem, vocal, mashup) — input_mode column ready for session 6 UI
-- Test on mobile (Bluetooth speaker flow)
+- **Run all pending migrations in Supabase SQL editor (in order):**
+  - `0003_admin_fields.sql`, `0004_team_display_name.sql`, `0005_input_mode.sql` (from last sessions)
+  - `0006_answer_pools.sql`, `0007_accepted_titles.sql`, `0008_submission_status.sql`, `0009_review_requests.sql` (session 6, new)
+- Add `HOST_PASSWORD` to Vercel environment variables (still pending)
+- Test full flow in browser: join → challenge → combobox artist pick → open text title → year slider → submit → results with fuzzy %, review request
+- Test /admin/pools — verify artist pool seeds loaded (Angerfist etc)
+- Test /admin/review — submit a deliberately wrong title, request review, approve from admin
+- Test /admin/challenges/[id] input mode picker — set artist=combobox, title=open_text, year=slider and verify it persists
+- Add more artists to /admin/pools as you add real tracks
+- Add `HOST_PASSWORD` to Vercel env vars, then push and smoke-test on Vercel
+
+## Technical notes (session 6 design decisions)
+- **Input mode storage**: stored in `challenge.points_config.field_modes` (not `answer_options.input_mode`). The `answer_options.input_mode` column exists from migration 0005 but is not used for rendering decisions — it defaults to `'multiple_choice'` for all rows (set by migration), which would create ambiguity.
+- **Fuzzy scoring threshold**: 90% Levenshtein similarity for open_text fields. A single typo in a ~10-char title still passes. Configure via reviewing/accepting in admin if too strict.
+- **Pool loading**: combobox pool data is fetched server-side (admin client) in the challenge load function and passed as `data.pools` — not exposed as a separate public endpoint.
+
+## Future sessions / roadmap
+
+### Session 11 — The Recap
+End-of-event celebration screen shown after the game ends. Not yet built — notes only.
+
+**What it shows:**
+- Podium animation: 3rd / 2nd / 1st place with team colors, staggered reveal
+- Fastest correct answers per challenge (need submission timestamp — already stored in DB)
+- Team submissions overview (who answered what, highlight correct ones)
+- Per-team photo + optional full-group photo displayed alongside the podium
+
+**Data to preserve / set up before building:**
+- Submission timestamps: already in `submissions` table — no schema changes needed
+- Per-team photos: need a Supabase Storage bucket (e.g. `team-photos`), one image per team keyed by team ID
+- Group photo: optional single upload, could live in the same bucket as `group.jpg`
+
+**Design notes:**
+- Route: `/recap` (host triggers, maybe via `/admin`)
+- Should be TV-display quality (full-screen, animated, same vibe as `/leaderboard`)
+- Keep it stateless — reads from existing `submissions` + `teams` data, no new tables needed beyond photo storage
