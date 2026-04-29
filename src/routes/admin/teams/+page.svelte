@@ -1,0 +1,171 @@
+<script lang="ts">
+	import { enhance } from '$app/forms';
+	import type { PageData, ActionData } from './$types';
+
+	let { data, form }: { data: PageData; form: ActionData } = $props();
+
+	type TeamRow = (typeof data.teams)[number];
+
+	const teamColorHex: Record<string, string> = {
+		blue: '#3b82f6',
+		yellow: '#eab308',
+		green: '#22c55e',
+		red: '#ef4444',
+		indigo: '#6366f1',
+		black: '#64748b'
+	};
+
+	let adjustingTeam = $state<string | null>(null);
+	let adjustDelta = $state(0);
+	let adjustReason = $state('');
+	let confirmReset = $state(false);
+
+	$effect(() => {
+		if (form?.success) {
+			adjustingTeam = null;
+			adjustDelta = 0;
+			adjustReason = '';
+			confirmReset = false;
+		}
+	});
+
+	function startAdjust(team: TeamRow) {
+		adjustingTeam = team.id;
+		adjustDelta = 0;
+		adjustReason = '';
+	}
+</script>
+
+<div class="p-6">
+	<div class="mb-6 flex items-center justify-between">
+		<div>
+			<h1 class="text-2xl font-bold text-white">Teams</h1>
+			<p class="text-zinc-400 text-sm mt-0.5">Score management and game reset</p>
+		</div>
+		{#if !confirmReset}
+			<button
+				onclick={() => (confirmReset = true)}
+				class="border border-red-800 text-red-400 hover:bg-red-950 text-sm px-4 py-2 rounded-lg transition-colors"
+			>
+				⚠ Reset Everything
+			</button>
+		{:else}
+			<div class="flex items-center gap-2 bg-red-950 border border-red-700 rounded-xl p-3">
+				<span class="text-red-300 text-sm">Clear all scores, submissions, and activity log?</span>
+				<form method="POST" action="?/resetEverything" use:enhance class="flex gap-2">
+					<button type="submit" class="bg-red-600 hover:bg-red-500 text-white text-sm font-bold px-3 py-1.5 rounded-lg transition-colors">
+						Yes, reset all
+					</button>
+				</form>
+				<button onclick={() => (confirmReset = false)} class="text-zinc-400 hover:text-zinc-200 text-sm px-3 py-1.5 rounded-lg hover:bg-zinc-800 transition-colors">
+					Cancel
+				</button>
+			</div>
+		{/if}
+	</div>
+
+	{#if form?.error}
+		<div class="bg-red-950 border border-red-800 text-red-300 text-sm rounded-lg px-4 py-3 mb-4">{form.error}</div>
+	{/if}
+	{#if form?.success && form?.action === 'resetEverything'}
+		<div class="bg-green-950 border border-green-800 text-green-300 text-sm rounded-lg px-4 py-3 mb-4">
+			Everything reset.
+		</div>
+	{/if}
+
+	<div class="space-y-3">
+		{#each data.teams as team (team.id)}
+			<div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+				<div class="flex items-center gap-4">
+					<!-- Color swatch -->
+					<div
+						class="w-3 h-10 rounded-full shrink-0"
+						style="background-color: {teamColorHex[team.color] ?? '#666'}"
+					></div>
+
+					<div class="flex-1">
+						<div class="font-semibold text-white">{team.label}</div>
+						<div class="text-xs text-zinc-500 mt-0.5">
+							{team.submissionCount} submission{team.submissionCount !== 1 ? 's' : ''}
+						</div>
+					</div>
+
+					<div class="text-3xl font-black text-white tabular-nums">{team.score}</div>
+
+					<div class="flex gap-2">
+						<button
+							onclick={() => startAdjust(team)}
+							class="text-sm border border-zinc-700 text-zinc-300 hover:border-amber-400 hover:text-amber-400 px-3 py-1.5 rounded-lg transition-colors"
+						>
+							Adjust
+						</button>
+
+						<form method="POST" action="?/resetScore" use:enhance>
+							<input type="hidden" name="team_id" value={team.id} />
+							<button
+								type="submit"
+								onclick={(e) => { if (!confirm(`Reset ${team.label} score to 0?`)) e.preventDefault(); }}
+								class="text-sm border border-zinc-700 text-zinc-400 hover:border-red-700 hover:text-red-400 px-3 py-1.5 rounded-lg transition-colors"
+							>
+								Reset
+							</button>
+						</form>
+					</div>
+				</div>
+
+				<!-- Adjust score panel -->
+				{#if adjustingTeam === team.id}
+					<div class="mt-4 pt-4 border-t border-zinc-800">
+						<form method="POST" action="?/adjustScore" use:enhance class="flex gap-2 items-end flex-wrap">
+							<input type="hidden" name="team_id" value={team.id} />
+							<div>
+								<label class="block text-xs text-zinc-400 mb-1">Points (+ or −)</label>
+								<input
+									name="delta"
+									type="number"
+									bind:value={adjustDelta}
+									class="input-field w-28 text-center text-lg font-bold"
+									placeholder="±pts"
+								/>
+							</div>
+							<div class="flex-1 min-w-48">
+								<label class="block text-xs text-zinc-400 mb-1">Reason (required)</label>
+								<input
+									name="reason"
+									bind:value={adjustReason}
+									required
+									class="input-field"
+									placeholder="e.g. bonus round, tiebreak..."
+								/>
+							</div>
+							<button type="submit" class="btn-primary" disabled={!adjustReason}>Apply</button>
+							<button type="button" onclick={() => (adjustingTeam = null)} class="btn-ghost">Cancel</button>
+						</form>
+					</div>
+				{/if}
+			</div>
+		{/each}
+	</div>
+</div>
+
+<style>
+	:global(.input-field) {
+		background: #27272a; border: 1px solid #3f3f46; border-radius: 0.5rem;
+		padding: 0.5rem 0.75rem; color: #f4f4f5; font-size: 0.875rem;
+		width: 100%; transition: border-color 0.15s;
+	}
+	:global(.input-field:focus) { outline: none; border-color: #fbbf24; }
+	:global(.btn-primary) {
+		background: #fbbf24; color: #09090b; font-weight: 700;
+		padding: 0.4rem 1rem; border-radius: 0.5rem; font-size: 0.875rem;
+		transition: background 0.15s;
+	}
+	:global(.btn-primary:hover) { background: #fcd34d; }
+	:global(.btn-primary:disabled) { opacity: 0.4; cursor: not-allowed; }
+	:global(.btn-ghost) {
+		background: transparent; border: 1px solid #3f3f46; color: #a1a1aa;
+		font-weight: 500; padding: 0.4rem 1rem; border-radius: 0.5rem;
+		font-size: 0.875rem; transition: all 0.15s;
+	}
+	:global(.btn-ghost:hover) { border-color: #71717a; color: #f4f4f5; }
+</style>
