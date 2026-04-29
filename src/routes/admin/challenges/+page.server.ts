@@ -70,7 +70,7 @@ export const actions: Actions = {
 
 		const { data: created, error } = await db.from('challenges').insert({
 			title, variant: variant as never, stage_label, timer_seconds,
-			points_config, status: 'draft', is_active: false
+			points_config: points_config as never, status: 'draft', is_active: false
 		}).select('id').single();
 
 		if (error) return fail(500, { error: error.message });

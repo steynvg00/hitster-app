@@ -57,7 +57,7 @@ export const actions: Actions = {
 		if (!title) return fail(400, { error: 'Title is required' });
 
 		const { error: e } = await db.from('challenges').update({
-			title, stage_label, timer_seconds, variant: variant as never, points_config
+			title, stage_label, timer_seconds, variant: variant as never, points_config: points_config as never
 		}).eq('id', params.id);
 		if (e) return fail(500, { error: e.message });
 		return { success: true, action: 'meta' };
@@ -172,7 +172,7 @@ export const actions: Actions = {
 
 		const distSet = new Set<string>();
 		for (const r of others ?? []) {
-			const v = String((r as Record<string, unknown>)[field] ?? '').trim();
+			const v = String((r as unknown as Record<string, unknown>)[field] ?? '').trim();
 			if (v && v !== String(correct)) distSet.add(v);
 		}
 		const distractors = [...distSet].sort(() => Math.random() - 0.5).slice(0, 7);
