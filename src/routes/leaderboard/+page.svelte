@@ -67,7 +67,7 @@
 						team.color
 					] ?? 'text-zinc-400'}"
 				>
-					{team.label}
+					{team.display_name}
 				</div>
 
 				<!-- Animated score bar -->

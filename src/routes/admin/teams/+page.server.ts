@@ -73,6 +73,20 @@ export const actions: Actions = {
 		return { success: true };
 	},
 
+	updateDisplayName: async ({ request }) => {
+		const db = createAdminClient();
+		const data = await request.formData();
+
+		const team_id = data.get('team_id') as string;
+		const display_name = (data.get('display_name') as string)?.trim();
+
+		if (!team_id || !display_name) return fail(400, { error: 'team_id and display_name are required' });
+
+		const { error } = await db.from('teams').update({ display_name }).eq('id', team_id);
+		if (error) return fail(500, { error: error.message });
+		return { success: true };
+	},
+
 	resetEverything: async () => {
 		const db = createAdminClient();
 

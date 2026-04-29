@@ -19,6 +19,8 @@
 	let adjustDelta = $state(0);
 	let adjustReason = $state('');
 	let confirmReset = $state(false);
+	let editingNameTeam = $state<string | null>(null);
+	let editingNameValue = $state('');
 
 	$effect(() => {
 		if (form?.success) {
@@ -26,6 +28,8 @@
 			adjustDelta = 0;
 			adjustReason = '';
 			confirmReset = false;
+			editingNameTeam = null;
+			editingNameValue = '';
 		}
 	});
 
@@ -33,6 +37,11 @@
 		adjustingTeam = team.id;
 		adjustDelta = 0;
 		adjustReason = '';
+	}
+
+	function startEditName(team: TeamRow) {
+		editingNameTeam = team.id;
+		editingNameValue = team.display_name;
 	}
 </script>
 
@@ -84,15 +93,35 @@
 					></div>
 
 					<div class="flex-1">
-						<div class="font-semibold text-white">{team.label}</div>
-						<div class="text-xs text-zinc-500 mt-0.5">
-							{team.submissionCount} submission{team.submissionCount !== 1 ? 's' : ''}
-						</div>
+						{#if editingNameTeam === team.id}
+							<form method="POST" action="?/updateDisplayName" use:enhance class="flex gap-2 items-center">
+								<input type="hidden" name="team_id" value={team.id} />
+								<input
+									name="display_name"
+									bind:value={editingNameValue}
+									required
+									class="input-field text-sm py-1 flex-1 min-w-0"
+								/>
+								<button type="submit" class="btn-primary text-xs">Save</button>
+								<button type="button" onclick={() => (editingNameTeam = null)} class="btn-ghost text-xs">Cancel</button>
+							</form>
+						{:else}
+							<div class="font-semibold text-white">{team.display_name}</div>
+							<div class="text-xs text-zinc-500 mt-0.5">
+								{team.submissionCount} submission{team.submissionCount !== 1 ? 's' : ''}
+							</div>
+						{/if}
 					</div>
 
 					<div class="text-3xl font-black text-white tabular-nums">{team.score}</div>
 
 					<div class="flex gap-2">
+						<button
+							onclick={() => startEditName(team)}
+							class="text-sm border border-zinc-700 text-zinc-300 hover:border-zinc-400 px-3 py-1.5 rounded-lg transition-colors"
+						>
+							Name
+						</button>
 						<button
 							onclick={() => startAdjust(team)}
 							class="text-sm border border-zinc-700 text-zinc-300 hover:border-amber-400 hover:text-amber-400 px-3 py-1.5 rounded-lg transition-colors"
@@ -104,7 +133,7 @@
 							<input type="hidden" name="team_id" value={team.id} />
 							<button
 								type="submit"
-								onclick={(e) => { if (!confirm(`Reset ${team.label} score to 0?`)) e.preventDefault(); }}
+								onclick={(e) => { if (!confirm(`Reset ${team.display_name} score to 0?`)) e.preventDefault(); }}
 								class="text-sm border border-zinc-700 text-zinc-400 hover:border-red-700 hover:text-red-400 px-3 py-1.5 rounded-lg transition-colors"
 							>
 								Reset

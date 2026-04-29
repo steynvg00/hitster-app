@@ -19,7 +19,7 @@
 	};
 
 	function teamLabel(id: string) {
-		return teams.find((t) => t.id === id)?.label ?? id.slice(0, 8);
+		return teams.find((t) => t.id === id)?.display_name ?? id.slice(0, 8);
 	}
 
 	function fmtTime(iso: string) {
@@ -97,7 +97,7 @@
 						<div class="flex items-center justify-between mb-1">
 							<div class="flex items-center gap-2">
 								<div class="w-2.5 h-2.5 rounded-full shrink-0" style="background-color: {teamColorHex[team.color] ?? '#666'}"></div>
-								<span class="text-sm text-zinc-300">{team.label}</span>
+								<span class="text-sm text-zinc-300">{team.display_name}</span>
 							</div>
 							<span class="text-xl font-black text-white tabular-nums">{team.score}</span>
 						</div>
@@ -154,7 +154,7 @@
 											class="w-1.5 h-1.5 rounded-full shrink-0"
 											style="background-color: {teamColorHex[team.color] ?? '#666'}"
 										></div>
-										<span class="truncate">{team.color}</span>
+										<span class="truncate">{team.display_name}</span>
 										{#if submitted}<span class="ml-auto">✓</span>{/if}
 									</div>
 								{/each}

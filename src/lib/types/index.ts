@@ -5,7 +5,8 @@ export type TeamColor = 'blue' | 'yellow' | 'green' | 'red' | 'indigo' | 'black'
 export interface Team {
 	id: string;
 	color: TeamColor;
-	label: string; // e.g. "Red: Mainstage"
+	label: string; // static stage label, e.g. "Red: Mainstage"
+	display_name: string; // host-editable, defaults to label
 	score: number;
 }
 
@@ -64,11 +65,14 @@ export interface ChallengeTrack {
 
 export type AnswerField = 'artist' | 'title' | 'year' | 'label' | 'festival' | 'vocal_source';
 
+export type InputMode = 'multiple_choice' | 'combobox' | 'open_text' | 'typeable_number' | 'slider';
+
 export interface AnswerOption {
 	id: string;
 	challenge_id: string;
 	field: AnswerField;
 	value: string;
+	input_mode: InputMode;
 }
 
 // ─── Submissions & Scoring ───────────────────────────────────────────────────

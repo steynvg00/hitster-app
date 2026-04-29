@@ -73,7 +73,7 @@
 				class="rounded-full px-3 py-1 text-xs font-bold uppercase tracking-widest text-white"
 				style="background-color: {teamHex};"
 			>
-				{data.team.label}
+				{data.team.display_name}
 			</span>
 		</div>
 
@@ -178,7 +178,7 @@
 				class="rounded-full px-3 py-1 text-xs font-bold uppercase tracking-widest text-white"
 				style="background-color: {teamHex};"
 			>
-				{data.team.label}
+				{data.team.display_name}
 			</span>
 		</div>
 

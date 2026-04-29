@@ -18,6 +18,7 @@ export type Database = {
 					id: string;
 					color: TeamColor;
 					label: string;
+					display_name: string;
 					score: number;
 					created_at: string;
 				};
@@ -25,6 +26,7 @@ export type Database = {
 					id?: string;
 					color: TeamColor;
 					label: string;
+					display_name?: string;
 					score?: number;
 					created_at?: string;
 				};
@@ -32,6 +34,7 @@ export type Database = {
 					id?: string;
 					color?: TeamColor;
 					label?: string;
+					display_name?: string;
 					score?: number;
 					created_at?: string;
 				};
@@ -217,6 +220,7 @@ export type Database = {
 					challenge_id: string;
 					field: AnswerField;
 					value: string;
+					input_mode: string;
 					created_at: string;
 				};
 				Insert: {
@@ -224,6 +228,7 @@ export type Database = {
 					challenge_id: string;
 					field: AnswerField;
 					value: string;
+					input_mode?: string;
 					created_at?: string;
 				};
 				Update: {
@@ -231,6 +236,7 @@ export type Database = {
 					challenge_id?: string;
 					field?: AnswerField;
 					value?: string;
+					input_mode?: string;
 					created_at?: string;
 				};
 				Relationships: [];

@@ -41,7 +41,7 @@
 				class="rounded-2xl py-6 text-center font-black uppercase tracking-wide transition-opacity hover:opacity-90 active:scale-95"
 				style="background-color: {c.bg}; color: {c.text};"
 			>
-				{team.label}
+				{team.display_name}
 			</button>
 		{/each}
 	</form>

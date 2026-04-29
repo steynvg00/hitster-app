@@ -12,8 +12,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	const admin = createAdminClient();
 	const { data: teams } = await admin
 		.from('teams')
-		.select('id, color, label')
-		.order('label');
+		.select('id, color, label, display_name')
+		.order('display_name');
 
 	return {
 		teams: teams ?? [],

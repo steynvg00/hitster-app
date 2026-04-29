@@ -42,7 +42,7 @@
 			You are
 		</div>
 		<h1 class="mt-1 text-4xl font-black" style="color: {c.text};">
-			{data.team.label}
+			{data.team.display_name}
 		</h1>
 	</div>
 </div>
