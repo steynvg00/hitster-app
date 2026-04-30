@@ -1,7 +1,35 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
+	import { supabaseBrowser } from '$lib/supabase-browser';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
+
+	let liveScore = $state(data.team.score);
+	let livePosition = $state(data.position);
+
+	onMount(() => {
+		const channel = supabaseBrowser
+			.channel(`team-home-${data.team.id}`)
+			.on('postgres_changes', {
+				event: 'UPDATE',
+				schema: 'public',
+				table: 'teams',
+				filter: `id=eq.${data.team.id}`
+			}, async (payload) => {
+				liveScore = (payload.new as { score: number }).score;
+				const { data: allTeams } = await supabaseBrowser
+					.from('teams')
+					.select('id, score')
+					.order('score', { ascending: false });
+				if (allTeams) {
+					livePosition = (allTeams.findIndex((t) => t.id === data.team.id) + 1) || 1;
+				}
+			})
+			.subscribe();
+
+		return () => supabaseBrowser.removeChannel(channel);
+	});
 
 	const teamColors: Record<string, { bg: string; border: string; text: string }> = {
 		blue: { bg: '#3b82f6', border: '#2563eb', text: '#fff' },
@@ -53,13 +81,13 @@
 	<div class="grid grid-cols-2 gap-4">
 		<div class="rounded-2xl bg-zinc-900 p-5 text-center">
 			<div class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Score</div>
-			<div class="tabular-nums mt-1 text-5xl font-black text-white">{data.team.score}</div>
+			<div class="tabular-nums mt-1 text-5xl font-black text-white">{liveScore}</div>
 			<div class="mt-1 text-xs text-zinc-600">points</div>
 		</div>
 		<div class="rounded-2xl bg-zinc-900 p-5 text-center">
 			<div class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Position</div>
 			<div class="tabular-nums mt-1 text-5xl font-black" style="color: {c.bg};">
-				{ordinal(data.position)}
+				{ordinal(livePosition)}
 			</div>
 			<div class="mt-1 text-xs text-zinc-600">of {data.totalTeams} teams</div>
 		</div>
