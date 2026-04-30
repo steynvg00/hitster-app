@@ -6,6 +6,7 @@
 	import MultipleChoice from '$lib/components/ui/MultipleChoice.svelte';
 	import OpenText from '$lib/components/ui/OpenText.svelte';
 	import YearInput from '$lib/components/ui/YearInput.svelte';
+	import { supabaseBrowser } from '$lib/supabase-browser';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -81,6 +82,49 @@
 
 	// ── Review request expand state ───────────────────────────────────────────
 	let reviewingField = $state<string | null>(null);
+
+	// ── Live result state (realtime subscription to submissions table) ────────
+	let liveScore = $state<number | null>(null);
+	let liveStatus = $state<string | null>(null);
+	let reviewJustResolved = $state(false);
+	let pointsAwarded = $state(0);
+
+	$effect(() => {
+		const submissionId = result?.submissionId;
+		if (!submissionId) return;
+
+		liveScore = result!.total;
+		liveStatus = result!.status;
+		reviewJustResolved = false;
+		pointsAwarded = 0;
+
+		const channel = supabaseBrowser
+			.channel(`submission-${submissionId}`)
+			.on('postgres_changes', {
+				event: 'UPDATE',
+				schema: 'public',
+				table: 'submissions',
+				filter: `id=eq.${submissionId}`
+			}, async () => {
+				const { data: sub } = await supabaseBrowser
+					.from('submissions')
+					.select('score, status')
+					.eq('id', submissionId)
+					.single();
+				if (sub) {
+					const oldScore = liveScore ?? 0;
+					liveScore = sub.score ?? liveScore;
+					liveStatus = sub.status;
+					if (sub.status === 'review_approved' || sub.status === 'review_rejected') {
+						reviewJustResolved = true;
+						pointsAwarded = (sub.score ?? 0) - oldScore;
+					}
+				}
+			})
+			.subscribe();
+
+		return () => supabaseBrowser.removeChannel(channel);
+	});
 </script>
 
 {#if result}
@@ -101,6 +145,16 @@
 		{#if reviewError}
 			<div class="mb-4 rounded-xl border border-red-600/50 bg-red-900/30 p-3 text-sm text-red-300">
 				{reviewError}
+			</div>
+		{/if}
+
+		{#if reviewJustResolved && liveStatus === 'review_approved'}
+			<div class="mb-4 rounded-xl border border-green-600/50 bg-green-900/30 p-3 text-sm text-green-300">
+				✓ Review approved{pointsAwarded > 0 ? ` — +${pointsAwarded} points added!` : ''}
+			</div>
+		{:else if reviewJustResolved && liveStatus === 'review_rejected'}
+			<div class="mb-4 rounded-xl border border-zinc-600/50 bg-zinc-800/60 p-3 text-sm text-zinc-400">
+				Review rejected — your original score stands.
 			</div>
 		{/if}
 
@@ -146,7 +200,8 @@
 
 					<!-- Review request (only for wrong open_text fields the player can dispute) -->
 					{#if (isWrong || isPartial) && (data.fieldModes[fr.field] === 'open_text')}
-						{@const alreadyRequested = reviewedFields.has(fr.field) || result.status === 'review_requested' || result.status === 'review_approved'}
+						{@const effectiveStatus = liveStatus ?? result.status}
+						{@const alreadyRequested = reviewedFields.has(fr.field) || effectiveStatus === 'review_requested' || effectiveStatus === 'review_approved' || effectiveStatus === 'review_rejected'}
 						{#if alreadyRequested}
 							<p class="mt-2 text-xs text-amber-400">Review requested ✓</p>
 						{:else}
@@ -211,7 +266,7 @@
 			style="border-color: {teamHex}40; background-color: {teamHex}1a;"
 		>
 			<div class="mb-1 text-sm text-zinc-400">Total Score</div>
-			<div class="tabular-nums text-6xl font-black text-white">{result.total}</div>
+			<div class="tabular-nums text-6xl font-black text-white">{liveScore ?? result.total}</div>
 			<div class="mt-1 text-sm text-zinc-400">out of {result.maxTotal} pts</div>
 		</div>
 
