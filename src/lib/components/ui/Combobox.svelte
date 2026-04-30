@@ -17,7 +17,7 @@
 		value = $bindable('')
 	}: Props = $props();
 
-	let inputText = $state('');
+	let inputText = $state(value || '');
 	let open = $state(false);
 
 	const fuse = $derived(new Fuse(pool, { threshold: 0.4, minMatchCharLength: 1 }));

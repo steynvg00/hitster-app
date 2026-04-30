@@ -1,164 +1,195 @@
-# Hitster App — Project Context
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## What this is
-A web app for a 28-person, 6-team weekend party game. Core mechanic: Hitster-style music guessing with a Defqon/hard-bass theme. Teams scan NFC stickers placed around a villa to navigate between challenges hosted in different rooms.
+A web app for a 28-person, 6-team weekend party game. Core mechanic: Hitster-style music guessing with a Defqon/hard-bass theme. Teams scan NFC stickers to reach challenge pages, listen to audio clips, and guess artist/title/year (or other fields depending on variant). A host admin manages challenges, scoring, and reviews on a password-protected back-end.
 
-## Stack
-- **SvelteKit** (frontend + backend API routes) with TypeScript
-- **Supabase** — Postgres DB, file storage (audio), realtime subscriptions, auth
-- **Vercel** — hosting, deploys from GitHub
-- **Tailwind CSS v4** — styling (with @tailwindcss/forms and @tailwindcss/typography)
-- **WaveSurfer.js** — audio waveform UI (added later)
+## Development commands
+
+```bash
+npm run dev          # local dev server (http://localhost:5173)
+npm run build        # production build
+npm run check        # svelte-check (TypeScript + Svelte type errors)
+npm run check:watch  # same but incremental
+npm run lint         # prettier + eslint
+npm run format       # auto-fix formatting
+```
+
+There are **no tests** in this project. `npm run check` is the primary correctness gate.
+
+## Environment variables
+
+Copy `.env.example` → `.env`. Required keys:
+
+| Key | Used in |
+|-----|---------|
+| `PUBLIC_SUPABASE_URL` | both server and browser |
+| `PUBLIC_SUPABASE_ANON_KEY` | both server and browser |
+| `SUPABASE_SERVICE_ROLE_KEY` | server-only (admin client) |
+| `COOKIE_SECRET` | HMAC signing of team + admin cookies |
+| `HOST_PASSWORD` | admin login |
+
+## Architecture
+
+### Two Supabase clients — never mix them
+
+| Client | Created by | Key | RLS | Used for |
+|--------|-----------|-----|-----|---------|
+| `createPublicClient(cookies)` | `$lib/server/supabase` | anon | enforced | server-side load fns, form actions (player-facing) |
+| `createAdminClient()` | `$lib/server/supabase` | service role | bypassed | scoring, team score updates, admin ops |
+| `supabaseBrowser` | `$lib/supabase-browser` | anon | enforced | client-side realtime subscriptions only |
+
+The admin client is server-only. It must never be imported from `.svelte` files or `+page.ts` (client-runnable) files.
+
+### Authentication — no Supabase Auth
+
+There are two custom HMAC-SHA256 signed cookies, both handled by `src/lib/server/`:
+
+- **`hitster_team`** (7 days) — team identity. Set by `/nfc/[tag]` or `/join`. Read by `hooks.server.ts` → `locals.teamId`.
+- **`hitster_admin`** (24h) — host identity. Set by `/admin/login` via `HOST_PASSWORD`. Read by `hooks.server.ts` → `locals.isAdmin`.
+
+`hooks.server.ts` populates `locals.teamId` and `locals.isAdmin` on every request. Both are available in `+page.server.ts` load functions and form actions via `event.locals`.
+
+The admin layout server guard (`/admin/+layout.server.ts`) redirects to `/admin/login` unless `locals.isAdmin` is true.
+
+### Svelte 5 runes mode
+
+`svelte.config.js` forces runes mode for all non-library files. Use `$state`, `$derived`, `$effect`, `$props()` throughout — not `writable`, `derived`, or `onMount`-based reactivity for state. `onMount` is still valid for imperative side-effects (e.g. setting up realtime subscriptions).
+
+### Realtime pattern
+
+Browser-side realtime always uses `supabaseBrowser` (anon key). For a table to deliver events to the browser:
+1. It must be in the `supabase_realtime` publication.
+2. The anon role must have a SELECT policy on it (RLS blocks events otherwise).
+
+Both are set in migrations. See `0010_realtime_publications.sql` for the pattern.
+
+Subscriptions follow this shape:
+```typescript
+onMount(() => {
+  const channel = supabaseBrowser
+    .channel('unique-name')
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'teams', filter: `id=eq.${teamId}` }, handler)
+    .subscribe();
+  return () => supabaseBrowser.removeChannel(channel);
+});
+```
+
+### Scoring
+
+All scoring logic lives in `src/routes/(game)/challenge/[id]/+page.server.ts`. Key functions:
+- `scoreField()` — per-field scoring. Open-text fields use Levenshtein similarity (≥90% = full points). Year uses falloff (exact=full, ±1=50%, ±2=20%, else=0). Combobox/multiple-choice = exact match.
+- `buildFieldResults()` — applies `scoreField` across all variant fields.
+- `DEFAULT_INPUT_MODES` — per-variant defaults for which input mode each field uses (combobox / open_text / slider / multiple_choice).
+- Field modes can be overridden per-challenge via `challenge.points_config.field_modes` (JSONB).
+
+### Database migrations
+
+Migrations live in `supabase/migrations/` and must be **run manually** in the Supabase SQL Editor (Dashboard → SQL Editor → paste → Run). There is no CLI migration runner wired up. Number files sequentially: `0011_...sql`, `0012_...sql`. Use `DO $$ BEGIN … EXCEPTION WHEN others THEN null; END $$;` guards around `ALTER PUBLICATION` statements.
+
+### RLS posture
+
+Default: deny all. Explicit policies for each permitted operation. All host writes (scoring, challenge management) go through `createAdminClient()` which bypasses RLS — no write policies needed for admin-only tables. See `0001_initial.sql` for the full baseline policy set.
 
 ## Teams
-6 teams named after Defqon stage colors:
-
-| Color  | Stage label          |
-|--------|----------------------|
-| Blue   | Blue: Raw            |
-| Yellow | Yellow: UV           |
-| Green  | Green: Mainstage     |
-| Red    | Red: Mainstage       |
-| Indigo | Indigo: Rawstyler    |
-| Black  | Black: Freedom       |
-
-## NFC flow
-- 1 NFC **team identity card** per team → sets a team cookie on first scan ("you are Team Red")
-- 1–2 NFC **entry cards** → randomize team assignment as people tap in
-- Multiple NFC **challenge stickers** per challenge, placed on signs in different rooms → route to the challenge page
-
-Tag routing: `/nfc/[tag]` resolves the tag's purpose from the DB, then redirects.
+6 teams named after Defqon stage colors: `blue` (Raw), `yellow` (UV), `green` (Mainstage), `red` (Mainstage), `indigo` (Rawstyler), `black` (Freedom). Stored in the `teams` table with `color` as the unique natural key.
 
 ## Game variants
-All variants share a unified data model; only the UI differs per variant.
-
-| Variant      | Description                                                              |
-|--------------|--------------------------------------------------------------------------|
-| `normal`     | Guess artist, title, year (curated dropdowns + year slider)              |
-| `label`      | Guess record label                                                       |
-| `anthem`     | Guess festival + standard fields                                         |
-| `vocal`      | Guess movie/show the vocal sample is from                                |
-| `fragments`  | Sort multiple fragments of one track in the correct order                |
-| `kick`       | Hard variant — MC face-grid UI: 8 faces in a row, 5 track slots         |
-| `mashup`     | 5 tracks woven into one audio file, guess all 5                          |
-| `battle`     | *(stretch)* Head-to-head, closest answer wins                            |
-
-## Core features
-- Per-team audio playback (each team has a Bluetooth speaker in their room)
-- Host admin view (`/admin`, password-protected) — set up challenges, adjust scores, advance rounds
-- Live leaderboard (`/leaderboard`) for a TV display — realtime updates, animated score changes
-- Configurable per-challenge timer
-- Dropdown answers (host-curated) over free text to avoid typo issues
-- Year as a slider; scoring with falloff (correct = X pts, ±1 yr = X−Y, etc.)
-
-## Data model (high level)
-See `src/lib/types/index.ts` for TypeScript definitions.
-
-Tables: `teams`, `players`, `tracks`, `clips`, `challenges`, `challenge_tracks`, `answer_options`, `submissions`, `activity_log`, `nfc_tags`
-
-Key relationships:
-- A `challenge` has a `variant` and links to one or more `challenge_tracks`
-- Each `challenge_track` points to a `track` and a `clip`
-- `answer_options` are host-curated dropdown values per challenge + field
-- `nfc_tags` map physical tag UIDs to their purpose (team identity / entry / challenge)
+| Variant | Fields |
+|---------|--------|
+| `normal` | artist, title, year |
+| `label` | label, artist, title, year |
+| `anthem` | festival, artist, title, year |
+| `vocal` | vocal_source, artist, year |
+| `fragments` | title, artist |
+| `kick` | artist |
+| `mashup` | artist, title |
+| `battle` | artist, title, year |
 
 ## Folder structure
 ```
 src/
   lib/
-    components/
-      ui/       ← generic: Button, Timer, Modal
-      game/     ← game-specific: AudioPlayer, Scoreboard, etc.
-    server/     ← server-only: Supabase client, auth helpers
-    stores/     ← Svelte stores: team state, game state
-    types/      ← shared TypeScript types (index.ts)
+    components/ui/     ← Combobox, MultipleChoice, OpenText, YearInput
+    components/game/   ← (game-specific components)
+    server/            ← supabase.ts, team.ts, admin.ts — server-only
+    supabase-browser.ts ← singleton browser client
+    types/
+      index.ts         ← shared TypeScript types (AnswerField, InputMode, ChallengeResult, …)
+      database.ts      ← hand-maintained Supabase row types (regenerate with supabase gen types)
   routes/
-    (game)/             ← route group (no URL segment), team-facing
-      challenge/[id]/   ← main challenge page
-    admin/              ← host admin
-    leaderboard/        ← TV display
-    nfc/[tag]/          ← NFC tap handler (server route)
+    (game)/            ← team-facing pages (no URL segment)
+      challenge/[id]/  ← main challenge page + scoring logic
+      team/            ← team home (score, position, challenge list)
+      join/            ← manual team picker
+    admin/             ← host admin (auth-guarded by layout.server.ts)
+      challenges/[id]/ ← challenge editor (tracks, answer options, input mode picker)
+      live/            ← realtime game console
+      review/          ← manual review queue
+      pools/           ← combobox answer pool management
+      teams/           ← score adjustments
+      tracks/          ← track + clip CRUD
+    leaderboard/       ← TV display (realtime)
+    nfc/[tag]/         ← NFC tap handler (server route only)
 ```
 
-## Build order
-1. **Vertical slice** — Normal Hitster end-to-end: NFC tap → team cookie → challenge → audio → dropdowns → submission → score → leaderboard update
-2. Other dropdown variants (label, anthem, vocal, mashup)
-3. MC face-grid variants (kick, fragments)
-4. Theme + polish (Defqon styling, leaderboard animations)
-5. Randomizer entry card
-6. Stretch: Battle variant, team-built rounds
+## NFC flow
+`/nfc/[tag]` resolves the tag's purpose from `nfc_tags` and redirects:
+- `team_identity` → sets team cookie → `/team`
+- `team_entry` → snake-assigns team via activity_log count → sets cookie → `/team`
+- `challenge` → `/challenge/[id]` (redirects to `/join` first if no cookie)
 
-## NFC sticker URLs
-Write these URLs to physical NFC stickers with NFC Tools (or any NFC writer app):
+## Key data relationships
+- `challenge` → `challenge_tracks` (1–N, ordered by `sort_order`) → `track` + `clip`
+- `answer_options` — host-curated multiple-choice options, keyed by `(challenge_id, field)`
+- `challenge.points_config` (JSONB) — stores `field_modes` (per-field input mode overrides) and `field_points` (per-field max point overrides)
+- `submissions.answers` (JSONB) — player answers keyed by field name
+- `review_requests` — linked to `submission_id` + `field_name`; `resolved = false` = pending queue
 
-| Sticker purpose       | URL to write                                      |
-|-----------------------|---------------------------------------------------|
-| Team Blue identity    | `https://<domain>/nfc/team-blue`                  |
-| Team Yellow identity  | `https://<domain>/nfc/team-yellow`                |
-| Team Green identity   | `https://<domain>/nfc/team-green`                 |
-| Team Red identity     | `https://<domain>/nfc/team-red`                   |
-| Team Indigo identity  | `https://<domain>/nfc/team-indigo`                |
-| Team Black identity   | `https://<domain>/nfc/team-black`                 |
-| Round 1 station       | `https://<domain>/nfc/station-mainstage-1`        |
-| Randomizer entry card | `https://<domain>/nfc/random-entry`               |
-
-Replace `<domain>` with the Vercel deployment URL (e.g. `hitster-app-xyz.vercel.app`).
-
-To add a new challenge station:
-1. Insert a row into `nfc_tags`: `id = 'station-<name>'`, `purpose = 'challenge'`, `challenge_id = <uuid>`
-2. Write `https://<domain>/nfc/station-<name>` to the sticker.
-
-## Cookie
-- Name: `hitster_team` — httpOnly, `sameSite=lax`, 7-day expiry
-- Value: team UUID signed with HMAC-SHA256 (key = `COOKIE_SECRET` env var)
-- Set by: `/nfc/[tag]` (team_identity or team_entry tap) or `/join` (manual picker)
-- Read by: `hooks.server.ts` → `locals.teamId` (available in every load function)
+## Cookie names
+- `hitster_team` — player team identity, 7 days
+- `hitster_admin` — host session, 24 hours
 
 ## Session log
-| Date       | Done |
-|------------|------|
-| 2026-04-26 | SvelteKit + TypeScript + Tailwind v4 scaffold; folder structure; TypeScript types; git + GitHub repo created |
-| 2026-04-26 | Supabase project + schema migration; Supabase client (public + admin); Vercel project linked |
-| 2026-04-26 | Session 3 vertical slice: seed data, challenge page (audio/dropdowns/year/scoring), leaderboard (realtime), dark theme |
-| 2026-04-26 | Session 4 NFC + team identity: cookie helper (HMAC-signed), hooks.server.ts, NFC handler (all 3 tag types), /join picker, /team home, challenge wired to real team, NFC seed migration |
-| 2026-04-29 | Session 5 host admin: /admin/login (HOST_PASSWORD), signed host cookie (24h), auth guard, sidebar layout, tracks manager (CRUD + clips), challenges manager (list/create/editor with track picker + answer options), teams manager (score adjustment + reset-all), live console (realtime scores/submissions/activity), migration 0003 (stage_label, status, points_config, genre, subgenre) |
-| 2026-04-29 | Session 5b fixes: clip panel error surfacing (bug was silent Supabase query failure), display_name on teams (migration 0004 + edit in /admin/teams + shown everywhere), input_mode on answer_options (migration 0005, data-model only) |
-| 2026-04-29 | Session 6: combobox + open text + per-field input modes + manual review queue. Migrations 0006–0009. Combobox/MultipleChoice/OpenText/YearInput components. Dynamic per-field scoring (Levenshtein fuzzy for open_text). Field modes stored in points_config.field_modes. /admin/pools CRUD, /admin/review queue with realtime, /admin/tracks accepted_titles editor, /admin/challenges/[id] input mode picker. |
+| Date | Done |
+|------|------|
+| 2026-04-26 | SvelteKit scaffold, Supabase schema, Vercel link |
+| 2026-04-26 | Session 3: vertical slice (challenge page, leaderboard, dark theme) |
+| 2026-04-26 | Session 4: NFC handler, team cookie, /join, /team home |
+| 2026-04-29 | Session 5: host admin (login, challenges, tracks, teams, live console) |
+| 2026-04-29 | Session 5b: display_name on teams (migration 0004), input_mode column (0005) |
+| 2026-04-29 | Session 6: combobox + open_text input modes, fuzzy scoring, review queue, /admin/pools, /admin/review, accepted_titles |
+| 2026-04-30 | Session 6b: realtime audit — fixed review_requests/activity_log RLS + publication (migration 0010), results screen live, team home live |
+| 2026-04-30 | Session 7a: multi-track challenges, variant defaults UI, scoring.ts, auto-submit timer (migrations 0011–0013) |
 
-## Next session
-- **Run all pending migrations in Supabase SQL editor (in order):**
-  - `0003_admin_fields.sql`, `0004_team_display_name.sql`, `0005_input_mode.sql` (from last sessions)
-  - `0006_answer_pools.sql`, `0007_accepted_titles.sql`, `0008_submission_status.sql`, `0009_review_requests.sql` (session 6, new)
-- Add `HOST_PASSWORD` to Vercel environment variables (still pending)
-- Test full flow in browser: join → challenge → combobox artist pick → open text title → year slider → submit → results with fuzzy %, review request
-- Test /admin/pools — verify artist pool seeds loaded (Angerfist etc)
-- Test /admin/review — submit a deliberately wrong title, request review, approve from admin
-- Test /admin/challenges/[id] input mode picker — set artist=combobox, title=open_text, year=slider and verify it persists
-- Add more artists to /admin/pools as you add real tracks
-- Add `HOST_PASSWORD` to Vercel env vars, then push and smoke-test on Vercel
+## Technical notes
 
-## Technical notes (session 6 design decisions)
-- **Input mode storage**: stored in `challenge.points_config.field_modes` (not `answer_options.input_mode`). The `answer_options.input_mode` column exists from migration 0005 but is not used for rendering decisions — it defaults to `'multiple_choice'` for all rows (set by migration), which would create ambiguity.
-- **Fuzzy scoring threshold**: 90% Levenshtein similarity for open_text fields. A single typo in a ~10-char title still passes. Configure via reviewing/accepting in admin if too strict.
-- **Pool loading**: combobox pool data is fetched server-side (admin client) in the challenge load function and passed as `data.pools` — not exposed as a separate public endpoint.
+### Input mode storage
+Stored in `challenge.points_config.field_modes`, not in `answer_options.input_mode`. The `answer_options.input_mode` column (migration 0005) exists but defaults to `multiple_choice` for all rows — do not use it for rendering decisions.
 
-## Future sessions / roadmap
+### Scoring module
+All scoring logic is in `src/lib/server/scoring.ts`. Key exports: `VARIANT_FIELDS`, `DEFAULT_INPUT_MODES`, `FIELD_POOL_TABLE`, `DEFAULT_FIELD_MAX`, `scoreField`, `buildFieldResults`, `scoreSubmission`. Three-tier point override priority: `challenge.points_config.field_points` > `variant_defaults.points_config.field_points` > `DEFAULT_FIELD_MAX`.
 
-### Session 11 — The Recap
-End-of-event celebration screen shown after the game ends. Not yet built — notes only.
+### Fuzzy scoring threshold
+90% Levenshtein similarity for open_text fields. Configure via `/admin/tracks` accepted_titles if a title variant should pass.
 
-**What it shows:**
-- Podium animation: 3rd / 2nd / 1st place with team colors, staggered reveal
-- Fastest correct answers per challenge (need submission timestamp — already stored in DB)
-- Team submissions overview (who answered what, highlight correct ones)
-- Per-team photo + optional full-group photo displayed alongside the podium
+### Pool loading
+Combobox pool data is fetched server-side (admin client) in the challenge load function → `data.pools`. Not exposed as a public endpoint.
 
-**Data to preserve / set up before building:**
-- Submission timestamps: already in `submissions` table — no schema changes needed
-- Per-team photos: need a Supabase Storage bucket (e.g. `team-photos`), one image per team keyed by team ID
-- Group photo: optional single upload, could live in the same bucket as `group.jpg`
+### submissions.answers format
+New format (migration 0012): array of `AnswerArrayEntry` objects `[{ track_id, field_values: {field: value}, scored: {field: score}, total }]`. Old submissions migrated to single-element arrays. Any code reading `answers` must handle both array (new) and plain object (pre-migration).
 
-**Design notes:**
-- Route: `/recap` (host triggers, maybe via `/admin`)
-- Should be TV-display quality (full-screen, animated, same vibe as `/leaderboard`)
-- Keep it stateless — reads from existing `submissions` + `teams` data, no new tables needed beyond photo storage
+### Multi-track draft state
+Player draft stored in `localStorage` keyed `hitster_draft_${teamId}_${challengeId}` as `{trackId: {field: value}}`. Injected as `answers_json` hidden input before form submit. The `{#key activeTrackIndex}` directive forces Combobox to remount on tab switch so saved values display correctly.
+
+### Auto-submit / timer
+`challenge.started_at` (migration 0013) records when the timer began. `timerEndsAt = started_at + timer_seconds * 1000`. Client counts down; at zero calls `requestSubmit()` on the form. Admin `/admin/live` polls `/api/auto-submit` every 10s to create empty submissions for teams that haven't submitted when a timed challenge expires.
+
+### is_final flag
+`submissions.is_final = true` means no further changes. Set on all submissions (both player-submitted and auto-submitted). Server rejects duplicate submissions with 409.
+
+## Roadmap (not yet built)
+- **Session 7c**: host visibility of in-progress challenges (per-team current activity panel)
+- **Session 7d**: team device coordination (realtime sync of draft state, last-writer-wins per field)
+- **Session 11 — The Recap**: post-game celebration screen — podium animation, fastest answers, team photos

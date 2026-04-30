@@ -40,6 +40,11 @@
 	}
 
 	onMount(() => {
+		// Poll auto-submit every 10s to create empty submissions for timed-out teams
+		const autoSubmitInterval = setInterval(async () => {
+			await fetch('/api/auto-submit', { method: 'POST' });
+		}, 10_000);
+
 		const teamSub = supabaseBrowser
 			.channel('live-teams')
 			.on('postgres_changes', { event: '*', schema: 'public', table: 'teams' }, () => {
@@ -65,6 +70,7 @@
 			.subscribe();
 
 		return () => {
+			clearInterval(autoSubmitInterval);
 			supabaseBrowser.removeChannel(teamSub);
 			supabaseBrowser.removeChannel(actSub);
 			supabaseBrowser.removeChannel(subSub);

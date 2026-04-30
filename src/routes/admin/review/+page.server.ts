@@ -42,8 +42,20 @@ export const load: PageServerLoad = async () => {
 		const sub = subMap.get(rr.submission_id);
 		const team = sub ? teamMap.get(sub.team_id) : null;
 		const challenge = sub ? challengeMap.get(sub.challenge_id) : null;
-		const answers = (sub?.answers ?? {}) as Record<string, string>;
-		const submitted = answers[rr.field_name] ?? '—';
+
+		// Answers can be new array format [{track_id, field_values, ...}] or old flat {field: value}
+		const answers = sub?.answers;
+		let submitted = '—';
+		if (Array.isArray(answers)) {
+			const trackId = rr.track_id;
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const entry: any = trackId
+				? answers.find((e: any) => e.track_id === trackId)
+				: answers[0];
+			submitted = entry?.field_values?.[rr.field_name] ?? '—';
+		} else if (answers && typeof answers === 'object') {
+			submitted = (answers as Record<string, string>)[rr.field_name] ?? '—';
+		}
 
 		// Derive the correct answer from the challenge's variant
 		// (we don't re-fetch the track here — host sees team's answer + field name)

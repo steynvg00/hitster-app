@@ -9,6 +9,7 @@
 		{ href: '/admin/teams', label: 'Teams', icon: '👥' },
 		{ href: '/admin/pools', label: 'Pools', icon: '🗂️' },
 		{ href: '/admin/review', label: 'Review', icon: '🔍' },
+		{ href: '/admin/variant-defaults', label: 'Defaults', icon: '⚙️' },
 		{ href: '/admin/live', label: 'Live', icon: '📡' }
 	];
 

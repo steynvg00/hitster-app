@@ -141,6 +141,7 @@ export type Database = {
 					stage_label: string | null;
 					status: string;
 					points_config: Json;
+					started_at: string | null;
 					created_at: string;
 				};
 				Insert: {
@@ -152,6 +153,7 @@ export type Database = {
 					stage_label?: string | null;
 					status?: string;
 					points_config?: Json;
+					started_at?: string | null;
 					created_at?: string;
 				};
 				Update: {
@@ -163,6 +165,7 @@ export type Database = {
 					stage_label?: string | null;
 					status?: string;
 					points_config?: Json;
+					started_at?: string | null;
 					created_at?: string;
 				};
 				Relationships: [];
@@ -253,6 +256,7 @@ export type Database = {
 					answers: Json;
 					score: number | null;
 					status: SubmissionStatus;
+					is_final: boolean;
 					submitted_at: string;
 					created_at: string;
 				};
@@ -263,6 +267,7 @@ export type Database = {
 					answers?: Json;
 					score?: number | null;
 					status?: SubmissionStatus;
+					is_final?: boolean;
 					submitted_at?: string;
 					created_at?: string;
 				};
@@ -273,6 +278,7 @@ export type Database = {
 					answers?: Json;
 					score?: number | null;
 					status?: SubmissionStatus;
+					is_final?: boolean;
 					submitted_at?: string;
 					created_at?: string;
 				};
@@ -283,6 +289,7 @@ export type Database = {
 					id: string;
 					submission_id: string;
 					field_name: string;
+					track_id: string | null;
 					player_message: string | null;
 					created_at: string;
 					resolved: boolean;
@@ -291,6 +298,7 @@ export type Database = {
 					id?: string;
 					submission_id: string;
 					field_name: string;
+					track_id?: string | null;
 					player_message?: string | null;
 					created_at?: string;
 					resolved?: boolean;
@@ -299,9 +307,25 @@ export type Database = {
 					id?: string;
 					submission_id?: string;
 					field_name?: string;
+					track_id?: string | null;
 					player_message?: string | null;
 					created_at?: string;
 					resolved?: boolean;
+				};
+				Relationships: [];
+			};
+			variant_defaults: {
+				Row: {
+					variant: string;
+					points_config: Json;
+				};
+				Insert: {
+					variant: string;
+					points_config?: Json;
+				};
+				Update: {
+					variant?: string;
+					points_config?: Json;
 				};
 				Relationships: [];
 			};
@@ -364,7 +388,7 @@ export type Database = {
 	};
 };
 
-// Convenience row types — import these in components instead of drilling into Database
+// Convenience row types
 export type TeamRow = Database['public']['Tables']['teams']['Row'];
 export type TrackRow = Database['public']['Tables']['tracks']['Row'];
 export type ClipRow = Database['public']['Tables']['clips']['Row'];
@@ -375,6 +399,7 @@ export type SubmissionRow = Database['public']['Tables']['submissions']['Row'];
 export type NfcTagRow = Database['public']['Tables']['nfc_tags']['Row'];
 export type ActivityLogRow = Database['public']['Tables']['activity_log']['Row'];
 export type ReviewRequestRow = Database['public']['Tables']['review_requests']['Row'];
+export type VariantDefaultRow = Database['public']['Tables']['variant_defaults']['Row'];
 export type AnswerPoolArtistRow = Database['public']['Tables']['answer_pool_artists']['Row'];
 export type AnswerPoolLabelRow = Database['public']['Tables']['answer_pool_labels']['Row'];
 export type AnswerPoolFestivalRow = Database['public']['Tables']['answer_pool_festivals']['Row'];

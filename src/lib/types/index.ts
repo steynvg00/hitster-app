@@ -20,16 +20,16 @@ export interface Track {
 	title: string;
 	year: number;
 	record_label?: string;
-	festival?: string;       // for Anthem variant
-	vocal_source?: string;   // movie/show for Vocal variant
+	festival?: string;
+	vocal_source?: string;
 }
 
 export interface Clip {
 	id: string;
 	track_id: string;
 	type: ClipType;
-	storage_path: string;    // Supabase Storage path
-	position?: number;       // for fragment ordering
+	storage_path: string;
+	position?: number;
 }
 
 // ─── Challenges ──────────────────────────────────────────────────────────────
@@ -48,9 +48,10 @@ export interface Challenge {
 	id: string;
 	variant: ChallengeVariant;
 	title: string;
-	nfc_tag_id?: string;     // NFC sticker linked to this challenge
+	nfc_tag_id?: string;
 	timer_seconds: number;
 	is_active: boolean;
+	started_at?: string | null;
 }
 
 export interface ChallengeTrack {
@@ -83,6 +84,15 @@ export interface AnswerPoolEntry {
 	created_at: string;
 }
 
+// ─── Variant defaults (tier-1 point values) ──────────────────────────────────
+
+export interface VariantDefault {
+	variant: string;
+	points_config: {
+		field_points?: Partial<Record<AnswerField, number>>;
+	};
+}
+
 // ─── Submissions & Scoring ───────────────────────────────────────────────────
 
 export type SubmissionStatus =
@@ -92,13 +102,22 @@ export type SubmissionStatus =
 	| 'review_approved'
 	| 'review_rejected';
 
+// One element of submissions.answers JSONB array (new multi-track format)
+export interface AnswerArrayEntry {
+	track_id: string | null;
+	field_values: Record<string, string>;
+	scored: Record<string, number>;
+	total: number;
+}
+
 export interface Submission {
 	id: string;
 	challenge_id: string;
 	team_id: string;
-	answers: Record<AnswerField, string>;
+	answers: AnswerArrayEntry[];
 	score?: number;
 	status: SubmissionStatus;
+	is_final: boolean;
 	submitted_at: string;
 }
 
@@ -106,12 +125,14 @@ export interface ReviewRequest {
 	id: string;
 	submission_id: string;
 	field_name: string;
+	track_id?: string | null;
 	player_message?: string | null;
 	created_at: string;
 	resolved: boolean;
 }
 
-// Unified per-field scoring result (used in challenge form response + priorResult)
+// ─── Per-field scoring result ─────────────────────────────────────────────────
+
 export interface FieldResult {
 	field: AnswerField;
 	submitted: string;
@@ -121,12 +142,24 @@ export interface FieldResult {
 	fuzzyScore?: number; // 0–1 similarity for open_text fields
 }
 
+// ─── Per-track scoring result (new multi-track shape) ────────────────────────
+
+export interface TrackFieldResult {
+	trackId: string;
+	trackIndex: number; // 1-based display number
+	fields: FieldResult[];
+	total: number;
+	maxTotal: number;
+}
+
+// Challenge result returned by submit action + stored as priorResult in load()
 export interface ChallengeResult {
 	total: number;
 	maxTotal: number;
-	fields: FieldResult[];
+	tracks: TrackFieldResult[]; // one entry per challenge_track
 	status: SubmissionStatus;
 	submissionId: string;
+	isFinal: boolean;
 }
 
 // ─── NFC ─────────────────────────────────────────────────────────────────────
@@ -134,8 +167,8 @@ export interface ChallengeResult {
 export type NfcTagPurpose = 'team_identity' | 'team_entry' | 'challenge';
 
 export interface NfcTag {
-	id: string;             // the physical tag UID
+	id: string;
 	purpose: NfcTagPurpose;
-	team_color?: TeamColor; // set for team_identity tags
-	challenge_id?: string;  // set for challenge tags
+	team_color?: TeamColor;
+	challenge_id?: string;
 }
