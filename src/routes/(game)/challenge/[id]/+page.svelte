@@ -38,8 +38,11 @@
 	}
 
 	// ── Form state ───────────────────────────────────────────────────────────
-	// Track bound values per field so we can gate the submit button for combobox
-	let fieldValues = $state<Record<string, string>>({});
+	// Pre-initialize every field key to '' so bind:value never receives undefined.
+	// Svelte 5 throws props_invalid_value if a $bindable prop receives undefined.
+	let fieldValues = $state<Record<string, string>>(
+		Object.fromEntries(data.variantFields.map((f: AnswerField) => [f, '']))
+	);
 	let yearValue = $state(1990);
 	let submitting = $state(false);
 
