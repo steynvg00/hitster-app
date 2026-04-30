@@ -281,16 +281,16 @@ export const actions: Actions = {
 		}
 		const pointsConfig = (pcRaw.field_points ?? {}) as Record<string, number>;
 
-		// Collect submitted answers from form
+		// Collect submitted answers from form; absent field = empty string (scored as 0)
 		const answers: Record<string, string> = {};
 		for (const f of variantFields) {
 			answers[f] = (formData.get(f) as string | null) ?? '';
 		}
 
-		// Validate: all fields must be present
-		const missing = variantFields.filter((f) => !answers[f]);
-		if (missing.length > 0) {
-			return fail(400, { formError: `Missing fields: ${missing.join(', ')}` });
+		// Reject only if the form itself is structurally broken (field not in body at all)
+		const absent = variantFields.filter((f) => formData.get(f) === null);
+		if (absent.length > 0) {
+			return fail(400, { formError: `Incomplete form — please try again` });
 		}
 
 		const fields = buildFieldResults(variantFields, answers, track, fieldModes, pointsConfig);
@@ -298,18 +298,23 @@ export const actions: Actions = {
 		const maxTotal = fields.reduce((s, f) => s + f.maxScore, 0);
 		const status: SubmissionStatus = total === maxTotal ? 'auto_correct' : 'auto_wrong';
 
+		// Insert without status column so this works before migration 0008 is run
 		const { data: sub, error: subErr } = await supabase.from('submissions').insert({
 			challenge_id: params.id,
 			team_id: teamId,
 			answers,
-			score: total,
-			status
+			score: total
 		}).select('id').single();
 
 		if (subErr) {
 			if (subErr.code === '23505') return fail(409, { formError: 'Already submitted — reload to see your result' });
 			return fail(500, { formError: subErr.message });
 		}
+
+		if (!sub) return fail(500, { formError: 'Submission insert returned no data' });
+
+		// Best-effort status update — requires migration 0008; silently ignored if column missing
+		await admin.from('submissions').update({ status } as never).eq('id', sub.id);
 
 		// Increment team score via admin client (bypasses RLS)
 		const { data: teamRow } = await admin.from('teams').select('score').eq('id', teamId).single();
