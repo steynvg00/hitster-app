@@ -51,7 +51,6 @@ export interface Challenge {
 	nfc_tag_id?: string;
 	timer_seconds: number;
 	is_active: boolean;
-	started_at?: string | null;
 }
 
 export interface ChallengeTrack {

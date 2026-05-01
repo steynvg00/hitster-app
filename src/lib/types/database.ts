@@ -141,7 +141,6 @@ export type Database = {
 					stage_label: string | null;
 					status: string;
 					points_config: Json;
-					started_at: string | null;
 					created_at: string;
 				};
 				Insert: {
@@ -153,7 +152,6 @@ export type Database = {
 					stage_label?: string | null;
 					status?: string;
 					points_config?: Json;
-					started_at?: string | null;
 					created_at?: string;
 				};
 				Update: {
@@ -165,7 +163,33 @@ export type Database = {
 					stage_label?: string | null;
 					status?: string;
 					points_config?: Json;
-					started_at?: string | null;
+					created_at?: string;
+				};
+				Relationships: [];
+			};
+			challenge_attempts: {
+				Row: {
+					id: string;
+					challenge_id: string;
+					team_id: string;
+					started_at: string;
+					ended_at: string | null;
+					created_at: string;
+				};
+				Insert: {
+					id?: string;
+					challenge_id: string;
+					team_id: string;
+					started_at?: string;
+					ended_at?: string | null;
+					created_at?: string;
+				};
+				Update: {
+					id?: string;
+					challenge_id?: string;
+					team_id?: string;
+					started_at?: string;
+					ended_at?: string | null;
 					created_at?: string;
 				};
 				Relationships: [];
@@ -394,6 +418,7 @@ export type TrackRow = Database['public']['Tables']['tracks']['Row'];
 export type ClipRow = Database['public']['Tables']['clips']['Row'];
 export type ChallengeRow = Database['public']['Tables']['challenges']['Row'];
 export type ChallengeTrackRow = Database['public']['Tables']['challenge_tracks']['Row'];
+export type AttemptRow = Database['public']['Tables']['challenge_attempts']['Row'];
 export type AnswerOptionRow = Database['public']['Tables']['answer_options']['Row'];
 export type SubmissionRow = Database['public']['Tables']['submissions']['Row'];
 export type NfcTagRow = Database['public']['Tables']['nfc_tags']['Row'];
