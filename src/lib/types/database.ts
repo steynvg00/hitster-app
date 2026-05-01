@@ -44,20 +44,35 @@ export type Database = {
 			players: {
 				Row: {
 					id: string;
-					team_id: string;
+					team_id: string | null;
 					name: string;
+					display_name: string;
+					photo_url: string | null;
+					session_token: string | null;
+					mode: 'team' | 'solo_group' | 'solo_private';
+					session_expires_at: string | null;
 					created_at: string;
 				};
 				Insert: {
 					id?: string;
-					team_id: string;
+					team_id?: string | null;
 					name: string;
+					display_name: string;
+					photo_url?: string | null;
+					session_token?: string | null;
+					mode?: 'team' | 'solo_group' | 'solo_private';
+					session_expires_at?: string | null;
 					created_at?: string;
 				};
 				Update: {
 					id?: string;
-					team_id?: string;
+					team_id?: string | null;
 					name?: string;
+					display_name?: string;
+					photo_url?: string | null;
+					session_token?: string | null;
+					mode?: 'team' | 'solo_group' | 'solo_private';
+					session_expires_at?: string | null;
 					created_at?: string;
 				};
 				Relationships: [];
