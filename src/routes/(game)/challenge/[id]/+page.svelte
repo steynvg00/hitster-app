@@ -124,15 +124,52 @@
 	}
 
 	onMount(() => {
-		if (!data.timerEndsAt) return;
-		const update = () => {
-			const remaining = Math.max(0, data.timerEndsAt! - Date.now());
-			timerMs = remaining;
-			if (remaining === 0 && !result && !submitting) triggerSubmit();
+		let iv: ReturnType<typeof setInterval> | undefined;
+
+		// Countdown timer (only when challenge has been started by host)
+		if (data.timerEndsAt) {
+			const update = () => {
+				const remaining = Math.max(0, data.timerEndsAt! - Date.now());
+				timerMs = remaining;
+				if (remaining === 0 && !result && !submitting) triggerSubmit();
+			};
+			update();
+			iv = setInterval(update, 500);
+		}
+
+		// Detect when host starts the challenge (started_at becomes non-null)
+		const challengeChannel = supabaseBrowser
+			.channel(`challenge-state-${data.challenge.id}`)
+			.on('postgres_changes', {
+				event: 'UPDATE', schema: 'public', table: 'challenges',
+				filter: `id=eq.${data.challenge.id}`
+			}, (payload) => {
+				const updated = payload.new as { started_at: string | null };
+				if (updated.started_at && !data.challenge.started_at) {
+					window.location.reload();
+				}
+			})
+			.subscribe();
+
+		// Detect auto-submitted submission for this team (server created it after timer expired)
+		const submissionInsertChannel = supabaseBrowser
+			.channel(`sub-insert-${data.challenge.id}-${data.team.id}`)
+			.on('postgres_changes', {
+				event: 'INSERT', schema: 'public', table: 'submissions',
+				filter: `challenge_id=eq.${data.challenge.id}`
+			}, (payload) => {
+				const newSub = payload.new as { team_id: string; is_final: boolean };
+				if (newSub.team_id === data.team.id && newSub.is_final && !result) {
+					window.location.reload();
+				}
+			})
+			.subscribe();
+
+		return () => {
+			if (iv) clearInterval(iv);
+			supabaseBrowser.removeChannel(challengeChannel);
+			supabaseBrowser.removeChannel(submissionInsertChannel);
 		};
-		update();
-		const iv = setInterval(update, 500);
-		return () => clearInterval(iv);
 	});
 
 	// ── Result (declared before canSubmit so it can be referenced) ───────────
@@ -140,6 +177,11 @@
 	const f = $derived(form as any);
 	const result = $derived<ChallengeResult | null>(
 		f?.submitted ? (f.result as ChallengeResult) : (data.priorResult ?? null)
+	);
+
+	// True when challenge has a timer but host hasn't started it yet
+	const isWaiting = $derived(
+		(data.challenge.timer_seconds ?? 0) > 0 && !data.challenge.started_at && !result
 	);
 
 	// ── Validation ────────────────────────────────────────────────────────────
@@ -214,7 +256,25 @@
 	});
 </script>
 
-{#if result}
+{#if isWaiting}
+	<!-- ── Waiting for host to start ────────────────────────────────────────── -->
+	<div class="mx-auto min-h-screen max-w-lg p-4">
+		<div class="pb-6 pt-4">
+			<span class="rounded-full px-3 py-1 text-xs font-bold uppercase tracking-widest text-white"
+				style="background-color: {teamHex};">
+				{data.team.display_name}
+			</span>
+		</div>
+		<h1 class="mb-6 text-2xl font-black">{data.challenge.title}</h1>
+		<div class="rounded-2xl border border-zinc-800 bg-zinc-900 p-10 text-center space-y-4">
+			<div class="flex justify-center">
+				<div class="h-10 w-10 animate-spin rounded-full border-2 border-zinc-700 border-t-zinc-300"></div>
+			</div>
+			<p class="text-lg font-semibold text-zinc-200">Waiting for host to start</p>
+			<p class="text-sm text-zinc-500">The {data.challenge.timer_seconds}s timer will begin when the host starts the challenge.</p>
+		</div>
+	</div>
+{:else if result}
 	<!-- ── Results screen ──────────────────────────────────────────────────── -->
 	<div class="mx-auto min-h-screen max-w-lg p-4">
 		<div class="pb-6 pt-4">
