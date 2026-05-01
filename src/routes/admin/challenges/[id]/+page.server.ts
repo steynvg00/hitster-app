@@ -20,9 +20,10 @@ export const load: PageServerLoad = async ({ params }) => {
 	const challengeTracks = ctResult.data ?? [];
 	const allTracks = tracksResult.data ?? [];
 
-	// Load clips for all tracks that appear in this challenge
-	const trackIds = [...new Set(challengeTracks.map((ct) => ct.track_id))];
-	const { data: clips } = await db.from('clips').select('*').in('track_id', trackIds.length ? trackIds : ['__none__']);
+	// Load clips for all tracks in the library (not just tracks already in this challenge)
+	// so the clip dropdown populates when the admin picks any available track.
+	const allTrackIds = allTracks.map((t) => t.id);
+	const { data: clips } = await db.from('clips').select('*').in('track_id', allTrackIds.length ? allTrackIds : ['__none__']);
 
 	// Load answer options for this challenge
 	const { data: answerOptions } = await db.from('answer_options').select('*').eq('challenge_id', params.id);
