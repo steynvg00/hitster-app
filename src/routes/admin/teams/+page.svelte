@@ -60,7 +60,7 @@
 			</button>
 		{:else}
 			<div class="flex items-center gap-2 bg-red-950 border border-red-700 rounded-xl p-3">
-				<span class="text-red-300 text-sm">Clear all scores, submissions, and activity log?</span>
+				<span class="text-red-300 text-sm">Clear all scores, submissions, attempts, review requests, and activity log? Challenges revert to active.</span>
 				<form method="POST" action="?/resetEverything" use:enhance class="flex gap-2">
 					<button type="submit" class="bg-red-600 hover:bg-red-500 text-white text-sm font-bold px-3 py-1.5 rounded-lg transition-colors">
 						Yes, reset all

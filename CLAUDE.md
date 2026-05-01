@@ -162,6 +162,7 @@ src/
 | 2026-04-29 | Session 6: combobox + open_text input modes, fuzzy scoring, review queue, /admin/pools, /admin/review, accepted_titles |
 | 2026-04-30 | Session 6b: realtime audit — fixed review_requests/activity_log RLS + publication (migration 0010), results screen live, team home live |
 | 2026-04-30 | Session 7a: multi-track challenges, variant defaults UI, scoring.ts, auto-submit timer (migrations 0011–0013) |
+| 2026-05-01 | Session 7a cleanup: per-team challenge attempts replace challenges.started_at (migration 0014); per-attempt admin reset |
 
 ## Technical notes
 
@@ -183,8 +184,12 @@ New format (migration 0012): array of `AnswerArrayEntry` objects `[{ track_id, f
 ### Multi-track draft state
 Player draft stored in `localStorage` keyed `hitster_draft_${teamId}_${challengeId}` as `{trackId: {field: value}}`. Injected as `answers_json` hidden input before form submit. The `{#key activeTrackIndex}` directive forces Combobox to remount on tab switch so saved values display correctly.
 
-### Auto-submit / timer
-`challenge.started_at` (migration 0013) records when the timer began. `timerEndsAt = started_at + timer_seconds * 1000`. Client counts down; at zero calls `requestSubmit()` on the form. Admin `/admin/live` polls `/api/auto-submit` every 10s to create empty submissions for teams that haven't submitted when a timed challenge expires.
+### Per-team challenge attempts
+`challenge_attempts` (migration 0014) tracks each team's independent timer start. When a team first lands on `/challenge/[id]` (via NFC or direct URL), the server creates an attempt row for that team if the challenge is `status='active'` and no attempt exists yet. The timer deadline is `attempt.started_at + challenge.timer_seconds * 1000`. Client counts down from that; at zero it auto-submits the form.
+
+Admin `/admin/live` polls `/api/auto-submit` every 10s. The endpoint finds attempts where `ended_at IS NULL` and `started_at + timer_seconds < now`, creates empty `is_final=true` submissions for those teams, and sets `attempt.ended_at = now()`. Both normal submission and auto-submit set `ended_at`.
+
+Hosts can reset an individual team's attempt from `/admin/live` (deletes attempt + submission, deducts score). `/admin/teams` "Reset Everything" also clears all attempts.
 
 ### is_final flag
 `submissions.is_final = true` means no further changes. Set on all submissions (both player-submitted and auto-submitted). Server rejects duplicate submissions with 409.

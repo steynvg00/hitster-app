@@ -92,9 +92,17 @@ export const actions: Actions = {
 
 		await Promise.all([
 			db.from('submissions').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
+			db.from('review_requests').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
 			db.from('activity_log').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
+			db.from('challenge_attempts').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
 			db.from('teams').update({ score: 0 }).neq('id', '00000000-0000-0000-0000-000000000000')
 		]);
+
+		// Re-activate any challenges that were auto-completed
+		await db
+			.from('challenges')
+			.update({ status: 'active', is_active: true })
+			.neq('status', 'active');
 
 		return { success: true, action: 'resetEverything' };
 	}
