@@ -39,33 +39,36 @@ export const POST: RequestHandler = async ({ locals }) => {
 		const submittedTeamIds = new Set((existingSubs ?? []).map((s) => s.team_id));
 		const missingTeams = teams.filter((t) => !submittedTeamIds.has(t.id));
 
-		if (!missingTeams.length) continue;
+		if (missingTeams.length > 0) {
+			// Get challenge tracks for the empty answers shape
+			const { data: cts } = await db
+				.from('challenge_tracks')
+				.select('track_id, sort_order')
+				.eq('challenge_id', ch.id)
+				.order('sort_order');
 
-		// Get challenge tracks for the empty answers shape
-		const { data: cts } = await db
-			.from('challenge_tracks')
-			.select('track_id, sort_order')
-			.eq('challenge_id', ch.id)
-			.order('sort_order');
+			const emptyAnswers = (cts ?? []).map((ct) => ({
+				track_id: ct.track_id,
+				field_values: {},
+				scored: {},
+				total: 0
+			}));
 
-		const emptyAnswers = (cts ?? []).map((ct) => ({
-			track_id: ct.track_id,
-			field_values: {},
-			scored: {},
-			total: 0
-		}));
-
-		for (const team of missingTeams) {
-			const { error: insertErr } = await db.from('submissions').insert({
-				challenge_id: ch.id,
-				team_id: team.id,
-				answers: emptyAnswers as never,
-				score: 0,
-				status: 'auto_wrong',
-				is_final: true
-			});
-			if (!insertErr) created++;
+			for (const team of missingTeams) {
+				const { error: insertErr } = await db.from('submissions').insert({
+					challenge_id: ch.id,
+					team_id: team.id,
+					answers: emptyAnswers as never,
+					score: 0,
+					status: 'auto_wrong',
+					is_final: true
+				});
+				if (!insertErr) created++;
+			}
 		}
+
+		// Expired challenge → mark completed (all teams now have final submissions)
+		await db.from('challenges').update({ status: 'completed', is_active: false }).eq('id', ch.id);
 	}
 
 	return json({ created });
