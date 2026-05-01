@@ -163,6 +163,7 @@ src/
 | 2026-04-30 | Session 6b: realtime audit — fixed review_requests/activity_log RLS + publication (migration 0010), results screen live, team home live |
 | 2026-04-30 | Session 7a: multi-track challenges, variant defaults UI, scoring.ts, auto-submit timer (migrations 0011–0013) |
 | 2026-05-01 | Session 7a cleanup: per-team challenge attempts replace challenges.started_at (migration 0014); per-attempt admin reset |
+| 2026-05-02 | Session 8a: audio upload UI — drag-and-drop clip uploader, storage bucket (migrations 0015–0016), search/filter, HTML5 audio players, bulk-delete clips |
 
 ## Technical notes
 
@@ -197,4 +198,5 @@ Hosts can reset an individual team's attempt from `/admin/live` (deletes attempt
 ## Roadmap (not yet built)
 - **Session 7c**: host visibility of in-progress challenges (per-team current activity panel)
 - **Session 7d**: team device coordination (realtime sync of draft state, last-writer-wins per field)
+- **Session 8b — In-app trim**: upload a longer source (audio/video, screen recording, file or URL), waveform UI to scrub and pick a segment, ffmpeg.wasm to trim client-side, save as clip. Used for: host trimming Spotify recordings, players uploading their own clips for variant 7.
 - **Session 11 — The Recap**: post-game celebration screen — podium animation, fastest answers, team photos

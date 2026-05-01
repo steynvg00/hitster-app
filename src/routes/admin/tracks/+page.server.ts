@@ -90,7 +90,16 @@ export const actions: Actions = {
 		const id = data.get('id') as string;
 		if (!id) return fail(400, { error: 'Missing track id' });
 
-		// Delete clips first (FK), then track
+		// Remove any storage-hosted clips for this track
+		const { data: clips } = await db
+			.from('clips')
+			.select('storage_object_path')
+			.eq('track_id', id);
+		const paths = (clips ?? [])
+			.map((c) => c.storage_object_path)
+			.filter((p): p is string => typeof p === 'string' && p.length > 0);
+		if (paths.length > 0) await db.storage.from('audio').remove(paths);
+
 		await db.from('clips').delete().eq('track_id', id);
 		const { error } = await db.from('tracks').delete().eq('id', id);
 		if (error) return fail(500, { error: error.message });
@@ -126,6 +135,16 @@ export const actions: Actions = {
 		const data = await request.formData();
 		const id = data.get('id') as string;
 		if (!id) return fail(400, { error: 'Missing clip id' });
+
+		// Remove from storage if it was uploaded via the new upload path
+		const { data: clip } = await db
+			.from('clips')
+			.select('storage_object_path')
+			.eq('id', id)
+			.maybeSingle();
+		if (clip?.storage_object_path) {
+			await db.storage.from('audio').remove([clip.storage_object_path]);
+		}
 
 		const { error } = await db.from('clips').delete().eq('id', id);
 		if (error) return fail(500, { error: error.message });
