@@ -49,13 +49,19 @@
 		return data.clips.filter((c) => c.track_id === trackId);
 	}
 
-	// Tracks not yet in this challenge
-	const usedTrackIds = $derived(new Set(data.challengeTracks.map((ct) => ct.track_id)));
-	const availableTracks = $derived(data.allTracks.filter((t) => !usedTrackIds.has(t.id)));
+	// Clip IDs already attached to this challenge — the unit of deduplication is
+	// (track_id, clip_id), not track_id alone. A track can appear multiple times
+	// if it has different clip types (e.g. snippet + 4 fragments).
+	const usedClipIds = $derived(new Set(data.challengeTracks.map((ct) => ct.clip_id)));
 
 	let selectedTrackId = $state('');
 	let selectedClipId = $state('');
-	let clipsForSelected = $derived(selectedTrackId ? clipsFor(selectedTrackId) : []);
+	// Only offer clips that aren't already attached to this challenge
+	const clipsForSelected = $derived(
+		selectedTrackId
+			? clipsFor(selectedTrackId).filter((c) => !usedClipIds.has(c.id))
+			: []
+	);
 
 	$effect(() => {
 		// Reset clip when track changes
@@ -216,30 +222,36 @@
 		{/if}
 
 		<!-- Add track picker -->
-		{#if availableTracks.length > 0}
+		{#if data.allTracks.length > 0}
 			<form method="POST" action="?/addTrack" use:enhance class="flex gap-2 flex-wrap items-end border-t border-zinc-800 pt-4">
 				<div class="flex-1 min-w-40">
 					<label class="block text-xs text-zinc-400 mb-1">Track</label>
 					<select name="track_id" bind:value={selectedTrackId} required class="input-field">
 						<option value="">— choose track —</option>
-						{#each availableTracks as t}
+						{#each data.allTracks as t}
 							<option value={t.id}>{t.artist} — {t.title} ({t.year})</option>
 						{/each}
 					</select>
 				</div>
 				<div class="flex-1 min-w-40">
 					<label class="block text-xs text-zinc-400 mb-1">Clip</label>
-					<select name="clip_id" bind:value={selectedClipId} required class="input-field" disabled={!selectedTrackId}>
-						<option value="">— choose clip —</option>
-						{#each clipsForSelected as c}
-							<option value={c.id}>{c.type}{c.position != null ? ` #${c.position}` : ''} — {c.storage_path.slice(-30)}</option>
-						{/each}
+					<select name="clip_id" bind:value={selectedClipId} required class="input-field" disabled={!selectedTrackId || clipsForSelected.length === 0}>
+						{#if !selectedTrackId}
+							<option value="">— choose track first —</option>
+						{:else if clipsForSelected.length === 0}
+							<option value="">All clips already added</option>
+						{:else}
+							<option value="">— choose clip —</option>
+							{#each clipsForSelected as c}
+								<option value={c.id}>{c.type}{c.position != null ? ` #${c.position}` : ''} — {c.storage_path.slice(-30)}</option>
+							{/each}
+						{/if}
 					</select>
 				</div>
 				<button type="submit" class="btn-primary" disabled={!selectedTrackId || !selectedClipId}>Add</button>
 			</form>
 		{:else}
-			<p class="text-zinc-600 text-xs border-t border-zinc-800 pt-4">All library tracks are already in this challenge.</p>
+			<p class="text-zinc-600 text-xs border-t border-zinc-800 pt-4">No tracks in the library yet.</p>
 		{/if}
 	</section>
 
