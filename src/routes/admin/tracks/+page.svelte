@@ -465,8 +465,13 @@
 							{#if (stagedFiles[track.id] ?? []).length > 0}
 								<div class="mt-3 space-y-2">
 									{#each stagedFiles[track.id] as staged (staged.id)}
+										<!--
+											Explicit grid columns so .input-field width:100% fills each
+											column rather than blowing out the layout:
+											[icon] [filename+meta] [type dropdown] [order input] [remove]
+										-->
 										<div
-											class="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm {staged.status ===
+											class="grid items-center gap-x-3 rounded-lg border px-3 py-2 text-sm {staged.status ===
 											'done'
 												? 'border-green-800 bg-green-950/40'
 												: staged.status === 'failed'
@@ -474,9 +479,10 @@
 													: staged.status === 'uploading'
 														? 'border-amber-700 bg-amber-950/30'
 														: 'border-zinc-700 bg-zinc-900'}"
+											style="grid-template-columns: 1.25rem 1fr 7.5rem 5rem 1.25rem"
 										>
 											<!-- Status indicator -->
-											<span class="w-5 shrink-0 text-center text-xs">
+											<span class="text-center text-xs">
 												{#if staged.status === 'queued'}⏳
 												{:else if staged.status === 'uploading'}⬆
 												{:else if staged.status === 'done'}✓
@@ -484,7 +490,7 @@
 											</span>
 
 											<!-- Filename + meta -->
-											<div class="min-w-0 flex-1">
+											<div class="min-w-0">
 												<div class="truncate text-zinc-200">{staged.name}</div>
 												<div class="text-xs text-zinc-500">
 													{formatSize(staged.size)}
@@ -497,7 +503,7 @@
 											<select
 												bind:value={staged.clipType}
 												disabled={staged.status !== 'queued'}
-												class="input-field w-28 shrink-0 py-1 text-xs disabled:opacity-50"
+												class="input-field py-1 text-xs disabled:opacity-50"
 											>
 												{#each CLIP_TYPES as t}
 													<option value={t}>{t}</option>
@@ -511,18 +517,20 @@
 												disabled={staged.status !== 'queued'}
 												placeholder="Order"
 												min="1"
-												class="input-field w-20 shrink-0 py-1 text-xs disabled:opacity-50"
+												class="input-field py-1 text-xs disabled:opacity-50"
 											/>
 
 											<!-- Remove button (queued/failed only) -->
 											{#if staged.status === 'queued' || staged.status === 'failed'}
 												<button
 													onclick={() => removeStagedFile(track.id, staged.id)}
-													class="shrink-0 text-zinc-600 hover:text-red-400"
+													class="text-zinc-600 hover:text-red-400"
 													title="Remove"
 												>
 													✕
 												</button>
+											{:else}
+												<span></span>
 											{/if}
 										</div>
 									{/each}
