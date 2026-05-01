@@ -117,22 +117,9 @@
 	let formEl = $state<HTMLFormElement | undefined>(undefined);
 	let submitting = $state(false);
 
-	function injectAnswersJson() {
-		if (!formEl) return;
-		let hidden = formEl.querySelector<HTMLInputElement>('input[name="answers_json"]');
-		if (!hidden) {
-			hidden = document.createElement('input');
-			hidden.type = 'hidden';
-			hidden.name = 'answers_json';
-			formEl.appendChild(hidden);
-		}
-		hidden.value = JSON.stringify(buildAnswersForSubmit());
-	}
-
 	function triggerSubmit() {
 		if (submitting || result) return;
 		submitting = true;
-		injectAnswersJson();
 		formEl?.requestSubmit();
 	}
 
@@ -440,9 +427,9 @@
 		{/if}
 
 		<form bind:this={formEl} method="POST" action="?/submit"
-			use:enhance={() => {
+			use:enhance={({ formData }) => {
 				submitting = true;
-				injectAnswersJson();
+				formData.set('answers_json', JSON.stringify(buildAnswersForSubmit()));
 				return async ({ update }) => { await update(); submitting = false; };
 			}}
 			class="space-y-5">

@@ -236,7 +236,7 @@ export const actions: Actions = {
 			fieldPoints[f] = challengeFieldPoints[f] ?? variantDefaultPoints[f] ?? DEFAULT_FIELD_MAX[f as AnswerField] ?? 5;
 		}
 
-		// Parse answers_json from form (injected by use:enhance)
+		// Parse answers_json from form (set directly on FormData by use:enhance callback)
 		const answersJsonRaw = (formData.get('answers_json') as string | null) ?? '{}';
 		let draftByTrack: Record<string, Record<string, string>> = {};
 		try {
