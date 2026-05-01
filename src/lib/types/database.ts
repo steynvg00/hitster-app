@@ -111,6 +111,8 @@ export type Database = {
 					type: ClipType;
 					storage_path: string;
 					position: number | null;
+					duration: number | null;
+					storage_object_path: string | null;
 					created_at: string;
 				};
 				Insert: {
@@ -119,6 +121,8 @@ export type Database = {
 					type: ClipType;
 					storage_path: string;
 					position?: number | null;
+					duration?: number | null;
+					storage_object_path?: string | null;
 					created_at?: string;
 				};
 				Update: {
@@ -127,6 +131,8 @@ export type Database = {
 					type?: ClipType;
 					storage_path?: string;
 					position?: number | null;
+					duration?: number | null;
+					storage_object_path?: string | null;
 					created_at?: string;
 				};
 				Relationships: [];
