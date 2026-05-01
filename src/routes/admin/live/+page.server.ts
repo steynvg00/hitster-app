@@ -38,6 +38,22 @@ export const load: PageServerLoad = async () => {
 };
 
 export const actions: Actions = {
+	startChallenge: async ({ request }) => {
+		const db = createAdminClient();
+		const data = await request.formData();
+		const id = data.get('id') as string;
+		if (!id) return fail(400, { error: 'Missing challenge id' });
+
+		const { error } = await db
+			.from('challenges')
+			.update({ started_at: new Date().toISOString() })
+			.eq('id', id)
+			.is('started_at', null);
+
+		if (error) return fail(500, { error: error.message });
+		return { success: true };
+	},
+
 	closeChallenge: async ({ request }) => {
 		const db = createAdminClient();
 		const data = await request.formData();
