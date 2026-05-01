@@ -13,6 +13,11 @@
 	let activity = $state<ActivityLogRow[]>(untrack(() => data.recentActivity));
 	let activeChallenges = $state<ActiveChallenge[]>(untrack(() => data.activeChallenges));
 
+	// Sync activeChallenges when data updates after form actions
+	$effect(() => {
+		activeChallenges = data.activeChallenges;
+	});
+
 	const teamColorHex: Record<string, string> = {
 		blue: '#3b82f6', yellow: '#eab308', green: '#22c55e',
 		red: '#ef4444', indigo: '#6366f1', black: '#64748b'
@@ -27,6 +32,11 @@
 		return d.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 	}
 
+	function fmtMs(ms: number): string {
+		const s = Math.ceil(ms / 1000);
+		return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+	}
+
 	function activityLabel(a: ActivityLogRow): string {
 		const base = a.event_type.replace(/_/g, ' ');
 		const payload = a.payload as Record<string, unknown> | null;
@@ -39,10 +49,24 @@
 		return base;
 	}
 
+	// ── Polling state ─────────────────────────────────────────────────────────
+	let pollingActive = $state(false);
+	let lastPolledAt = $state<Date | null>(null);
+
+	// ── Live clock (for per-challenge timer display) ───────────────────────────
+	let now = $state(Date.now());
+
 	onMount(() => {
+		const clockIv = setInterval(() => { now = Date.now(); }, 1000);
+
 		// Poll auto-submit every 10s to create empty submissions for timed-out teams
 		const autoSubmitInterval = setInterval(async () => {
-			await fetch('/api/auto-submit', { method: 'POST' });
+			pollingActive = true;
+			try {
+				await fetch('/api/auto-submit', { method: 'POST' });
+			} catch { /* swallow network errors */ }
+			pollingActive = false;
+			lastPolledAt = new Date();
 		}, 10_000);
 
 		const teamSub = supabaseBrowser
@@ -64,16 +88,25 @@
 			.channel('live-submissions')
 			.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'submissions' }, () => {
 				// Refresh submission counts for active challenges by reloading
-				// This is a simple approach — a full realtime join would be overkill here
+				window.location.reload();
+			})
+			.subscribe();
+
+		const challengeSub = supabaseBrowser
+			.channel('live-challenges')
+			.on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'challenges' }, () => {
+				// Refresh when any challenge changes (e.g. started_at set, status completed)
 				window.location.reload();
 			})
 			.subscribe();
 
 		return () => {
+			clearInterval(clockIv);
 			clearInterval(autoSubmitInterval);
 			supabaseBrowser.removeChannel(teamSub);
 			supabaseBrowser.removeChannel(actSub);
 			supabaseBrowser.removeChannel(subSub);
+			supabaseBrowser.removeChannel(challengeSub);
 		};
 	});
 
@@ -87,9 +120,20 @@
 			<h1 class="text-2xl font-bold text-white">Live Console</h1>
 			<p class="text-zinc-400 text-sm mt-0.5">Realtime game state</p>
 		</div>
-		<div class="flex items-center gap-2 text-xs text-green-400">
-			<span class="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
-			Live
+		<div class="flex items-center gap-4">
+			<div class="text-xs {pollingActive ? 'text-amber-400' : 'text-zinc-600'}">
+				{#if pollingActive}
+					Polling…
+				{:else if lastPolledAt}
+					Polled {fmtTime(lastPolledAt.toISOString())}
+				{:else}
+					Auto-submit armed
+				{/if}
+			</div>
+			<div class="flex items-center gap-2 text-xs text-green-400">
+				<span class="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
+				Live
+			</div>
 		</div>
 	</div>
 
@@ -128,16 +172,20 @@
 			{:else}
 				<div class="space-y-3">
 					{#each activeChallenges as challenge (challenge.id)}
+						{@const startedMs = challenge.started_at ? new Date(challenge.started_at).getTime() : null}
+						{@const endsAt = startedMs && challenge.timer_seconds > 0 ? startedMs + challenge.timer_seconds * 1000 : null}
+						{@const remainingMs = endsAt ? Math.max(0, endsAt - now) : null}
 						<div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
-							<div class="flex items-start justify-between mb-3">
-								<div>
+							<div class="flex items-start justify-between mb-2">
+								<div class="min-w-0 flex-1">
 									<div class="font-semibold text-white">{challenge.title}</div>
 									<div class="text-xs text-zinc-500 mt-0.5">
 										{challenge.variant}
 										{#if challenge.stage_label} · {challenge.stage_label}{/if}
+										{#if challenge.timer_seconds > 0} · {challenge.timer_seconds}s timer{/if}
 									</div>
 								</div>
-								<form method="POST" action="?/closeChallenge" use:enhance>
+								<form method="POST" action="?/closeChallenge" use:enhance class="ml-2 shrink-0">
 									<input type="hidden" name="id" value={challenge.id} />
 									<button
 										type="submit"
@@ -148,6 +196,32 @@
 									</button>
 								</form>
 							</div>
+
+							<!-- Timer / start control -->
+							{#if challenge.timer_seconds > 0}
+								<div class="mb-3">
+									{#if !challenge.started_at}
+										<form method="POST" action="?/startChallenge" use:enhance>
+											<input type="hidden" name="id" value={challenge.id} />
+											<button
+												type="submit"
+												class="w-full rounded-lg bg-green-700 hover:bg-green-600 text-white text-sm font-bold py-1.5 transition-colors"
+											>
+												Start challenge
+											</button>
+										</form>
+									{:else if remainingMs !== null && remainingMs > 0}
+										<div class="flex items-center justify-between text-sm">
+											<span class="text-zinc-400">Time remaining</span>
+											<span class="font-mono font-bold tabular-nums {remainingMs < 30_000 ? 'text-red-400' : remainingMs < 60_000 ? 'text-yellow-400' : 'text-green-400'}">
+												{fmtMs(remainingMs)}
+											</span>
+										</div>
+									{:else if remainingMs === 0}
+										<div class="text-xs text-amber-400 font-semibold">Timer expired — polling will auto-submit</div>
+									{/if}
+								</div>
+							{/if}
 
 							<!-- Submitted / not submitted per team -->
 							<div class="grid grid-cols-2 gap-1">
