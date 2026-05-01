@@ -40,16 +40,33 @@ export const load: PageServerLoad = async ({ params, cookies, locals }) => {
 	const trackIds = challengeTracks.map((ct) => ct.track_id);
 	const clipIds = challengeTracks.map((ct) => ct.clip_id);
 
-	const [tracksResult, clipsResult, teamResult] = await Promise.all([
+	const [tracksResult, clipsResult, teamResult, attemptResult] = await Promise.all([
 		admin.from('tracks').select('*').in('id', trackIds),
 		supabase.from('clips').select('*').in('id', clipIds),
-		supabase.from('teams').select('*').eq('id', locals.teamId).single()
+		supabase.from('teams').select('*').eq('id', locals.teamId).single(),
+		admin
+			.from('challenge_attempts')
+			.select('*')
+			.eq('challenge_id', params.id)
+			.eq('team_id', locals.teamId)
+			.maybeSingle()
 	]);
 
 	if (!tracksResult.data?.length || !clipsResult.data?.length) error(500, 'Track or clip data missing');
 	if (!teamResult.data) redirect(302, '/join');
 
 	const team = teamResult.data;
+
+	// ── Attempt (per-team timer) ──────────────────────────────────────────────
+	let attempt = attemptResult.data;
+	if (!attempt && challenge.status === 'active') {
+		const { data: newAttempt } = await admin
+			.from('challenge_attempts')
+			.insert({ challenge_id: params.id, team_id: team.id })
+			.select()
+			.single();
+		attempt = newAttempt;
+	}
 	const trackMap = new Map(tracksResult.data.map((t) => [t.id, t]));
 	const clipMap = new Map(clipsResult.data.map((c) => [c.id, c]));
 
@@ -88,10 +105,11 @@ export const load: PageServerLoad = async ({ params, cookies, locals }) => {
 		return { id: ct.id, trackId: ct.track_id, sortOrder: ct.sort_order, clipUrl };
 	});
 
-	// ── Timer ─────────────────────────────────────────────────────────────────
-	const timerEndsAt = challenge.started_at
-		? new Date(challenge.started_at).getTime() + challenge.timer_seconds * 1000
-		: null;
+	// ── Timer (based on team's own attempt start time) ───────────────────────
+	const timerEndsAt =
+		attempt && !attempt.ended_at && (challenge.timer_seconds ?? 0) > 0
+			? new Date(attempt.started_at).getTime() + challenge.timer_seconds * 1000
+			: null;
 
 	// ── Combobox pools ────────────────────────────────────────────────────────
 	const pools: Record<string, string[]> = {};
@@ -171,7 +189,8 @@ export const load: PageServerLoad = async ({ params, cookies, locals }) => {
 		multipleChoiceOptions,
 		fieldPoints,
 		timerEndsAt,
-		priorResult
+		priorResult,
+		attempt
 	};
 };
 
@@ -266,7 +285,15 @@ export const actions: Actions = {
 		}
 		if (!sub) return fail(500, { formError: 'Submission insert returned no data' });
 
-		await admin.from('submissions').update({ status: scoredResult.status } as never).eq('id', sub.id);
+		await Promise.all([
+			admin.from('submissions').update({ status: scoredResult.status } as never).eq('id', sub.id),
+			// Mark the team's attempt as ended
+			admin
+				.from('challenge_attempts')
+				.update({ ended_at: new Date().toISOString() })
+				.eq('challenge_id', params.id)
+				.eq('team_id', teamId)
+		]);
 
 		// Increment team score
 		const { data: teamRow } = await admin.from('teams').select('score').eq('id', teamId).single();

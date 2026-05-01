@@ -126,7 +126,7 @@
 	onMount(() => {
 		let iv: ReturnType<typeof setInterval> | undefined;
 
-		// Countdown timer (only when challenge has been started by host)
+		// Countdown timer (reads from team's own attempt start time)
 		if (data.timerEndsAt) {
 			const update = () => {
 				const remaining = Math.max(0, data.timerEndsAt! - Date.now());
@@ -137,21 +137,21 @@
 			iv = setInterval(update, 500);
 		}
 
-		// Detect when host starts the challenge (started_at becomes non-null)
-		const challengeChannel = supabaseBrowser
-			.channel(`challenge-state-${data.challenge.id}`)
+		// Detect when this team's attempt ends (auto-submit sets ended_at)
+		const attemptChannel = supabaseBrowser
+			.channel(`attempt-${data.challenge.id}-${data.team.id}`)
 			.on('postgres_changes', {
-				event: 'UPDATE', schema: 'public', table: 'challenges',
-				filter: `id=eq.${data.challenge.id}`
+				event: 'UPDATE', schema: 'public', table: 'challenge_attempts',
+				filter: `challenge_id=eq.${data.challenge.id}`
 			}, (payload) => {
-				const updated = payload.new as { started_at: string | null };
-				if (updated.started_at && !data.challenge.started_at) {
+				const updated = payload.new as { team_id: string; ended_at: string | null };
+				if (updated.team_id === data.team.id && updated.ended_at && !result) {
 					window.location.reload();
 				}
 			})
 			.subscribe();
 
-		// Detect auto-submitted submission for this team (server created it after timer expired)
+		// Backup: also watch for the submission INSERT directly
 		const submissionInsertChannel = supabaseBrowser
 			.channel(`sub-insert-${data.challenge.id}-${data.team.id}`)
 			.on('postgres_changes', {
@@ -167,7 +167,7 @@
 
 		return () => {
 			if (iv) clearInterval(iv);
-			supabaseBrowser.removeChannel(challengeChannel);
+			supabaseBrowser.removeChannel(attemptChannel);
 			supabaseBrowser.removeChannel(submissionInsertChannel);
 		};
 	});
@@ -177,11 +177,6 @@
 	const f = $derived(form as any);
 	const result = $derived<ChallengeResult | null>(
 		f?.submitted ? (f.result as ChallengeResult) : (data.priorResult ?? null)
-	);
-
-	// True when challenge has a timer but host hasn't started it yet
-	const isWaiting = $derived(
-		(data.challenge.timer_seconds ?? 0) > 0 && !data.challenge.started_at && !result
 	);
 
 	// ── Validation ────────────────────────────────────────────────────────────
@@ -256,8 +251,8 @@
 	});
 </script>
 
-{#if isWaiting}
-	<!-- ── Waiting for host to start ────────────────────────────────────────── -->
+{#if !data.attempt && !result}
+	<!-- ── Challenge not available (inactive, no prior attempt) ─────────────── -->
 	<div class="mx-auto min-h-screen max-w-lg p-4">
 		<div class="pb-6 pt-4">
 			<span class="rounded-full px-3 py-1 text-xs font-bold uppercase tracking-widest text-white"
@@ -266,12 +261,10 @@
 			</span>
 		</div>
 		<h1 class="mb-6 text-2xl font-black">{data.challenge.title}</h1>
-		<div class="rounded-2xl border border-zinc-800 bg-zinc-900 p-10 text-center space-y-4">
-			<div class="flex justify-center">
-				<div class="h-10 w-10 animate-spin rounded-full border-2 border-zinc-700 border-t-zinc-300"></div>
-			</div>
-			<p class="text-lg font-semibold text-zinc-200">Waiting for host to start</p>
-			<p class="text-sm text-zinc-500">The {data.challenge.timer_seconds}s timer will begin when the host starts the challenge.</p>
+		<div class="rounded-2xl border border-zinc-800 bg-zinc-900 p-8 text-center space-y-3">
+			<p class="text-lg font-semibold text-zinc-200">This challenge has ended</p>
+			<p class="text-sm text-zinc-500">The host has closed this challenge. Head back to your team page.</p>
+			<a href="/team" class="mt-2 inline-block text-sm underline underline-offset-2" style="color: {teamHex};">Back to team</a>
 		</div>
 	</div>
 {:else if result}
