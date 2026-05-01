@@ -87,11 +87,14 @@
 	onMount(() => {
 		const clockIv = setInterval(() => { now = Date.now(); }, 1000);
 
-		// Poll auto-submit every 10s to close expired attempts
+		// Poll every 10s: close expired attempts + sweep expired player sessions
 		const autoSubmitInterval = setInterval(async () => {
 			pollingActive = true;
 			try {
-				await fetch('/api/auto-submit', { method: 'POST' });
+				await Promise.all([
+					fetch('/api/auto-submit', { method: 'POST' }),
+					fetch('/api/player/sweep', { method: 'POST' })
+				]);
 			} catch { /* swallow network errors */ }
 			pollingActive = false;
 			lastPolledAt = new Date();

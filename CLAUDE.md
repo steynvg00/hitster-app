@@ -132,6 +132,12 @@ src/
       tracks/          ← track + clip CRUD
     leaderboard/       ← TV display (realtime)
     nfc/[tag]/         ← NFC tap handler (server route only)
+    play/[mode]/       ← player onboarding (mode = solo | teams)
+      lobby/           ← stub lobby (game set picker in 8c)
+    api/
+      player/
+        leave/         ← DELETE player session + photo
+        sweep/         ← admin-only: delete expired player sessions
 ```
 
 ## NFC flow
@@ -150,6 +156,7 @@ src/
 ## Cookie names
 - `hitster_team` — player team identity, 7 days
 - `hitster_admin` — host session, 24 hours
+- `hitster_player` — solo/team onboarding identity (player.id, HMAC-signed), 12 hours. Set by `/play/[mode]` form action. Decoded by `hooks.server.ts` into `locals.playerId`. `$lib/server/player.ts` owns the sign/verify logic.
 
 ## Session log
 | Date | Done |
@@ -164,6 +171,7 @@ src/
 | 2026-04-30 | Session 7a: multi-track challenges, variant defaults UI, scoring.ts, auto-submit timer (migrations 0011–0013) |
 | 2026-05-01 | Session 7a cleanup: per-team challenge attempts replace challenges.started_at (migration 0014); per-attempt admin reset |
 | 2026-05-02 | Session 8a: audio upload UI — drag-and-drop clip uploader, storage bucket (migrations 0015–0016), search/filter, HTML5 audio players, bulk-delete clips |
+| 2026-05-02 | Session 8b: landing page + player identity — three-mode landing (Host/Solo/Teams), player onboarding with name + optional photo, hitster_player cookie, lobby stub, leave/sweep endpoints (migration 0017) |
 
 ## Technical notes
 
@@ -199,4 +207,7 @@ Hosts can reset an individual team's attempt from `/admin/live` (deletes attempt
 - **Session 7c**: host visibility of in-progress challenges (per-team current activity panel)
 - **Session 7d**: team device coordination (realtime sync of draft state, last-writer-wins per field)
 - **Session 8b — In-app trim**: upload a longer source (audio/video, screen recording, file or URL), waveform UI to scrub and pick a segment, ffmpeg.wasm to trim client-side, save as clip. Used for: host trimming Spotify recordings, players uploading their own clips for variant 7.
+- **Session 8c — Game sets + lobby flow**: build /admin/sets, set picker on player flow, lobby room with team picker/randomize, host start button, auto-reset when last player leaves.
+- **Session 8d — Solo mode polish**: solo group leaderboard, solo private mode, host preview mode.
+- **Future — Persistent player accounts**: optional registration so regulars can keep stats across visits.
 - **Session 11 — The Recap**: post-game celebration screen — podium animation, fastest answers, team photos
