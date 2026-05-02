@@ -188,6 +188,8 @@ export interface GameSet {
 	assignment_index: number;
 	status: GameSetStatus;
 	recap_state: string;
+	recap_ranking: string[];
+	recap_reveal_index: number;
 	started_at: string | null;
 	ended_at: string | null;
 	created_at: string;

@@ -85,6 +85,14 @@
 					View Lobby
 				</a>
 			{/if}
+			{#if gs.status === 'completed'}
+				<a
+					href="/admin/sets/{gs.id}/recap"
+					class="rounded-lg bg-amber-400/15 px-4 py-2 text-sm font-semibold text-amber-400 hover:bg-amber-400/25 transition-colors"
+				>
+					Recap →
+				</a>
+			{/if}
 			{#if isDraft}
 				<form method="POST" action="?/activate" use:enhance
 					onsubmit={(e) => {

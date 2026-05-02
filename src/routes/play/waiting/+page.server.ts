@@ -1,27 +1,81 @@
 import { redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
-import { createAdminClient } from '$lib/server/supabase';
+import { createPublicClient, createAdminClient } from '$lib/server/supabase';
+import { TEAM_COLOR_ORDER } from '$lib/server/randomize';
 
-export const load: PageServerLoad = async ({ locals, url }) => {
+export const load: PageServerLoad = async ({ locals, cookies, url }) => {
 	if (!locals.teamId) redirect(302, '/join');
 
 	const setId = url.searchParams.get('set_id');
 	if (!setId) redirect(302, '/team');
 
-	const db = createAdminClient();
-	const { data: gs } = await db
-		.from('game_sets')
-		.select('id, name, status, recap_state')
-		.eq('id', setId)
-		.maybeSingle();
+	const supabase = createPublicClient(cookies);
+	const admin = createAdminClient();
+
+	const [{ data: gs }, { data: team }] = await Promise.all([
+		admin.from('game_sets').select('*').eq('id', setId).maybeSingle(),
+		supabase.from('teams').select('id, color, display_name').eq('id', locals.teamId).maybeSingle()
+	]);
 
 	if (!gs) redirect(302, '/team');
-
-	// If set is still active, go back to team page
 	if (gs.status !== 'completed') redirect(302, '/team');
-
-	// If recap is complete, go to thanks page
 	if (gs.recap_state === 'complete') redirect(302, `/play/thanks?set_id=${setId}`);
 
-	return { setId, setName: gs.name, recapState: gs.recap_state };
+	if (!team) redirect(302, '/join');
+
+	// Compute rank info for the player's team (used to fire reveal animation)
+	const scopedColors = TEAM_COLOR_ORDER.slice(0, gs.team_count);
+	const [{ data: teams }, { data: setChallenges }] = await Promise.all([
+		admin.from('teams').select('id, color').in('color', scopedColors),
+		admin.from('set_challenges').select('challenge_id').eq('set_id', setId)
+	]);
+
+	const challengeIds = (setChallenges ?? []).map((sc) => sc.challenge_id);
+	const teamSetScores = new Map<string, number>();
+	if (challengeIds.length > 0) {
+		const { data: subs } = await supabase
+			.from('submissions')
+			.select('team_id, score')
+			.in('challenge_id', challengeIds)
+			.eq('is_final', true);
+		for (const sub of subs ?? []) {
+			if (sub.team_id) {
+				teamSetScores.set(sub.team_id, (teamSetScores.get(sub.team_id) ?? 0) + (sub.score ?? 0));
+			}
+		}
+	}
+
+	// Ascending (last place first) — same as recap_ranking order
+	const rankedTeamIds = (teams ?? [])
+		.sort((a, b) => (teamSetScores.get(a.id) ?? 0) - (teamSetScores.get(b.id) ?? 0))
+		.map((t) => t.id);
+
+	// Player's rank position index in rankedTeamIds (0 = last place)
+	const playerRankIndex = rankedTeamIds.indexOf(locals.teamId);
+	// Position from top (1 = 1st place)
+	const totalTeams = rankedTeamIds.length;
+	const playerPosition = playerRankIndex === -1 ? null : totalTeams - playerRankIndex;
+
+	const playerSetScore = teamSetScores.get(locals.teamId) ?? 0;
+
+	// Load players in the player's team for the reveal card
+	const { data: teammates } = await admin
+		.from('players')
+		.select('id, display_name, photo_url')
+		.eq('set_id', setId)
+		.eq('team_id', locals.teamId);
+
+	return {
+		setId,
+		setName: gs.name,
+		recapState: gs.recap_state,
+		recapRanking: (gs.recap_ranking as string[]) ?? [],
+		recapRevealIndex: gs.recap_reveal_index ?? 0,
+		team,
+		playerRankIndex,
+		playerPosition,
+		playerSetScore,
+		teammates: teammates ?? [],
+		totalTeams
+	};
 };

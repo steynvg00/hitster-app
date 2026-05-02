@@ -113,16 +113,14 @@ export const actions: Actions = {
 	end: async ({ params }) => {
 		const db = createAdminClient();
 
-		// Clear player assignments for this set
-		await db.from('players').update({ set_id: null, team_id: null }).eq('set_id', params.id);
-
 		const { error } = await db
 			.from('game_sets')
 			.update({ status: 'completed', ended_at: new Date().toISOString() })
 			.eq('id', params.id);
 
 		if (error) return fail(500, { error: 'Could not end set' });
-		return { success: true };
+		// Players stay assigned until recap "End & Reset" clears them
+		redirect(303, `/admin/sets/${params.id}/recap`);
 	},
 
 	delete: async ({ params }) => {

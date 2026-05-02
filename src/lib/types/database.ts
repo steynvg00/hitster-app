@@ -286,6 +286,8 @@ export type Database = {
 					started_at: string | null;
 					ended_at: string | null;
 					recap_state: string;
+					recap_ranking: string[];
+					recap_reveal_index: number;
 					created_at: string;
 				};
 				Insert: {
@@ -301,6 +303,8 @@ export type Database = {
 					started_at?: string | null;
 					ended_at?: string | null;
 					recap_state?: string;
+					recap_ranking?: string[];
+					recap_reveal_index?: number;
 					created_at?: string;
 				};
 				Update: {
@@ -316,6 +320,8 @@ export type Database = {
 					started_at?: string | null;
 					ended_at?: string | null;
 					recap_state?: string;
+					recap_ranking?: string[];
+					recap_reveal_index?: number;
 					created_at?: string;
 				};
 				Relationships: [];
