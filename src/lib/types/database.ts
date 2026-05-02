@@ -8,7 +8,7 @@ type TeamColor = 'blue' | 'yellow' | 'green' | 'red' | 'indigo' | 'black';
 type ClipType = 'snippet' | 'fragment' | 'kick' | 'vocal' | 'mashup';
 type ChallengeVariant = 'normal' | 'label' | 'anthem' | 'vocal' | 'fragments' | 'kick' | 'mashup' | 'battle';
 type AnswerField = 'artist' | 'title' | 'year' | 'label' | 'festival' | 'vocal_source';
-type NfcTagPurpose = 'team_identity' | 'team_entry' | 'challenge';
+type NfcTagPurpose = 'team_identity' | 'team_entry' | 'challenge' | 'randomizer';
 type SubmissionStatus = 'auto_correct' | 'auto_wrong' | 'review_requested' | 'review_approved' | 'review_rejected';
 
 export type Database = {
@@ -45,6 +45,7 @@ export type Database = {
 				Row: {
 					id: string;
 					team_id: string | null;
+					set_id: string | null;
 					name: string;
 					display_name: string;
 					photo_url: string | null;
@@ -56,6 +57,7 @@ export type Database = {
 				Insert: {
 					id?: string;
 					team_id?: string | null;
+					set_id?: string | null;
 					name: string;
 					display_name: string;
 					photo_url?: string | null;
@@ -67,6 +69,7 @@ export type Database = {
 				Update: {
 					id?: string;
 					team_id?: string | null;
+					set_id?: string | null;
 					name?: string;
 					display_name?: string;
 					photo_url?: string | null;
@@ -248,6 +251,7 @@ export type Database = {
 					purpose: NfcTagPurpose;
 					team_color: TeamColor | null;
 					challenge_id: string | null;
+					set_id: string | null;
 					created_at: string;
 				};
 				Insert: {
@@ -255,6 +259,7 @@ export type Database = {
 					purpose: NfcTagPurpose;
 					team_color?: TeamColor | null;
 					challenge_id?: string | null;
+					set_id?: string | null;
 					created_at?: string;
 				};
 				Update: {
@@ -262,7 +267,65 @@ export type Database = {
 					purpose?: NfcTagPurpose;
 					team_color?: TeamColor | null;
 					challenge_id?: string | null;
+					set_id?: string | null;
 					created_at?: string;
+				};
+				Relationships: [];
+			};
+			game_sets: {
+				Row: {
+					id: string;
+					name: string;
+					description: string | null;
+					team_count: number;
+					total_timer_seconds: number | null;
+					status: 'draft' | 'active' | 'completed';
+					started_at: string | null;
+					ended_at: string | null;
+					created_at: string;
+				};
+				Insert: {
+					id?: string;
+					name: string;
+					description?: string | null;
+					team_count?: number;
+					total_timer_seconds?: number | null;
+					status?: 'draft' | 'active' | 'completed';
+					started_at?: string | null;
+					ended_at?: string | null;
+					created_at?: string;
+				};
+				Update: {
+					id?: string;
+					name?: string;
+					description?: string | null;
+					team_count?: number;
+					total_timer_seconds?: number | null;
+					status?: 'draft' | 'active' | 'completed';
+					started_at?: string | null;
+					ended_at?: string | null;
+					created_at?: string;
+				};
+				Relationships: [];
+			};
+			set_challenges: {
+				Row: {
+					id: string;
+					set_id: string;
+					challenge_id: string;
+					position: number;
+				};
+				Insert: {
+					id?: string;
+					set_id: string;
+					challenge_id: string;
+					position?: number;
+				};
+				Update: {
+					id?: string;
+					set_id?: string;
+					challenge_id?: string;
+					position?: number;
 				};
 				Relationships: [];
 			};
@@ -434,6 +497,8 @@ export type Database = {
 };
 
 // Convenience row types
+export type GameSetRow = Database['public']['Tables']['game_sets']['Row'];
+export type SetChallengeRow = Database['public']['Tables']['set_challenges']['Row'];
 export type TeamRow = Database['public']['Tables']['teams']['Row'];
 export type TrackRow = Database['public']['Tables']['tracks']['Row'];
 export type ClipRow = Database['public']['Tables']['clips']['Row'];

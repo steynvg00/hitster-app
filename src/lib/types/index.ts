@@ -163,11 +163,35 @@ export interface ChallengeResult {
 
 // ─── NFC ─────────────────────────────────────────────────────────────────────
 
-export type NfcTagPurpose = 'team_identity' | 'team_entry' | 'challenge';
+export type NfcTagPurpose = 'team_identity' | 'team_entry' | 'challenge' | 'randomizer';
 
 export interface NfcTag {
 	id: string;
 	purpose: NfcTagPurpose;
 	team_color?: TeamColor;
 	challenge_id?: string;
+	set_id?: string;
+}
+
+// ─── Game Sets ────────────────────────────────────────────────────────────────
+
+export type GameSetStatus = 'draft' | 'active' | 'completed';
+
+export interface GameSet {
+	id: string;
+	name: string;
+	description: string | null;
+	team_count: number;
+	total_timer_seconds: number | null;
+	status: GameSetStatus;
+	started_at: string | null;
+	ended_at: string | null;
+	created_at: string;
+}
+
+export interface SetChallenge {
+	id: string;
+	set_id: string;
+	challenge_id: string;
+	position: number;
 }
