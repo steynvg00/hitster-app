@@ -179,7 +179,12 @@
 					table: 'game_sets',
 					filter: `id=eq.${data.activeSetId}`
 				}, (payload) => {
-					setStatus = (payload.new as { status: string }).status;
+					const updated = payload.new as { status: string };
+					setStatus = updated.status;
+					// If set ends and no result yet, navigate to waiting screen
+					if (updated.status === 'completed' && !result) {
+						window.location.href = `/play/waiting?set_id=${data.activeSetId}`;
+					}
 				})
 				.subscribe();
 		}

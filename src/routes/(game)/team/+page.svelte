@@ -40,7 +40,11 @@
 					table: 'game_sets',
 					filter: `id=eq.${data.activeSet.id}`
 				}, (payload) => {
-					setStatus = (payload.new as { status: string }).status;
+					const updated = payload.new as { status: string; recap_state: string };
+					setStatus = updated.status;
+					if (updated.status === 'completed') {
+						window.location.href = `/play/waiting?set_id=${data.activeSet!.id}`;
+					}
 				})
 				.subscribe();
 		}

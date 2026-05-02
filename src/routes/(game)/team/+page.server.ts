@@ -53,7 +53,7 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		.order('created_at', { ascending: false })
 		.limit(8);
 
-	// If player is in a set, load its status for lockout detection
+	// If player is in a set, load its status for lockout / waiting redirect
 	let activeSet: { id: string; status: string } | null = null;
 	if (locals.playerId) {
 		const { data: player } = await admin
@@ -64,10 +64,19 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		if (player?.set_id) {
 			const { data: gs } = await admin
 				.from('game_sets')
-				.select('id, status')
+				.select('id, status, recap_state')
 				.eq('id', player.set_id)
 				.maybeSingle();
-			if (gs) activeSet = gs;
+			if (gs) {
+				activeSet = gs;
+				// Redirect to waiting or thanks if set has ended
+				if (gs.status === 'completed') {
+					if (gs.recap_state === 'complete') {
+						redirect(302, `/play/thanks?set_id=${gs.id}`);
+					}
+					redirect(302, `/play/waiting?set_id=${gs.id}`);
+				}
+			}
 		}
 	}
 
