@@ -70,5 +70,10 @@ export const GET: RequestHandler = async ({ params, cookies }) => {
 		redirect(302, `/challenge/${nfcTag.challenge_id}`);
 	}
 
+	// ── Set randomizer card ────────────────────────────────────────────────────
+	if (nfcTag.purpose === 'randomizer' && nfcTag.set_id) {
+		redirect(302, `/nfc/randomize/${nfcTag.set_id}`);
+	}
+
 	redirect(302, '/join');
 };
