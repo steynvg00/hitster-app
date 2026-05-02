@@ -168,7 +168,11 @@
 
 	<!-- Nav -->
 	<div class="flex gap-3 pt-2 text-sm">
-		<a href="/leaderboard" class="text-zinc-400 underline underline-offset-2">Leaderboard</a>
+		{#if data.activeSet?.status === 'active'}
+			<a href="/play/leaderboard" class="text-zinc-400 underline underline-offset-2">Leaderboard</a>
+		{:else}
+			<a href="/leaderboard" class="text-zinc-400 underline underline-offset-2">Leaderboard</a>
+		{/if}
 	</div>
 
 </div>
