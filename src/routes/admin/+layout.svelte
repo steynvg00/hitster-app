@@ -4,6 +4,7 @@
 	let { children } = $props();
 
 	const nav = [
+		{ href: '/admin/sets', label: 'Sets', icon: '🎮' },
 		{ href: '/admin/challenges', label: 'Challenges', icon: '🎯' },
 		{ href: '/admin/tracks', label: 'Tracks', icon: '🎵' },
 		{ href: '/admin/teams', label: 'Teams', icon: '👥' },
