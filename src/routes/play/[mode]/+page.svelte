@@ -77,6 +77,9 @@
 			}}
 			class="space-y-6"
 		>
+			{#if data.next}
+				<input type="hidden" name="next" value={data.next} />
+			{/if}
 			<!-- Name -->
 			<div>
 				<label class="mb-1.5 block text-sm font-semibold text-zinc-300" for="player-name">

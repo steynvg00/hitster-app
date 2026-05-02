@@ -14,14 +14,24 @@ const DB_MODE: Record<PlayMode, 'team' | 'solo_group'> = {
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024; // 5 MB
 const PHOTO_BUCKET = 'player_photos';
 
-export const load: PageServerLoad = async ({ params, locals }) => {
+function postOnboardRedirect(mode: PlayMode, next?: string | null): string {
+	if (mode === 'teams') {
+		// Allow safe NFC return URLs only
+		if (next?.startsWith('/nfc/randomize/')) return next;
+		return '/play/teams/sets';
+	}
+	return `/play/${mode}/lobby`;
+}
+
+export const load: PageServerLoad = async ({ params, locals, url }) => {
 	const mode = params.mode as PlayMode;
 	if (!VALID_MODES.includes(mode)) redirect(302, '/');
 
 	// Already has a live player session — skip onboarding
-	if (locals.playerId) redirect(302, `/play/${mode}/lobby`);
+	if (locals.playerId) redirect(302, postOnboardRedirect(mode));
 
-	return { mode };
+	const next = url.searchParams.get('next');
+	return { mode, next };
 };
 
 export const actions: Actions = {
@@ -32,6 +42,7 @@ export const actions: Actions = {
 		const formData = await request.formData();
 		const name = (formData.get('name') as string | null)?.trim() ?? '';
 		const photoFile = formData.get('photo');
+		const next = formData.get('next') as string | null;
 
 		if (name.length < 2 || name.length > 30) {
 			return fail(400, { error: 'Name must be 2–30 characters', name });
@@ -85,6 +96,6 @@ export const actions: Actions = {
 		}
 
 		setPlayerCookie(cookies, player.id);
-		redirect(303, `/play/${mode}/lobby`);
+		redirect(303, postOnboardRedirect(mode, next));
 	}
 };
