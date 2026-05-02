@@ -1,11 +1,11 @@
 import { redirect } from '@sveltejs/kit';
-import type { RequestHandler } from './$types';
+import type { PageServerLoad } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
 import { getPlayerIdFromCookie } from '$lib/server/player';
 import { setTeamCookie } from '$lib/server/team';
 import { assignTeam } from '$lib/server/randomize';
 
-export const GET: RequestHandler = async ({ params, cookies }) => {
+export const load: PageServerLoad = async ({ params, cookies }) => {
 	const { set_id } = params;
 
 	const playerId = getPlayerIdFromCookie(cookies);
@@ -20,10 +20,12 @@ export const GET: RequestHandler = async ({ params, cookies }) => {
 		db.from('players').select('id, set_id, team_id').eq('id', playerId).maybeSingle()
 	]);
 
-	if (!gameSet) redirect(302, '/?error=invalid-set');
+	if (!gameSet) redirect(302, '/');
 
-	if (gameSet.status === 'completed') redirect(302, '/?error=game-ended');
-	if (gameSet.status !== 'active') redirect(302, '/?error=game-not-active');
+	// Set is not active — render the "no game running" page
+	if (gameSet.status !== 'active') {
+		return { inactive: true as const, status: gameSet.status, setName: gameSet.name };
+	}
 
 	// Already in this set — restore team cookie and continue
 	if (player?.set_id === set_id && player?.team_id) {

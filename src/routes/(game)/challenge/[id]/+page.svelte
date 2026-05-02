@@ -105,6 +105,9 @@
 		audio.currentTime = Math.max(0, Math.min(1, pct)) * duration;
 	}
 
+	// ── Set lockout ───────────────────────────────────────────────────────────
+	let setStatus = $state(data.activeSetStatus);
+
 	// ── Timer ─────────────────────────────────────────────────────────────────
 	let timerMs = $state<number | null>(null);
 
@@ -165,10 +168,27 @@
 			})
 			.subscribe();
 
+		// Subscribe to set status changes for lockout
+		let setChannel: ReturnType<typeof supabaseBrowser.channel> | null = null;
+		if (data.activeSetId) {
+			setChannel = supabaseBrowser
+				.channel(`challenge-set-${data.activeSetId}`)
+				.on('postgres_changes', {
+					event: 'UPDATE',
+					schema: 'public',
+					table: 'game_sets',
+					filter: `id=eq.${data.activeSetId}`
+				}, (payload) => {
+					setStatus = (payload.new as { status: string }).status;
+				})
+				.subscribe();
+		}
+
 		return () => {
 			if (iv) clearInterval(iv);
 			supabaseBrowser.removeChannel(attemptChannel);
 			supabaseBrowser.removeChannel(submissionInsertChannel);
+			if (setChannel) supabaseBrowser.removeChannel(setChannel);
 		};
 	});
 
@@ -187,6 +207,7 @@
 	const canSubmit = $derived(
 		!submitting &&
 		!result &&
+		setStatus !== 'completed' &&
 		(timerMs === null || timerMs > 0) &&
 		data.challengeTracks.every((_, i) =>
 			comboboxFields.every((f: AnswerField) => (allFieldValues[i]?.[f] ?? '').length > 0)
@@ -476,6 +497,12 @@
 		{#if timerMs === 0}
 			<div class="mb-4 rounded-xl border border-amber-600/50 bg-amber-900/30 p-3 text-sm text-amber-300">
 				Time's up — submitting your answers…
+			</div>
+		{/if}
+
+		{#if setStatus === 'completed'}
+			<div class="mb-4 rounded-xl border border-zinc-600/50 bg-zinc-800/60 p-3 text-sm text-zinc-400">
+				This set has ended — submission is locked.
 			</div>
 		{/if}
 

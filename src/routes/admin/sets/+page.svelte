@@ -64,8 +64,8 @@
 					<input id="new-tc" name="team_count" type="number" min="2" max="6" value="6" class="admin-input" />
 				</div>
 				<div>
-					<label class="admin-label" for="new-timer">Timer (seconds, optional)</label>
-					<input id="new-timer" name="total_timer_seconds" type="number" min="60" class="admin-input" placeholder="leave blank" />
+					<label class="admin-label" for="new-timer">Timer (minutes, optional)</label>
+					<input id="new-timer" name="total_timer_minutes" type="number" min="1" class="admin-input" placeholder="leave blank" />
 				</div>
 				<div class="col-span-2 flex gap-3">
 					<button

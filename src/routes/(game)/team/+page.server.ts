@@ -5,6 +5,7 @@ import { createPublicClient, createAdminClient } from '$lib/server/supabase';
 export const load: PageServerLoad = async ({ locals, cookies }) => {
 	if (!locals.teamId) redirect(302, '/join');
 
+
 	const supabase = createPublicClient(cookies);
 	const admin = createAdminClient();
 
@@ -52,11 +53,30 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		.order('created_at', { ascending: false })
 		.limit(8);
 
+	// If player is in a set, load its status for lockout detection
+	let activeSet: { id: string; status: string } | null = null;
+	if (locals.playerId) {
+		const { data: player } = await admin
+			.from('players')
+			.select('set_id')
+			.eq('id', locals.playerId)
+			.maybeSingle();
+		if (player?.set_id) {
+			const { data: gs } = await admin
+				.from('game_sets')
+				.select('id, status')
+				.eq('id', player.set_id)
+				.maybeSingle();
+			if (gs) activeSet = gs;
+		}
+	}
+
 	return {
 		team,
 		position,
 		totalTeams,
 		challenges: challengeList,
-		recentActivity: recentActivity ?? []
+		recentActivity: recentActivity ?? [],
+		activeSet
 	};
 };

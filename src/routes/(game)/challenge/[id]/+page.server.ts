@@ -179,6 +179,28 @@ export const load: PageServerLoad = async ({ params, cookies, locals }) => {
 		};
 	}
 
+	// Check if player is in a set that's ended (for lockout)
+	let activeSetId: string | null = null;
+	let activeSetStatus: string | null = null;
+	if (locals.playerId) {
+		const { data: playerRow } = await admin
+			.from('players')
+			.select('set_id')
+			.eq('id', locals.playerId)
+			.maybeSingle();
+		if (playerRow?.set_id) {
+			const { data: gs } = await admin
+				.from('game_sets')
+				.select('id, status')
+				.eq('id', playerRow.set_id)
+				.maybeSingle();
+			if (gs) {
+				activeSetId = gs.id;
+				activeSetStatus = gs.status;
+			}
+		}
+	}
+
 	return {
 		challenge,
 		challengeTracks: trackList,
@@ -190,7 +212,9 @@ export const load: PageServerLoad = async ({ params, cookies, locals }) => {
 		fieldPoints,
 		timerEndsAt,
 		priorResult,
-		attempt
+		attempt,
+		activeSetId,
+		activeSetStatus
 	};
 };
 

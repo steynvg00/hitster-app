@@ -148,9 +148,9 @@
 				<input id="s-tc" name="team_count" type="number" min="2" max="6" class="admin-input" value={gs.team_count} />
 			</div>
 			<div>
-				<label class="admin-label" for="s-timer">Total Timer (seconds)</label>
-				<input id="s-timer" name="total_timer_seconds" type="number" min="60" class="admin-input"
-					value={gs.total_timer_seconds ?? ''} placeholder="leave blank" />
+				<label class="admin-label" for="s-timer">Total Timer (minutes)</label>
+				<input id="s-timer" name="total_timer_minutes" type="number" min="1" class="admin-input"
+					value={gs.total_timer_seconds ? Math.round(gs.total_timer_seconds / 60) : ''} placeholder="leave blank" />
 			</div>
 			<div class="col-span-2">
 				<button

@@ -42,8 +42,8 @@ export const actions: Actions = {
 		const name = (formData.get('name') as string | null)?.trim() ?? '';
 		const description = (formData.get('description') as string | null)?.trim() || null;
 		const team_count = parseInt(formData.get('team_count') as string) || 6;
-		const timer_raw = (formData.get('total_timer_seconds') as string | null)?.trim();
-		const total_timer_seconds = timer_raw ? parseInt(timer_raw) || null : null;
+		const timer_raw = (formData.get('total_timer_minutes') as string | null)?.trim();
+		const total_timer_seconds = timer_raw ? (parseInt(timer_raw) || 0) * 60 || null : null;
 
 		if (!name) return fail(400, { error: 'Name is required' });
 		if (team_count < 2 || team_count > 6) return fail(400, { error: 'Team count must be 2–6' });
