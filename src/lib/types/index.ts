@@ -183,7 +183,11 @@ export interface GameSet {
 	description: string | null;
 	team_count: number;
 	total_timer_seconds: number | null;
+	expected_player_count: number | null;
+	assignment_slots: string[];
+	assignment_index: number;
 	status: GameSetStatus;
+	recap_state: string;
 	started_at: string | null;
 	ended_at: string | null;
 	created_at: string;

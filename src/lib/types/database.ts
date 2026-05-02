@@ -279,9 +279,13 @@ export type Database = {
 					description: string | null;
 					team_count: number;
 					total_timer_seconds: number | null;
+					expected_player_count: number | null;
+					assignment_slots: string[];
+					assignment_index: number;
 					status: 'draft' | 'active' | 'completed';
 					started_at: string | null;
 					ended_at: string | null;
+					recap_state: string;
 					created_at: string;
 				};
 				Insert: {
@@ -290,9 +294,13 @@ export type Database = {
 					description?: string | null;
 					team_count?: number;
 					total_timer_seconds?: number | null;
+					expected_player_count?: number | null;
+					assignment_slots?: string[];
+					assignment_index?: number;
 					status?: 'draft' | 'active' | 'completed';
 					started_at?: string | null;
 					ended_at?: string | null;
+					recap_state?: string;
 					created_at?: string;
 				};
 				Update: {
@@ -301,9 +309,13 @@ export type Database = {
 					description?: string | null;
 					team_count?: number;
 					total_timer_seconds?: number | null;
+					expected_player_count?: number | null;
+					assignment_slots?: string[];
+					assignment_index?: number;
 					status?: 'draft' | 'active' | 'completed';
 					started_at?: string | null;
 					ended_at?: string | null;
+					recap_state?: string;
 					created_at?: string;
 				};
 				Relationships: [];

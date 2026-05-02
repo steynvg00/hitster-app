@@ -1,6 +1,7 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
+import { generateAssignmentSlots } from '$lib/server/randomize';
 
 export const load: PageServerLoad = async ({ params }) => {
 	const db = createAdminClient();
@@ -32,13 +33,15 @@ export const actions: Actions = {
 		const team_count = parseInt(formData.get('team_count') as string) || 6;
 		const timer_raw = (formData.get('total_timer_minutes') as string | null)?.trim();
 		const total_timer_seconds = timer_raw ? (parseInt(timer_raw) || 0) * 60 || null : null;
+		const epc_raw = (formData.get('expected_player_count') as string | null)?.trim();
+		const expected_player_count = epc_raw ? parseInt(epc_raw) || null : null;
 
 		if (!name) return fail(400, { error: 'Name is required' });
 		if (team_count < 2 || team_count > 6) return fail(400, { error: 'Team count must be 2–6' });
 
 		const { error } = await db
 			.from('game_sets')
-			.update({ name, description, team_count, total_timer_seconds })
+			.update({ name, description, team_count, total_timer_seconds, expected_player_count })
 			.eq('id', params.id);
 
 		if (error) return fail(500, { error: 'Update failed' });
@@ -73,9 +76,33 @@ export const actions: Actions = {
 
 	activate: async ({ params }) => {
 		const db = createAdminClient();
+
+		const { data: gameSet } = await db
+			.from('game_sets')
+			.select('id, team_count, expected_player_count')
+			.eq('id', params.id)
+			.maybeSingle();
+
+		if (!gameSet) return fail(404, { error: 'Set not found' });
+
+		// Generate pre-shuffled slot list if expected player count is configured
+		let assignment_slots: string[] = [];
+		if (gameSet.expected_player_count && gameSet.expected_player_count > 0) {
+			assignment_slots = await generateAssignmentSlots(
+				db,
+				gameSet.expected_player_count,
+				gameSet.team_count
+			);
+		}
+
 		const { error } = await db
 			.from('game_sets')
-			.update({ status: 'active', started_at: new Date().toISOString() })
+			.update({
+				status: 'active',
+				started_at: new Date().toISOString(),
+				assignment_slots: assignment_slots as never,
+				assignment_index: 0
+			})
 			.eq('id', params.id)
 			.eq('status', 'draft');
 

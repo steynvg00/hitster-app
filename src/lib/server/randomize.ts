@@ -5,11 +5,72 @@ import type { TeamColor } from '$lib/types';
 export const TEAM_COLOR_ORDER: TeamColor[] = ['blue', 'yellow', 'green', 'red', 'indigo', 'black'];
 
 /**
- * Snake-order team assignment for a game set.
- * Picks the team with the fewest players currently in this set.
- * Ties broken by stable color order (blue first).
+ * Build a Fisher-Yates-shuffled array of team_ids for a set.
+ * Distribution: floor(expected/team_count) per team, plus 1 extra for the first
+ * (expected % team_count) teams in TEAM_COLOR_ORDER.
+ */
+export async function generateAssignmentSlots(
+	db: SupabaseClient<Database>,
+	expectedCount: number,
+	teamCount: number
+): Promise<string[]> {
+	const scopedColors = TEAM_COLOR_ORDER.slice(0, teamCount);
+	const { data: teams } = await db.from('teams').select('id, color').in('color', scopedColors);
+	if (!teams?.length) return [];
+
+	const orderedTeams = TEAM_COLOR_ORDER.slice(0, teamCount)
+		.map((color) => teams.find((t) => t.color === color))
+		.filter((t): t is NonNullable<typeof t> => t != null);
+
+	const base = Math.floor(expectedCount / teamCount);
+	const extra = expectedCount % teamCount;
+
+	const slots: string[] = [];
+	for (let i = 0; i < orderedTeams.length; i++) {
+		const count = base + (i < extra ? 1 : 0);
+		for (let j = 0; j < count; j++) {
+			slots.push(orderedTeams[i].id);
+		}
+	}
+
+	// Fisher-Yates shuffle
+	for (let i = slots.length - 1; i > 0; i--) {
+		const j = Math.floor(Math.random() * (i + 1));
+		[slots[i], slots[j]] = [slots[j], slots[i]];
+	}
+
+	return slots;
+}
+
+/**
+ * Assign a team to a player joining a game set.
+ * Uses pre-shuffled slots (atomic via Postgres FOR UPDATE) when configured.
+ * Falls back to lowest-count snake-order for overflow or unconfigured sets.
  */
 export async function assignTeam(
+	db: SupabaseClient<Database>,
+	set_id: string,
+	team_count: number
+): Promise<{ team_id: string; team_color: TeamColor }> {
+	// Try slot-based assignment (runs inside a Postgres transaction)
+	const { data: slotTeamId } = await (db as SupabaseClient).rpc('assign_team_slot', {
+		p_set_id: set_id
+	});
+
+	if (slotTeamId) {
+		const { data: team } = await db
+			.from('teams')
+			.select('id, color')
+			.eq('id', slotTeamId as string)
+			.maybeSingle();
+		if (team) return { team_id: team.id, team_color: team.color as TeamColor };
+	}
+
+	// Fallback: pick team with fewest players in this set
+	return assignTeamFallback(db, set_id, team_count);
+}
+
+async function assignTeamFallback(
 	db: SupabaseClient<Database>,
 	set_id: string,
 	team_count: number

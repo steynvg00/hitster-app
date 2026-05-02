@@ -86,7 +86,16 @@
 				</a>
 			{/if}
 			{#if isDraft}
-				<form method="POST" action="?/activate" use:enhance>
+				<form method="POST" action="?/activate" use:enhance
+					onsubmit={(e) => {
+						const count = gs.expected_player_count;
+						if (count && count > 0 && count % gs.team_count !== 0) {
+							const base = Math.floor(count / gs.team_count);
+							const extra = count % gs.team_count;
+							const msg = `Uneven distribution — ${extra} team${extra > 1 ? 's' : ''} will have ${base + 1} players and ${gs.team_count - extra} will have ${base}. Continue?`;
+							if (!confirm(msg)) e.preventDefault();
+						}
+					}}>
 					<button
 						type="submit"
 						class="rounded-lg bg-green-700 px-4 py-2 text-sm font-semibold text-white hover:bg-green-600 transition-colors"
@@ -146,6 +155,11 @@
 			<div>
 				<label class="admin-label" for="s-tc">Teams (2–6)</label>
 				<input id="s-tc" name="team_count" type="number" min="2" max="6" class="admin-input" value={gs.team_count} />
+			</div>
+			<div>
+				<label class="admin-label" for="s-epc">Expected players (optional)</label>
+				<input id="s-epc" name="expected_player_count" type="number" min="1" class="admin-input"
+					value={gs.expected_player_count ?? ''} placeholder="leave blank" />
 			</div>
 			<div>
 				<label class="admin-label" for="s-timer">Total Timer (minutes)</label>
