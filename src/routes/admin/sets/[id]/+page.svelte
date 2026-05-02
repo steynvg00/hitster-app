@@ -192,8 +192,7 @@
 					{#each selected as id, idx}
 						<div
 							draggable="true"
-							role="option"
-							aria-selected="true"
+							role="listitem"
 							ondragstart={() => onDragStart(idx)}
 							ondragover={(e) => e.preventDefault()}
 							ondrop={() => onDrop(idx)}

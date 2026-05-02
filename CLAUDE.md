@@ -124,6 +124,9 @@ src/
       team/            ← team home (score, position, challenge list)
       join/            ← manual team picker
     admin/             ← host admin (auth-guarded by layout.server.ts)
+      sets/            ← game set CRUD (list, create)
+        [id]/          ← edit set details + challenge picker + NFC card management
+          lobby/       ← realtime lobby grid (one column per team)
       challenges/[id]/ ← challenge editor (tracks, answer options, input mode picker)
       live/            ← realtime game console
       review/          ← manual review queue
@@ -132,8 +135,12 @@ src/
       tracks/          ← track + clip CRUD
     leaderboard/       ← TV display (realtime)
     nfc/[tag]/         ← NFC tap handler (server route only)
+    nfc/randomize/[set_id]/ ← randomizer entry point (verifies set active, assigns team)
     play/[mode]/       ← player onboarding (mode = solo | teams)
-      lobby/           ← stub lobby (game set picker in 8c)
+      lobby/           ← lobby stub (solo mode only; teams mode goes to /sets)
+    play/teams/        ← static routes under teams (higher priority than [mode])
+      sets/            ← active game set picker → runs assignTeam → randomizing
+      randomizing/     ← CSS animation: rolling → reveal → continue → /team
     api/
       player/
         leave/         ← DELETE player session + photo
@@ -172,6 +179,7 @@ src/
 | 2026-05-01 | Session 7a cleanup: per-team challenge attempts replace challenges.started_at (migration 0014); per-attempt admin reset |
 | 2026-05-02 | Session 8a: audio upload UI — drag-and-drop clip uploader, storage bucket (migrations 0015–0016), search/filter, HTML5 audio players, bulk-delete clips |
 | 2026-05-02 | Session 8b: landing page + player identity — three-mode landing (Host/Solo/Teams), player onboarding with name + optional photo, hitster_player cookie, lobby stub, leave/sweep endpoints (migration 0017) |
+| 2026-05-02 | Session 8c: game sets + randomizer — game_sets/set_challenges tables (migration 0018), /admin/sets CRUD + challenge picker + NFC card management, /admin/sets/[id]/lobby realtime grid with move-player modal, /play/teams/sets picker, /play/teams/randomizing animation, NFC randomizer tag routing, assignTeam snake-order util |
 
 ## Technical notes
 
@@ -207,7 +215,16 @@ Hosts can reset an individual team's attempt from `/admin/live` (deletes attempt
 - **Session 7c**: host visibility of in-progress challenges (per-team current activity panel)
 - **Session 7d**: team device coordination (realtime sync of draft state, last-writer-wins per field)
 - **Session 8b — In-app trim**: upload a longer source (audio/video, screen recording, file or URL), waveform UI to scrub and pick a segment, ffmpeg.wasm to trim client-side, save as clip. Used for: host trimming Spotify recordings, players uploading their own clips for variant 7.
-- **Session 8c — Game sets + lobby flow**: build /admin/sets, set picker on player flow, lobby room with team picker/randomize, host start button, auto-reset when last player leaves.
+- **Session 8d — Set lifecycle polish**: set timer wrapper (auto-end set when timer expires), per-set leaderboard, "set starting" countdown, completed-set archive view, host preview mode for testing.
+- **Future — Solo + sets**: allow solo players to also pick a set so their scores group with other solos in the same set.
 - **Session 8d — Solo mode polish**: solo group leaderboard, solo private mode, host preview mode.
 - **Future — Persistent player accounts**: optional registration so regulars can keep stats across visits.
 - **Session 11 — The Recap**: post-game celebration screen — podium animation, fastest answers, team photos
+
+### Game sets — key data relationships (added 8c)
+- `game_sets` — a named round/game with status (draft/active/completed), team_count (2–6), optional total_timer_seconds
+- `set_challenges` — ordered (position) many-to-many: which challenges belong to a set
+- `players.set_id` — current set a player is assigned to (nullable; cleared on set end)
+- `players.team_id` — team within the set (cleared alongside set_id on end)
+- `nfc_tags.purpose = 'randomizer'` + `nfc_tags.set_id` — NFC card that auto-assigns player to a set
+- `assignTeam()` in `src/lib/server/randomize.ts` — lowest-count snake-order; scoped to set's team_count teams
