@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import type { PageData, ActionData } from './$types';
 	import type { AnswerField, InputMode, ChallengeResult } from '$lib/types/index.js';
@@ -183,7 +184,7 @@
 					setStatus = updated.status;
 					// If set ends and no result yet, navigate to waiting screen
 					if (updated.status === 'completed' && !result) {
-						window.location.href = `/play/waiting?set_id=${data.activeSetId}`;
+						goto(`/play/waiting?set_id=${data.activeSetId}`);
 					}
 				})
 				.subscribe();

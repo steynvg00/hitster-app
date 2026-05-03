@@ -31,9 +31,9 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		}
 	}
 
-	// If set is completed, redirect back to team (suspense window — leaderboard hidden)
+	// If set is completed, send player to the waiting/reveal screen
 	if (activeSet?.status === 'completed') {
-		redirect(302, '/team');
+		redirect(302, `/play/waiting?set_id=${activeSet.id}`);
 	}
 
 	return {

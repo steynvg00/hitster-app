@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { supabaseBrowser } from '$lib/supabase-browser';
 	import type { PageData } from './$types';
 	import type { TeamRow } from '$lib/types/database';
@@ -51,7 +52,7 @@
 					filter: `id=eq.${data.activeSetId}`
 				}, (payload) => {
 					if ((payload.new as { status: string }).status === 'completed') {
-						window.location.href = '/team';
+						goto(`/play/waiting?set_id=${data.activeSetId}`);
 					}
 				})
 				.subscribe();
