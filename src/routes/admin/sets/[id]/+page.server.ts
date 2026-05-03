@@ -158,12 +158,17 @@ export const actions: Actions = {
 					.maybeSingle();
 				let existingTagUrl: string | null = null;
 				if (existing) {
-					if (existing.purpose === 'randomizer' && existing.set_id) {
-						existingTagUrl = `/admin/sets/${existing.set_id}`;
-					} else if (existing.purpose === 'challenge' && existing.challenge_id) {
-						existingTagUrl = `/admin/challenges/${existing.challenge_id}`;
+					if (existing.purpose === 'randomizer') {
+						existingTagUrl = existing.set_id
+							? `/admin/sets/${existing.set_id}`
+							: '/admin/sets';
+					} else if (existing.purpose === 'challenge') {
+						existingTagUrl = existing.challenge_id
+							? `/admin/challenges/${existing.challenge_id}`
+							: '/admin/challenges';
 					} else {
-						existingTagUrl = `/admin/teams`;
+						// team_identity / team_entry tags live under /admin/teams
+						existingTagUrl = '/admin/teams';
 					}
 				}
 				return fail(400, {
