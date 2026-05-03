@@ -133,53 +133,90 @@
 		<div class="mb-4 rounded-lg border border-red-800 bg-red-950/40 px-4 py-3 text-sm text-red-400">{form.error}</div>
 	{/if}
 
-	<!-- Team cards — last place first (index 0), winner last -->
-	<div class="grid grid-cols-2 gap-4 sm:grid-cols-3">
-		{#each data.rankedTeams as team, i}
-			{@const revealed = isRevealed(team.id)}
-			{@const justRevealed = justRevealedId === team.id}
-			{@const pos = revealed ? rankPosition(team.id) : null}
-			{@const tc = teamColors[team.color] ?? { bg: '#27272a', text: '#fff' }}
-			{@const teamPlayers = data.playersByTeam[team.id] ?? []}
-
-			<div class="relative overflow-hidden rounded-2xl border transition-all duration-700
-				{revealed ? 'border-transparent' : 'border-zinc-700'}
-				{justRevealed ? 'scale-105 ring-2 ring-amber-400 shadow-lg shadow-amber-400/20' : ''}">
-
-				{#if revealed}
-					<!-- Revealed card -->
-					<div class="p-5 text-center" style="background-color: {tc.bg}; color: {tc.text};">
-						<div class="mb-1 text-4xl font-black tabular-nums">{ordinal(pos!)}</div>
-						<div class="text-lg font-bold">{team.display_name}</div>
-						<div class="mt-1 text-2xl font-black tabular-nums opacity-90">{team.setScore}</div>
-						<div class="text-xs opacity-60">pts</div>
-
-						{#if teamPlayers.length > 0}
-							<div class="mt-3 flex flex-wrap justify-center gap-1">
-								{#each teamPlayers as p}
-									<div class="flex items-center gap-1 rounded-full bg-black/20 px-2 py-0.5 text-xs">
-										{#if p.photo_url}
-											<img src={p.photo_url} alt={p.display_name}
-												class="h-4 w-4 rounded-full object-cover" />
-										{/if}
-										<span>{p.display_name}</span>
-									</div>
-								{/each}
-							</div>
-						{/if}
-					</div>
-				{:else}
-					<!-- Hidden card -->
-					<div class="flex h-40 items-center justify-center bg-zinc-900">
-						<div class="text-center">
-							<div class="text-4xl font-black text-zinc-700">?</div>
-							<div class="mt-1 text-xs text-zinc-700">#{i + 1} to reveal</div>
+	<!-- Non-podium teams (4th place and below) — flat grid, last-first order -->
+	{#if totalTeams > 3}
+		<div class="grid grid-cols-2 gap-3 mb-6 sm:grid-cols-3">
+			{#each data.rankedTeams.slice(0, totalTeams - 3) as team, i}
+				{@const revealed = isRevealed(team.id)}
+				{@const justRevealed = justRevealedId === team.id}
+				{@const pos = revealed ? rankPosition(team.id) : null}
+				{@const tc = teamColors[team.color] ?? { bg: '#27272a', text: '#fff' }}
+				{@const teamPlayers = data.playersByTeam[team.id] ?? []}
+				<div class="overflow-hidden rounded-2xl border transition-all duration-700
+					{revealed ? 'border-transparent' : 'border-zinc-700'}
+					{justRevealed ? 'scale-105 ring-2 ring-amber-400 shadow-lg shadow-amber-400/20' : ''}">
+					{#if revealed}
+						<div class="p-4 text-center" style="background-color: {tc.bg}; color: {tc.text};">
+							<div class="mb-0.5 text-3xl font-black tabular-nums">{ordinal(pos!)}</div>
+							<div class="text-base font-bold">{team.display_name}</div>
+							<div class="mt-1 text-xl font-black tabular-nums opacity-90">{team.setScore}</div>
+							<div class="text-xs opacity-60">pts</div>
 						</div>
-					</div>
-				{/if}
-			</div>
-		{/each}
-	</div>
+					{:else}
+						<div class="flex h-32 items-center justify-center bg-zinc-900">
+							<div class="text-center">
+								<div class="text-3xl font-black text-zinc-700">?</div>
+								<div class="mt-1 text-xs text-zinc-700">#{i + 1} to reveal</div>
+							</div>
+						</div>
+					{/if}
+				</div>
+			{/each}
+		</div>
+	{/if}
+
+	<!-- Olympic podium — 2nd left · 1st centre · 3rd right -->
+	{#if totalTeams >= 2}
+		{@const podiumSlots = [
+			{ pos: 2, team: data.rankedTeams[totalTeams - 2], revealOrder: 2 },
+			{ pos: 1, team: data.rankedTeams[totalTeams - 1], revealOrder: 1 },
+			...(totalTeams >= 3
+				? [{ pos: 3, team: data.rankedTeams[totalTeams - 3], revealOrder: 3 }]
+				: [])
+		]}
+		<div class="grid gap-4 {totalTeams >= 3 ? 'grid-cols-3' : 'grid-cols-2'}">
+			{#each podiumSlots as slot}
+				{@const revealed = isRevealed(slot.team.id)}
+				{@const justRevealed = justRevealedId === slot.team.id}
+				{@const pos = revealed ? rankPosition(slot.team.id) : null}
+				{@const tc = teamColors[slot.team.color] ?? { bg: '#27272a', text: '#fff' }}
+				{@const teamPlayers = data.playersByTeam[slot.team.id] ?? []}
+				<div class="overflow-hidden rounded-2xl border transition-all duration-700
+					{revealed ? 'border-transparent' : 'border-zinc-700'}
+					{justRevealed ? 'scale-105 ring-2 ring-amber-400 shadow-lg shadow-amber-400/20' : ''}
+					{slot.pos === 1 ? 'ring-1 ring-amber-400/30' : ''}">
+					{#if revealed}
+						<div class="p-5 text-center" style="background-color: {tc.bg}; color: {tc.text};">
+							<div class="mb-1 text-4xl font-black tabular-nums">{ordinal(pos!)}</div>
+							<div class="text-lg font-bold">{slot.team.display_name}</div>
+							<div class="mt-1 text-2xl font-black tabular-nums opacity-90">{slot.team.setScore}</div>
+							<div class="text-xs opacity-60">pts</div>
+							{#if teamPlayers.length > 0}
+								<div class="mt-3 flex flex-wrap justify-center gap-1">
+									{#each teamPlayers as p}
+										<div class="flex items-center gap-1 rounded-full bg-black/20 px-2 py-0.5 text-xs">
+											{#if p.photo_url}
+												<img src={p.photo_url} alt={p.display_name}
+													class="h-4 w-4 rounded-full object-cover" />
+											{/if}
+											<span>{p.display_name}</span>
+										</div>
+									{/each}
+								</div>
+							{/if}
+						</div>
+					{:else}
+						<div class="flex h-40 items-center justify-center bg-zinc-900">
+							<div class="text-center">
+								<div class="text-4xl font-black text-zinc-700">?</div>
+								<div class="mt-1 text-xs text-zinc-700">{slot.pos === 1 ? '🏆' : slot.pos === 2 ? '🥈' : '🥉'} podium</div>
+							</div>
+						</div>
+					{/if}
+				</div>
+			{/each}
+		</div>
+	{/if}
 
 	{#if allRevealed && recapState !== 'complete'}
 		<div class="mt-8 rounded-xl border border-green-800 bg-green-950/30 p-6 text-center">

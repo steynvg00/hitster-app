@@ -76,6 +76,26 @@
 			if (animTimer) clearTimeout(animTimer);
 		};
 	});
+
+	// Podium slots — 2nd left, 1st centre (tallest), 3rd right
+	const podiumSlots = $derived(
+		totalTeams >= 2
+			? [
+					{ pos: 2, team: data.rankedTeams[totalTeams - 2], pedestalH: 'h-28', pedestalBg: '#6b7280' },
+					{ pos: 1, team: data.rankedTeams[totalTeams - 1], pedestalH: 'h-40', pedestalBg: '#f59e0b' },
+					...(totalTeams >= 3
+						? [{ pos: 3, team: data.rankedTeams[totalTeams - 3], pedestalH: 'h-16', pedestalBg: '#92400e' }]
+						: [])
+			  ]
+			: []
+	);
+
+	// Non-podium teams (4th place and below), revealed only
+	const lowerTeams = $derived(
+		totalTeams > 3
+			? data.rankedTeams.slice(0, totalTeams - 3).filter((t) => isRevealed(t.id))
+			: []
+	);
 </script>
 
 <svelte:head>
@@ -84,7 +104,7 @@
 
 <div class="min-h-screen bg-zinc-950 flex flex-col items-center justify-center p-8">
 	<!-- Title -->
-	<div class="mb-12 text-center">
+	<div class="mb-10 text-center">
 		<p class="mb-1 text-sm font-bold uppercase tracking-[0.3em] text-zinc-500">Defqon.1 Weekend</p>
 		<h1 class="text-5xl font-black uppercase tracking-tight text-white md:text-7xl">Podium</h1>
 		<p class="mt-2 text-zinc-500">{data.setName}</p>
@@ -96,53 +116,90 @@
 			<p class="text-2xl font-bold text-zinc-400">Stand by for the reveal…</p>
 		</div>
 	{:else}
-		<!-- Revealed teams grid (displayed from first revealed = last place, descending as more are revealed) -->
-		<div class="grid w-full max-w-4xl gap-4" style="grid-template-columns: repeat({Math.min(revealIndex, totalTeams)}, minmax(0, 1fr))">
-			{#each data.rankedTeams as team}
-				{#if isRevealed(team.id)}
+		<!-- 4th place and below (flat grid, revealed order) -->
+		{#if lowerTeams.length > 0}
+			<div class="mb-8 flex flex-wrap justify-center gap-3 max-w-4xl w-full">
+				{#each lowerTeams as team}
 					{@const pos = rankPosition(team.id)}
 					{@const tc = teamColors[team.color] ?? { bg: '#27272a', border: '#3f3f46', text: '#fff' }}
 					{@const teamPlayers = data.playersByTeam[team.id] ?? []}
-					{@const isAnimating = animatingTeamId === team.id}
-
-					<div class="rounded-2xl border-2 overflow-hidden transition-all duration-500
-						{isAnimating ? 'scale-105 shadow-2xl' : 'scale-100'}"
+					<div class="rounded-xl border-2 overflow-hidden w-36 transition-all duration-500"
 						style="border-color: {tc.border}; background-color: {tc.bg};">
-						<div class="p-5 text-center" style="color: {tc.text};">
-							<!-- Position -->
-							<div class="mb-1 text-5xl font-black tabular-nums md:text-7xl"
-								style="text-shadow: 0 2px 8px rgba(0,0,0,0.4);">
-								{ordinal(pos)}
-							</div>
-							<!-- Team name -->
-							<div class="text-xl font-black uppercase tracking-wide md:text-3xl">{team.display_name}</div>
-							<!-- Score -->
-							<div class="mt-2 text-4xl font-black tabular-nums md:text-5xl">{team.setScore}</div>
-							<div class="text-sm opacity-60 uppercase tracking-wide">points</div>
-
-							<!-- Player photos -->
-							{#if teamPlayers.length > 0}
-								<div class="mt-4 flex flex-wrap justify-center gap-2">
-									{#each teamPlayers as p}
-										<div class="text-center">
-											{#if p.photo_url}
-												<img src={p.photo_url} alt={p.display_name}
-													class="h-10 w-10 rounded-full object-cover border-2 mx-auto"
-													style="border-color: {tc.text}40" />
-											{:else}
-												<div class="flex h-10 w-10 items-center justify-center rounded-full mx-auto"
-													style="background-color: rgba(0,0,0,0.2); color: {tc.text};">
-													<span class="text-sm font-black">{p.display_name.charAt(0)}</span>
-												</div>
-											{/if}
-											<div class="mt-1 text-xs opacity-80">{p.display_name}</div>
-										</div>
-									{/each}
-								</div>
-							{/if}
+						<div class="p-3 text-center" style="color: {tc.text};">
+							<div class="text-2xl font-black tabular-nums">{ordinal(pos)}</div>
+							<div class="text-sm font-bold uppercase">{team.display_name}</div>
+							<div class="text-xl font-black tabular-nums">{team.setScore}</div>
 						</div>
 					</div>
-				{/if}
+				{/each}
+			</div>
+		{/if}
+
+		<!-- Olympic podium: 2nd | 1st | 3rd -->
+		<div class="flex items-end justify-center gap-4 w-full max-w-4xl">
+			{#each podiumSlots as slot}
+				{@const revealed = isRevealed(slot.team.id)}
+				{@const tc = teamColors[slot.team.color] ?? { bg: '#27272a', border: '#3f3f46', text: '#fff' }}
+				{@const teamPlayers = data.playersByTeam[slot.team.id] ?? []}
+				{@const isAnimating = animatingTeamId === slot.team.id}
+
+				<div class="flex flex-col items-center {slot.pos === 1 ? 'w-2/5' : 'w-1/4'}">
+					<!-- Team card (or placeholder) -->
+					{#if revealed}
+						<div class="w-full rounded-2xl border-2 overflow-hidden mb-0 transition-all duration-700
+							{isAnimating ? 'scale-105 shadow-2xl shadow-amber-400/30' : ''}"
+							style="border-color: {tc.border}; background-color: {tc.bg};">
+							<div class="p-4 text-center" style="color: {tc.text};">
+								<div class="{slot.pos === 1 ? 'text-6xl' : 'text-4xl'} font-black tabular-nums md:text-7xl"
+									style="text-shadow: 0 2px 8px rgba(0,0,0,0.4);">
+									{ordinal(slot.pos)}
+								</div>
+								<div class="{slot.pos === 1 ? 'text-2xl' : 'text-lg'} font-black uppercase tracking-wide">
+									{slot.team.display_name}
+								</div>
+								<div class="{slot.pos === 1 ? 'text-4xl' : 'text-2xl'} font-black tabular-nums mt-1">
+									{slot.team.setScore}
+								</div>
+								<div class="text-xs opacity-60 uppercase tracking-wide">points</div>
+								{#if teamPlayers.length > 0}
+									<div class="mt-3 flex flex-wrap justify-center gap-1">
+										{#each teamPlayers as p}
+											<div class="text-center">
+												{#if p.photo_url}
+													<img src={p.photo_url} alt={p.display_name}
+														class="h-8 w-8 rounded-full object-cover border-2 mx-auto"
+														style="border-color: {tc.text}40" />
+												{:else}
+													<div class="flex h-8 w-8 items-center justify-center rounded-full mx-auto"
+														style="background-color: rgba(0,0,0,0.2); color: {tc.text};">
+														<span class="text-sm font-black">{p.display_name.charAt(0)}</span>
+													</div>
+												{/if}
+												<div class="mt-0.5 text-xs opacity-80">{p.display_name}</div>
+											</div>
+										{/each}
+									</div>
+								{/if}
+							</div>
+						</div>
+					{:else}
+						<!-- Not yet revealed placeholder -->
+						<div class="w-full rounded-2xl border-2 border-zinc-700 bg-zinc-900 mb-0">
+							<div class="p-6 text-center">
+								<div class="text-5xl font-black text-zinc-700">?</div>
+							</div>
+						</div>
+					{/if}
+
+					<!-- Pedestal block -->
+					<div class="{slot.pedestalH} w-full rounded-t-xl flex items-center justify-center mt-2"
+						style="background-color: {slot.pedestalBg};">
+						<span class="{slot.pos === 1 ? 'text-5xl' : 'text-3xl'} font-black text-white"
+							style="text-shadow: 0 2px 4px rgba(0,0,0,0.4);">
+							{slot.pos}
+						</span>
+					</div>
+				</div>
 			{/each}
 		</div>
 	{/if}
