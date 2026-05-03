@@ -38,6 +38,7 @@
 	let editingTrack = $state<string | null>(null);
 	let editingTitles = $state<string | null>(null);
 	let showAddForm = $state(false);
+	let addingTrack = $state(false);
 
 	// ── clip selection (bulk delete) ─────────────────────────────────────────────
 	let selectedClips = $state(new Set<string>());
@@ -46,6 +47,9 @@
 	// ── drag-and-drop upload state ───────────────────────────────────────────────
 	let stagedFiles = $state<Record<string, StagedFile[]>>({});
 	let dragOverTrack = $state<string | null>(null);
+
+	// Staged clips for the new-track form — keyed as '__new__' in stagedFiles
+	const newTrackStagedFiles = $derived(stagedFiles['__new__'] ?? []);
 
 	// ── helpers ──────────────────────────────────────────────────────────────────
 	function clipsFor(trackId: string) {
@@ -210,7 +214,49 @@
 			<h2 class="mb-4 text-sm font-semibold uppercase tracking-widest text-amber-400">
 				New Track
 			</h2>
-			<form method="POST" action="?/createTrack" use:enhance class="grid grid-cols-2 gap-3">
+			<form
+				method="POST"
+				action="?/createTrack"
+				use:enhance={() => {
+					addingTrack = true;
+					return async ({ result, update }) => {
+						try {
+							if (result.type === 'success' && result.data?.id) {
+								const trackId = result.data.id as string;
+								for (const staged of stagedFiles['__new__'] ?? []) {
+									if (staged.status !== 'queued') continue;
+									staged.status = 'uploading';
+									const fd = new FormData();
+									fd.append('file', staged.file);
+									fd.append('clip_type', staged.clipType);
+									if (staged.orderIndex != null)
+										fd.append('order_index', String(staged.orderIndex));
+									fd.append('duration', String(staged.duration));
+									try {
+										const res = await fetch(`/admin/tracks/${trackId}/upload`, {
+											method: 'POST',
+											body: fd
+										});
+										staged.status = res.ok ? 'done' : 'failed';
+										if (!res.ok) staged.error = await res.text();
+									} catch (e) {
+										staged.status = 'failed';
+										staged.error = String(e);
+									}
+								}
+								stagedFiles['__new__'] = [];
+								showAddForm = false;
+								await invalidateAll();
+							} else {
+								await update();
+							}
+						} finally {
+							addingTrack = false;
+						}
+					};
+				}}
+				class="grid grid-cols-2 gap-3"
+			>
 				<input name="artist" placeholder="Artist *" required class="input-field" />
 				<input name="title" placeholder="Title *" required class="input-field" />
 				<input
@@ -227,11 +273,118 @@
 				<input name="subgenre" placeholder="Subgenre" class="input-field" />
 				<input name="festival" placeholder="Festival (anthem variant)" class="input-field" />
 				<input name="vocal_source" placeholder="Vocal source (movie/show)" class="input-field" />
-				<div class="col-span-2 mt-1 flex justify-end gap-2">
-					<button type="button" onclick={() => (showAddForm = false)} class="btn-ghost"
-						>Cancel</button
+
+				<!-- Inline clip drop zone -->
+				<div class="col-span-2 mt-1">
+					<div class="mb-1 text-xs font-semibold uppercase tracking-widest text-zinc-500">
+						Clips (optional)
+					</div>
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<div
+						role="region"
+						aria-label="Drop audio files here"
+						class="relative cursor-pointer rounded-xl border-2 border-dashed px-4 py-5 text-center transition-colors {dragOverTrack ===
+						'__new__'
+							? 'border-amber-400 bg-amber-400/5'
+							: 'border-zinc-700 hover:border-zinc-500'}"
+						ondragover={(e) => {
+							e.preventDefault();
+							dragOverTrack = '__new__';
+						}}
+						ondragleave={() => (dragOverTrack = null)}
+						ondrop={async (e) => {
+							e.preventDefault();
+							dragOverTrack = null;
+							if (e.dataTransfer?.files) await stageFiles('__new__', e.dataTransfer.files);
+						}}
 					>
-					<button type="submit" class="btn-primary">Add Track</button>
+						<input
+							type="file"
+							accept="audio/*"
+							multiple
+							class="absolute inset-0 cursor-pointer opacity-0"
+							onchange={async (e) => {
+								const files = (e.target as HTMLInputElement).files;
+								if (files) await stageFiles('__new__', files);
+								(e.target as HTMLInputElement).value = '';
+							}}
+						/>
+						<p class="text-sm text-zinc-500">
+							Drop audio clips, or <span class="text-amber-400">click to browse</span>
+						</p>
+						<p class="mt-0.5 text-xs text-zinc-600">Uploaded with track on save</p>
+					</div>
+
+					{#if newTrackStagedFiles.length > 0}
+						<div class="mt-2 space-y-1.5">
+							{#each newTrackStagedFiles as staged (staged.id)}
+								<div
+									class="grid items-center gap-x-3 rounded-lg border px-3 py-2 text-sm {staged.status ===
+									'done'
+										? 'border-green-800 bg-green-950/40'
+										: staged.status === 'failed'
+											? 'border-red-800 bg-red-950/40'
+											: staged.status === 'uploading'
+												? 'border-amber-700 bg-amber-950/30'
+												: 'border-zinc-700 bg-zinc-900'}"
+									style="grid-template-columns: 1.25rem 1fr 7.5rem 5rem 1.25rem"
+								>
+									<span class="text-center text-xs">
+										{#if staged.status === 'queued'}⏳{:else if staged.status === 'uploading'}⬆{:else if staged.status === 'done'}✓{:else}✗{/if}
+									</span>
+									<div class="min-w-0">
+										<div class="truncate text-zinc-200">{staged.name}</div>
+										<div class="text-xs text-zinc-500">
+											{formatSize(staged.size)}
+											{#if staged.duration > 0}· {formatDuration(staged.duration)}{/if}
+											{#if staged.error}<span class="text-red-400"> · {staged.error}</span>{/if}
+										</div>
+									</div>
+									<select
+										bind:value={staged.clipType}
+										disabled={staged.status !== 'queued'}
+										class="input-field py-1 text-xs disabled:opacity-50"
+									>
+										{#each CLIP_TYPES as t}
+											<option value={t}>{t}</option>
+										{/each}
+									</select>
+									<input
+										type="number"
+										bind:value={staged.orderIndex}
+										disabled={staged.status !== 'queued'}
+										placeholder="Order"
+										min="1"
+										class="input-field py-1 text-xs disabled:opacity-50"
+									/>
+									{#if staged.status === 'queued' || staged.status === 'failed'}
+										<button
+											type="button"
+											onclick={() => removeStagedFile('__new__', staged.id)}
+											class="text-zinc-600 hover:text-red-400"
+											title="Remove"
+										>✕</button>
+									{:else}
+										<span></span>
+									{/if}
+								</div>
+							{/each}
+						</div>
+					{/if}
+				</div>
+
+				<div class="col-span-2 mt-1 flex justify-end gap-2">
+					<button
+						type="button"
+						onclick={() => {
+							showAddForm = false;
+							stagedFiles['__new__'] = [];
+						}}
+						class="btn-ghost">Cancel</button
+					>
+					<button type="submit" disabled={addingTrack} class="btn-primary">
+						{addingTrack ? 'Saving…' : 'Add Track'}
+					</button>
 				</div>
 			</form>
 		</div>

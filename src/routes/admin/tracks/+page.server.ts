@@ -36,11 +36,11 @@ export const actions: Actions = {
 			return fail(400, { error: 'Artist, title, and year are required' });
 		}
 
-		const { error } = await db.from('tracks').insert({
+		const { data: inserted, error } = await db.from('tracks').insert({
 			artist, title, year, record_label, festival, vocal_source, genre, subgenre
-		});
+		}).select('id').single();
 		if (error) return fail(500, { error: error.message });
-		return { success: true };
+		return { success: true, id: inserted.id };
 	},
 
 	updateTrack: async ({ request }) => {
