@@ -115,15 +115,24 @@ export const actions: Actions = {
 		return { success: true, revealedIndex: newIndex - 1 };
 	},
 
-	// End the set and clear all player assignments
+	// End the set and clear all player assignments; reset to draft for reuse
 	endAndReset: async ({ params }) => {
 		const db = createAdminClient();
 
 		await Promise.all([
 			db.from('players').update({ set_id: null, team_id: null }).eq('set_id', params.id),
-			db.from('game_sets').update({ recap_state: 'complete' }).eq('id', params.id)
+			db.from('game_sets').update({
+				status: 'draft',
+				recap_state: null as never,
+				started_at: null,
+				ended_at: null,
+				recap_ranking: null as never,
+				recap_reveal_index: 0,
+				assignment_slots: [] as never,
+				assignment_index: 0
+			}).eq('id', params.id)
 		]);
 
-		return { success: true };
+		redirect(303, `/admin/sets/${params.id}`);
 	}
 };
