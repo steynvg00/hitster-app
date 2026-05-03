@@ -150,7 +150,28 @@ export const actions: Actions = {
 			.insert({ id: slug, purpose: 'randomizer', set_id: params.id });
 
 		if (error) {
-			if (error.code === '23505') return fail(400, { error: `Slug "${slug}" already exists` });
+			if (error.code === '23505') {
+				const { data: existing } = await db
+					.from('nfc_tags')
+					.select('purpose, set_id, challenge_id')
+					.eq('id', slug)
+					.maybeSingle();
+				let existingTagUrl: string | null = null;
+				if (existing) {
+					if (existing.purpose === 'randomizer' && existing.set_id) {
+						existingTagUrl = `/admin/sets/${existing.set_id}`;
+					} else if (existing.purpose === 'challenge' && existing.challenge_id) {
+						existingTagUrl = `/admin/challenges/${existing.challenge_id}`;
+					} else {
+						existingTagUrl = `/admin/teams`;
+					}
+				}
+				return fail(400, {
+					error: `Slug "${slug}" is already assigned to another tag.`,
+					existingTagUrl,
+					existingTagPurpose: existing?.purpose ?? null
+				});
+			}
 			return fail(500, { error: 'Could not add card' });
 		}
 		return { success: true };
