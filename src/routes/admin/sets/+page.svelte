@@ -64,6 +64,10 @@
 					<input id="new-tc" name="team_count" type="number" min="2" max="6" value="6" class="admin-input" />
 				</div>
 				<div>
+					<label class="admin-label" for="new-epc">Expected players (optional)</label>
+					<input id="new-epc" name="expected_player_count" type="number" min="1" class="admin-input" placeholder="leave blank" />
+				</div>
+				<div>
 					<label class="admin-label" for="new-timer">Timer (minutes, optional)</label>
 					<input id="new-timer" name="total_timer_minutes" type="number" min="1" class="admin-input" placeholder="leave blank" />
 				</div>

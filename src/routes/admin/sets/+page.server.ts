@@ -44,13 +44,15 @@ export const actions: Actions = {
 		const team_count = parseInt(formData.get('team_count') as string) || 6;
 		const timer_raw = (formData.get('total_timer_minutes') as string | null)?.trim();
 		const total_timer_seconds = timer_raw ? (parseInt(timer_raw) || 0) * 60 || null : null;
+		const epc_raw = (formData.get('expected_player_count') as string | null)?.trim();
+		const expected_player_count = epc_raw ? parseInt(epc_raw) || null : null;
 
 		if (!name) return fail(400, { error: 'Name is required' });
 		if (team_count < 2 || team_count > 6) return fail(400, { error: 'Team count must be 2–6' });
 
 		const { data, error } = await db
 			.from('game_sets')
-			.insert({ name, description, team_count, total_timer_seconds })
+			.insert({ name, description, team_count, total_timer_seconds, expected_player_count })
 			.select('id')
 			.single();
 

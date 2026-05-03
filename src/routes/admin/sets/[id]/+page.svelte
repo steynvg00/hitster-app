@@ -138,8 +138,13 @@
 	</div>
 
 	{#if form?.error}
+		{@const f = form as unknown as { existingTagUrl?: string | null; existingTagPurpose?: string | null }}
 		<div class="mb-4 rounded-lg border border-red-800 bg-red-950/40 px-4 py-3 text-sm text-red-400">
 			{form.error}
+			{#if f.existingTagUrl}
+				<a href={f.existingTagUrl} class="ml-2 underline hover:text-red-300"
+					>View existing {f.existingTagPurpose ?? ''} tag →</a>
+			{/if}
 		</div>
 	{/if}
 	{#if form?.success}
@@ -151,7 +156,9 @@
 	<!-- Details form -->
 	<section class="mb-8 rounded-xl border border-zinc-800 bg-zinc-900 p-5">
 		<h2 class="mb-4 text-sm font-bold uppercase tracking-widest text-zinc-400">Details</h2>
-		<form method="POST" action="?/update" use:enhance class="grid grid-cols-2 gap-4">
+		<form method="POST" action="?/update"
+			use:enhance={() => async ({ update }) => update({ reset: false })}
+			class="grid grid-cols-2 gap-4">
 			<div class="col-span-2">
 				<label class="admin-label" for="s-name">Name</label>
 				<input id="s-name" name="name" class="admin-input" value={gs.name} required />
