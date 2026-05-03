@@ -182,8 +182,8 @@
 				}, (payload) => {
 					const updated = payload.new as { status: string };
 					setStatus = updated.status;
-					// If set ends and no result yet, navigate to waiting screen
-					if (updated.status === 'completed' && !result) {
+					// If set ends, navigate to waiting screen regardless of result state
+					if (updated.status === 'completed') {
 						goto(`/play/waiting?set_id=${data.activeSetId}`);
 					}
 				})

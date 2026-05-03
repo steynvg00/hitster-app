@@ -161,14 +161,13 @@ export const actions: Actions = {
 					if (existing.purpose === 'randomizer') {
 						existingTagUrl = existing.set_id
 							? `/admin/sets/${existing.set_id}`
-							: '/admin/sets';
+							: '/admin/nfc-tags';
 					} else if (existing.purpose === 'challenge') {
 						existingTagUrl = existing.challenge_id
 							? `/admin/challenges/${existing.challenge_id}`
-							: '/admin/challenges';
+							: '/admin/nfc-tags';
 					} else {
-						// team_identity / team_entry tags live under /admin/teams
-						existingTagUrl = '/admin/teams';
+						existingTagUrl = '/admin/nfc-tags';
 					}
 				}
 				return fail(400, {

@@ -27,8 +27,8 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 	const mode = params.mode as PlayMode;
 	if (!VALID_MODES.includes(mode)) redirect(302, '/');
 
-	// Already has a live player session — skip onboarding
-	if (locals.playerId) redirect(302, postOnboardRedirect(mode));
+	// Already has a live player session — skip onboarding (preserve ?next= so NFC return works)
+	if (locals.playerId) redirect(302, postOnboardRedirect(mode, url.searchParams.get('next')));
 
 	const next = url.searchParams.get('next');
 	return { mode, next };
