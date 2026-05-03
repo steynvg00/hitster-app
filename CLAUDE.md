@@ -211,6 +211,52 @@ Hosts can reset an individual team's attempt from `/admin/live` (deletes attempt
 ### is_final flag
 `submissions.is_final = true` means no further changes. Set on all submissions (both player-submitted and auto-submitted). Server rejects duplicate submissions with 409.
 
+### Reset SQL
+
+Two distinct resets — run manually in Supabase SQL Editor.
+
+**Soft reset** — preserves game_sets, set_challenges, challenges, tracks, NFC cards. Use to re-run the same set or start a fresh round without rebuilding configuration.
+
+```sql
+-- Clear player sessions
+UPDATE players SET set_id = NULL, team_id = NULL WHERE set_id IS NOT NULL;
+-- Clear game state
+DELETE FROM challenge_attempts;
+DELETE FROM submissions;
+DELETE FROM review_requests;
+DELETE FROM activity_log;
+-- Reset team scores
+UPDATE teams SET score = 0;
+-- Return sets to draft so they can be activated again
+UPDATE game_sets
+SET status = 'draft',
+    started_at = NULL,
+    ended_at = NULL,
+    recap_ranking = NULL,
+    recap_reveal_index = 0,
+    recap_state = NULL,
+    assignment_slots = '[]'::jsonb,
+    assignment_index = 0;
+```
+
+**Hard reset** — everything above, plus wipes all game set configuration. Use for a clean slate.
+
+```sql
+-- Soft reset steps first (player sessions, attempts, submissions, scores)
+UPDATE players SET set_id = NULL, team_id = NULL WHERE set_id IS NOT NULL;
+DELETE FROM challenge_attempts;
+DELETE FROM submissions;
+DELETE FROM review_requests;
+DELETE FROM activity_log;
+UPDATE teams SET score = 0;
+-- Then wipe sets (cascades to set_challenges)
+DELETE FROM game_sets;
+-- Remove randomizer NFC cards (challenge/team cards are permanent)
+DELETE FROM nfc_tags WHERE purpose = 'randomizer';
+-- Optionally wipe all player records
+DELETE FROM players;
+```
+
 ## Roadmap (not yet built)
 - **Session 7c**: host visibility of in-progress challenges (per-team current activity panel)
 - **Session 7d**: team device coordination (realtime sync of draft state, last-writer-wins per field)
