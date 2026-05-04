@@ -102,7 +102,8 @@ export const load: PageServerLoad = async ({ params, cookies, locals }) => {
 		const clipUrl = clip.storage_path.startsWith('http')
 			? clip.storage_path
 			: supabase.storage.from('clips').getPublicUrl(clip.storage_path).data.publicUrl;
-		return { id: ct.id, trackId: ct.track_id, sortOrder: ct.sort_order, clipUrl };
+		const effects = (clip.effects as { pitch?: number; tempo?: number } | null) ?? {};
+		return { id: ct.id, trackId: ct.track_id, sortOrder: ct.sort_order, clipUrl, effects };
 	});
 
 	// ── Timer (based on team's own attempt start time) ───────────────────────

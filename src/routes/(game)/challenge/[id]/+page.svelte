@@ -460,6 +460,7 @@
 							src={activeTrack?.clipUrl ?? ''}
 							height={48}
 							progressColor={teamHex}
+							effects={activeTrack?.effects ?? {}}
 							onPlayStateChange={(p) => (isPlaying = p)}
 							onTimeUpdate={(t, d) => { currentTime = t; duration = d; }}
 						/>

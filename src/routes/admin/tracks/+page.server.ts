@@ -130,6 +130,26 @@ export const actions: Actions = {
 		return { success: true };
 	},
 
+	updateClipEffects: async ({ request }) => {
+		const db = createAdminClient();
+		const data = await request.formData();
+		const id = data.get('id') as string;
+		const pitch = parseFloat(data.get('pitch') as string);
+		const tempo = parseFloat(data.get('tempo') as string);
+
+		if (!id) return fail(400, { error: 'Missing clip id' });
+		if (isNaN(pitch) || pitch < -12 || pitch > 12) return fail(400, { error: 'Pitch out of range' });
+		if (isNaN(tempo) || tempo < 0.5 || tempo > 2) return fail(400, { error: 'Tempo out of range' });
+
+		const effects: { pitch?: number; tempo?: number } = {};
+		if (pitch !== 0) effects.pitch = pitch;
+		if (tempo !== 1) effects.tempo = tempo;
+
+		const { error } = await db.from('clips').update({ effects }).eq('id', id);
+		if (error) return fail(500, { error: error.message });
+		return { success: true };
+	},
+
 	deleteClip: async ({ request }) => {
 		const db = createAdminClient();
 		const data = await request.formData();

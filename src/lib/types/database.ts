@@ -131,6 +131,7 @@ export type Database = {
 					position: number | null;
 					duration: number | null;
 					storage_object_path: string | null;
+					effects: { pitch?: number; tempo?: number };
 					created_at: string;
 				};
 				Insert: {
@@ -141,6 +142,7 @@ export type Database = {
 					position?: number | null;
 					duration?: number | null;
 					storage_object_path?: string | null;
+					effects?: { pitch?: number; tempo?: number };
 					created_at?: string;
 				};
 				Update: {
@@ -151,6 +153,7 @@ export type Database = {
 					position?: number | null;
 					duration?: number | null;
 					storage_object_path?: string | null;
+					effects?: { pitch?: number; tempo?: number };
 					created_at?: string;
 				};
 				Relationships: [];

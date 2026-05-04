@@ -192,6 +192,16 @@
 	let waveformRefs = $state<Record<string, Waveform>>({});
 	let clipPlaying = $state<Record<string, boolean>>({});
 
+	// Per-clip effects editing state
+	type EffectsEdit = { pitch: number; tempo: number };
+	let effectsOpen = $state<Record<string, boolean>>({});
+	let effectsEdit = $state<Record<string, EffectsEdit>>({});
+
+	function openEffects(clipId: string, current: { pitch?: number; tempo?: number }) {
+		effectsEdit[clipId] = { pitch: current.pitch ?? 0, tempo: current.tempo ?? 1 };
+		effectsOpen[clipId] = true;
+	}
+
 	// Trim modal state
 	type TrimState = { file: File; trackId: string; orderIndex: number | null } | null;
 	let trimModal = $state<TrimState>(null);
@@ -546,58 +556,155 @@
 						{:else}
 							<div class="mb-3 space-y-1">
 								{#each clipsFor(track.id) as clip (clip.id)}
-									<div class="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-zinc-900">
-										<input
-											type="checkbox"
-											checked={selectedClips.has(clip.id)}
-											onchange={(e) => {
-												if ((e.target as HTMLInputElement).checked) {
-													selectedClips.add(clip.id);
-													selectedClips = new Set(selectedClips);
-												} else {
-													selectedClips.delete(clip.id);
-													selectedClips = new Set(selectedClips);
-												}
-											}}
-											class="accent-amber-400 shrink-0"
-										/>
-										<span class="w-16 shrink-0 font-mono text-xs text-zinc-500">{clip.type}</span>
-										{#if clip.position != null}
-											<span class="text-xs text-zinc-600">#{clip.position}</span>
-										{/if}
-										{#if clip.duration != null}
-											<span class="text-xs text-zinc-600">{formatDuration(clip.duration)}</span>
-										{/if}
-										<div class="flex min-w-0 flex-1 items-center gap-1.5">
+									<div class="rounded-lg hover:bg-zinc-900">
+										<!-- Clip row -->
+										<div class="flex items-center gap-2 px-2 py-1.5">
+											<input
+												type="checkbox"
+												checked={selectedClips.has(clip.id)}
+												onchange={(e) => {
+													if ((e.target as HTMLInputElement).checked) {
+														selectedClips.add(clip.id);
+														selectedClips = new Set(selectedClips);
+													} else {
+														selectedClips.delete(clip.id);
+														selectedClips = new Set(selectedClips);
+													}
+												}}
+												class="accent-amber-400 shrink-0"
+											/>
+											<span class="w-16 shrink-0 font-mono text-xs text-zinc-500">{clip.type}</span>
+											{#if clip.position != null}
+												<span class="text-xs text-zinc-600">#{clip.position}</span>
+											{/if}
+											{#if clip.duration != null}
+												<span class="text-xs text-zinc-600">{formatDuration(clip.duration)}</span>
+											{/if}
+											{#if (clip.effects?.pitch ?? 0) !== 0 || (clip.effects?.tempo ?? 1) !== 1}
+												<span class="rounded bg-amber-400/15 px-1.5 py-0.5 text-xs font-mono text-amber-400">
+													{(clip.effects?.pitch ?? 0) !== 0 ? `${clip.effects!.pitch! > 0 ? '+' : ''}${clip.effects!.pitch}st` : ''}
+													{(clip.effects?.tempo ?? 1) !== 1 ? `${clip.effects!.tempo}×` : ''}
+												</span>
+											{/if}
+											<div class="flex min-w-0 flex-1 items-center gap-1.5">
+												<button
+													type="button"
+													onclick={() => waveformRefs[clip.id]?.playPause()}
+													class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-zinc-700 text-xs hover:bg-zinc-600 transition-colors"
+													aria-label={clipPlaying[clip.id] ? 'Pause' : 'Play'}
+												>
+													{clipPlaying[clip.id] ? '⏸' : '▶'}
+												</button>
+												<div class="min-w-0 flex-1">
+													<Waveform
+														bind:this={waveformRefs[clip.id]}
+														src={clip.storage_path}
+														height={32}
+														effects={clip.effects ?? {}}
+														onPlayStateChange={(p) => (clipPlaying[clip.id] = p)}
+													/>
+												</div>
+											</div>
 											<button
 												type="button"
-												onclick={() => waveformRefs[clip.id]?.playPause()}
-												class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-zinc-700 text-xs hover:bg-zinc-600 transition-colors"
-												aria-label={clipPlaying[clip.id] ? 'Pause' : 'Play'}
+												onclick={() => openEffects(clip.id, clip.effects ?? {})}
+												class="rounded px-1.5 py-0.5 text-xs text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+												title="Effects"
 											>
-												{clipPlaying[clip.id] ? '⏸' : '▶'}
+												⚙
 											</button>
-											<div class="min-w-0 flex-1">
-												<Waveform
-													bind:this={waveformRefs[clip.id]}
-													src={clip.storage_path}
-													height={32}
-													onPlayStateChange={(p) => (clipPlaying[clip.id] = p)}
-												/>
-											</div>
+											<form method="POST" action="?/deleteClip" use:enhance class="shrink-0">
+												<input type="hidden" name="id" value={clip.id} />
+												<button
+													type="submit"
+													onclick={(e) => {
+														if (!confirm('Delete this clip?')) e.preventDefault();
+													}}
+													class="rounded px-1.5 py-0.5 text-xs text-red-700 transition-colors hover:bg-zinc-800 hover:text-red-400"
+												>
+													✕
+												</button>
+											</form>
 										</div>
-										<form method="POST" action="?/deleteClip" use:enhance class="shrink-0">
-											<input type="hidden" name="id" value={clip.id} />
-											<button
-												type="submit"
-												onclick={(e) => {
-													if (!confirm('Delete this clip?')) e.preventDefault();
-												}}
-												class="rounded px-1.5 py-0.5 text-xs text-red-700 transition-colors hover:bg-zinc-800 hover:text-red-400"
-											>
-												✕
-											</button>
-										</form>
+
+										<!-- Effects panel -->
+										{#if effectsOpen[clip.id]}
+											<div class="border-t border-zinc-800 px-3 py-3">
+												<div class="mb-2 text-xs font-semibold uppercase tracking-widest text-zinc-500">Effects</div>
+												<div class="space-y-3">
+													<div>
+														<div class="mb-1 flex items-center justify-between">
+															<label class="text-xs text-zinc-400" for="pitch-{clip.id}">
+																Pitch: {effectsEdit[clip.id]?.pitch ?? 0 > 0 ? '+' : ''}{effectsEdit[clip.id]?.pitch ?? 0} semitones
+															</label>
+															<button
+																type="button"
+																onclick={() => { if (effectsEdit[clip.id]) effectsEdit[clip.id].pitch = 0; }}
+																class="text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
+															>Reset</button>
+														</div>
+														<input
+															id="pitch-{clip.id}"
+															type="range"
+															min="-12"
+															max="12"
+															step="1"
+															bind:value={effectsEdit[clip.id].pitch}
+															oninput={() => {
+																if (waveformRefs[clip.id]) {
+																	// live preview
+																}
+															}}
+															class="w-full accent-amber-400"
+														/>
+													</div>
+													<div>
+														<div class="mb-1 flex items-center justify-between">
+															<label class="text-xs text-zinc-400" for="tempo-{clip.id}">
+																Tempo: {effectsEdit[clip.id]?.tempo ?? 1}×
+															</label>
+															<button
+																type="button"
+																onclick={() => { if (effectsEdit[clip.id]) effectsEdit[clip.id].tempo = 1; }}
+																class="text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
+															>Reset</button>
+														</div>
+														<input
+															id="tempo-{clip.id}"
+															type="range"
+															min="0.5"
+															max="2"
+															step="0.05"
+															bind:value={effectsEdit[clip.id].tempo}
+															class="w-full accent-amber-400"
+														/>
+													</div>
+												</div>
+												<div class="mt-3 flex justify-end gap-2">
+													<button
+														type="button"
+														onclick={() => (effectsOpen[clip.id] = false)}
+														class="rounded px-3 py-1 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+													>
+														Cancel
+													</button>
+													<form method="POST" action="?/updateClipEffects" use:enhance={() => async ({ update }) => {
+														await update({ reset: false });
+														effectsOpen[clip.id] = false;
+													}}>
+														<input type="hidden" name="id" value={clip.id} />
+														<input type="hidden" name="pitch" value={effectsEdit[clip.id]?.pitch ?? 0} />
+														<input type="hidden" name="tempo" value={effectsEdit[clip.id]?.tempo ?? 1} />
+														<button
+															type="submit"
+															class="rounded bg-amber-400 px-3 py-1 text-xs font-bold text-zinc-950 hover:bg-amber-300 transition-colors"
+														>
+															Save Effects
+														</button>
+													</form>
+												</div>
+											</div>
+										{/if}
 									</div>
 								{/each}
 							</div>
