@@ -81,14 +81,6 @@
 				{gs.status}
 			</span>
 
-			{#if gs.status === 'draft'}
-				<form method="POST" action="?/activate" use:enhance>
-					<button class="rounded-lg bg-green-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-green-600 transition-colors">
-						Start Set
-					</button>
-				</form>
-			{/if}
-
 			<form method="POST" action="?/reset" use:enhance
 				onsubmit={(e) => { if (!confirm('Clear all player assignments for this set?')) e.preventDefault(); }}>
 				<button class="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm font-medium text-zinc-400 hover:border-zinc-500 hover:text-white transition-colors">

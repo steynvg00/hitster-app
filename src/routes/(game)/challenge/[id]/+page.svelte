@@ -106,9 +106,6 @@
 		audio.currentTime = Math.max(0, Math.min(1, pct)) * duration;
 	}
 
-	// ── Set lockout ───────────────────────────────────────────────────────────
-	let setStatus = $state(data.activeSetStatus);
-
 	// ── Timer ─────────────────────────────────────────────────────────────────
 	let timerMs = $state<number | null>(null);
 
@@ -169,7 +166,7 @@
 			})
 			.subscribe();
 
-		// Subscribe to set status changes for lockout
+		// Subscribe to set recap changes — redirect to waiting when recap starts
 		let setChannel: ReturnType<typeof supabaseBrowser.channel> | null = null;
 		if (data.activeSetId) {
 			setChannel = supabaseBrowser
@@ -180,10 +177,7 @@
 					table: 'game_sets',
 					filter: `id=eq.${data.activeSetId}`
 				}, (payload) => {
-					const updated = payload.new as { status: string };
-					setStatus = updated.status;
-					// If set ends, navigate to waiting screen regardless of result state
-					if (updated.status === 'completed') {
+					if ((payload.new as { recap_state: string | null }).recap_state) {
 						goto(`/play/waiting?set_id=${data.activeSetId}`);
 					}
 				})
@@ -213,7 +207,6 @@
 	const canSubmit = $derived(
 		!submitting &&
 		!result &&
-		setStatus !== 'completed' &&
 		(timerMs === null || timerMs > 0) &&
 		data.challengeTracks.every((_, i) =>
 			comboboxFields.every((f: AnswerField) => (allFieldValues[i]?.[f] ?? '').length > 0)
@@ -503,12 +496,6 @@
 		{#if timerMs === 0}
 			<div class="mb-4 rounded-xl border border-amber-600/50 bg-amber-900/30 p-3 text-sm text-amber-300">
 				Time's up — submitting your answers…
-			</div>
-		{/if}
-
-		{#if setStatus === 'completed'}
-			<div class="mb-4 rounded-xl border border-zinc-600/50 bg-zinc-800/60 p-3 text-sm text-zinc-400">
-				This set has ended — submission is locked.
 			</div>
 		{/if}
 

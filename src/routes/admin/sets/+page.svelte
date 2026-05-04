@@ -8,9 +8,8 @@
 	let creating = $state(false);
 
 	const STATUS_BADGE: Record<string, string> = {
-		draft: 'bg-zinc-700 text-zinc-300',
-		active: 'bg-green-900/60 text-green-400',
-		completed: 'bg-zinc-800 text-zinc-500'
+		inactive: 'bg-zinc-700 text-zinc-300',
+		active: 'bg-green-900/60 text-green-400'
 	};
 </script>
 

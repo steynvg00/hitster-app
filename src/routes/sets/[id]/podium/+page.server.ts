@@ -9,7 +9,7 @@ export const load: PageServerLoad = async ({ params }) => {
 
 	const { data: gameSet } = await db.from('game_sets').select('*').eq('id', id).maybeSingle();
 	if (!gameSet) redirect(302, '/');
-	if (gameSet.status !== 'completed') redirect(302, '/');
+	if (!gameSet.ended_at) redirect(302, '/');
 
 	const scopedColors = TEAM_COLOR_ORDER.slice(0, gameSet.team_count);
 

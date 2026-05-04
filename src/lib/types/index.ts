@@ -175,7 +175,7 @@ export interface NfcTag {
 
 // ─── Game Sets ────────────────────────────────────────────────────────────────
 
-export type GameSetStatus = 'draft' | 'active' | 'completed';
+export type GameSetStatus = 'active' | 'inactive';
 
 export interface GameSet {
 	id: string;

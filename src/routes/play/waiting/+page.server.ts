@@ -18,7 +18,7 @@ export const load: PageServerLoad = async ({ locals, cookies, url }) => {
 	]);
 
 	if (!gs) redirect(302, '/team');
-	if (gs.status !== 'completed') redirect(302, '/team');
+	if (!gs.recap_state) redirect(302, '/team');
 	if (gs.recap_state === 'complete') redirect(302, `/play/thanks?set_id=${setId}`);
 
 	if (!team) redirect(302, '/join');

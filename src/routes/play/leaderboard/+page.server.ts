@@ -14,7 +14,7 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		.order('score', { ascending: false });
 
 	// Determine the player's active set (needed to decide whether to show leaderboard)
-	let activeSet: { id: string; status: string } | null = null;
+	let activeSet: { id: string; status: string; recap_state: string | null } | null = null;
 	if (locals.playerId) {
 		const { data: player } = await admin
 			.from('players')
@@ -24,15 +24,15 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		if (player?.set_id) {
 			const { data: gs } = await admin
 				.from('game_sets')
-				.select('id, status')
+				.select('id, status, recap_state')
 				.eq('id', player.set_id)
 				.maybeSingle();
 			if (gs) activeSet = gs;
 		}
 	}
 
-	// If set is completed, send player to the waiting/reveal screen
-	if (activeSet?.status === 'completed') {
+	// If recap is in progress, send player to the waiting/reveal screen
+	if (activeSet?.recap_state) {
 		redirect(302, `/play/waiting?set_id=${activeSet.id}`);
 	}
 

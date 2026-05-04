@@ -9,7 +9,7 @@ export const load: PageServerLoad = async ({ params }) => {
 
 	const { data: gameSet } = await db.from('game_sets').select('*').eq('id', id).maybeSingle();
 	if (!gameSet) redirect(302, '/admin/sets');
-	if (gameSet.status !== 'completed') redirect(302, `/admin/sets/${id}`);
+	if (!gameSet.recap_state) redirect(302, `/admin/sets/${id}`);
 
 	const scopedColors = TEAM_COLOR_ORDER.slice(0, gameSet.team_count);
 
@@ -66,11 +66,11 @@ export const actions: Actions = {
 
 		const { data: gameSet } = await db
 			.from('game_sets')
-			.select('id, status, team_count, recap_ranking, recap_reveal_index')
+			.select('id, status, team_count, recap_ranking, recap_reveal_index, recap_state')
 			.eq('id', params.id)
 			.maybeSingle();
 
-		if (!gameSet || gameSet.status !== 'completed') return fail(400, { error: 'Set not completed' });
+		if (!gameSet || !gameSet.recap_state) return fail(400, { error: 'Recap not started' });
 
 		const scopedColors = TEAM_COLOR_ORDER.slice(0, gameSet.team_count);
 
@@ -115,17 +115,16 @@ export const actions: Actions = {
 		return { success: true, revealedIndex: newIndex - 1 };
 	},
 
-	// End the set and clear all player assignments; reset to draft for reuse
+	// End the set: set inactive, mark ended, signal players to go to thanks
 	endAndReset: async ({ params }) => {
 		const db = createAdminClient();
 
 		await Promise.all([
 			db.from('players').update({ set_id: null, team_id: null }).eq('set_id', params.id),
 			db.from('game_sets').update({
-				status: 'draft',
-				recap_state: null as never,
-				started_at: null,
-				ended_at: null,
+				status: 'inactive',
+				recap_state: 'complete',
+				ended_at: new Date().toISOString(),
 				recap_ranking: null as never,
 				recap_reveal_index: 0,
 				assignment_slots: [] as never,

@@ -24,7 +24,7 @@ export const load: PageServerLoad = async ({ params, cookies }) => {
 
 	// Set is not active — render the "no game running" page
 	if (gameSet.status !== 'active') {
-		return { inactive: true as const, status: gameSet.status, setName: gameSet.name };
+		return { inactive: true as const, hasEnded: !!gameSet.ended_at, setName: gameSet.name };
 	}
 
 	// Already in this set — restore team cookie and continue

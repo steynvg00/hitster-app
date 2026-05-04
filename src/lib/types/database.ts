@@ -282,7 +282,7 @@ export type Database = {
 					expected_player_count: number | null;
 					assignment_slots: string[];
 					assignment_index: number;
-					status: 'draft' | 'active' | 'completed';
+					status: 'active' | 'inactive';
 					started_at: string | null;
 					ended_at: string | null;
 					recap_state: string;
@@ -299,7 +299,7 @@ export type Database = {
 					expected_player_count?: number | null;
 					assignment_slots?: string[];
 					assignment_index?: number;
-					status?: 'draft' | 'active' | 'completed';
+					status?: 'active' | 'inactive';
 					started_at?: string | null;
 					ended_at?: string | null;
 					recap_state?: string;
@@ -316,7 +316,7 @@ export type Database = {
 					expected_player_count?: number | null;
 					assignment_slots?: string[];
 					assignment_index?: number;
-					status?: 'draft' | 'active' | 'completed';
+					status?: 'active' | 'inactive';
 					started_at?: string | null;
 					ended_at?: string | null;
 					recap_state?: string;

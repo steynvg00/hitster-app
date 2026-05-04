@@ -69,11 +69,10 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 				.maybeSingle();
 			if (gs) {
 				activeSet = gs;
-				// Redirect to waiting or thanks if set has ended
-				if (gs.status === 'completed') {
-					if (gs.recap_state === 'complete') {
-						redirect(302, `/play/thanks?set_id=${gs.id}`);
-					}
+				// Redirect to thanks/waiting if recap is in progress or complete
+				if (gs.recap_state === 'complete') {
+					redirect(302, `/play/thanks?set_id=${gs.id}`);
+				} else if (gs.recap_state) {
 					redirect(302, `/play/waiting?set_id=${gs.id}`);
 				}
 			}

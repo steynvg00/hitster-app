@@ -74,52 +74,70 @@ export const actions: Actions = {
 		return { success: true };
 	},
 
-	activate: async ({ params }) => {
+	toggle: async ({ params }) => {
 		const db = createAdminClient();
 
 		const { data: gameSet } = await db
 			.from('game_sets')
-			.select('id, team_count, expected_player_count')
+			.select('id, status, team_count, expected_player_count')
 			.eq('id', params.id)
 			.maybeSingle();
 
 		if (!gameSet) return fail(404, { error: 'Set not found' });
 
-		// Generate pre-shuffled slot list if expected player count is configured
-		let assignment_slots: string[] = [];
-		if (gameSet.expected_player_count && gameSet.expected_player_count > 0) {
-			assignment_slots = await generateAssignmentSlots(
-				db,
-				gameSet.expected_player_count,
-				gameSet.team_count
-			);
+		if (gameSet.status === 'active') {
+			const { error } = await db
+				.from('game_sets')
+				.update({ status: 'inactive' })
+				.eq('id', params.id);
+			if (error) return fail(500, { error: 'Could not deactivate set' });
+			return { success: true };
+		} else {
+			// Activating: regenerate slots and reset recap state for a fresh round
+			let assignment_slots: string[] = [];
+			if (gameSet.expected_player_count && gameSet.expected_player_count > 0) {
+				assignment_slots = await generateAssignmentSlots(
+					db,
+					gameSet.expected_player_count,
+					gameSet.team_count
+				);
+			}
+			const { error } = await db
+				.from('game_sets')
+				.update({
+					status: 'active',
+					started_at: new Date().toISOString(),
+					ended_at: null,
+					recap_state: null as never,
+					recap_ranking: null as never,
+					recap_reveal_index: 0,
+					assignment_slots: assignment_slots as never,
+					assignment_index: 0
+				})
+				.eq('id', params.id);
+			if (error) return fail(500, { error: 'Could not activate set' });
+			redirect(303, `/admin/sets/${params.id}/lobby`);
 		}
-
-		const { error } = await db
-			.from('game_sets')
-			.update({
-				status: 'active',
-				started_at: new Date().toISOString(),
-				assignment_slots: assignment_slots as never,
-				assignment_index: 0
-			})
-			.eq('id', params.id)
-			.eq('status', 'draft');
-
-		if (error) return fail(500, { error: 'Could not activate set' });
-		redirect(303, `/admin/sets/${params.id}/lobby`);
 	},
 
-	end: async ({ params }) => {
+	startRecap: async ({ params }) => {
 		const db = createAdminClient();
+
+		const { data: gameSet } = await db
+			.from('game_sets')
+			.select('id, status, recap_state')
+			.eq('id', params.id)
+			.maybeSingle();
+
+		if (!gameSet || gameSet.status !== 'active') return fail(400, { error: 'Set must be active to start recap' });
+		if (gameSet.recap_state) return fail(400, { error: 'Recap already started' });
 
 		const { error } = await db
 			.from('game_sets')
-			.update({ status: 'completed', ended_at: new Date().toISOString() })
+			.update({ recap_state: 'pending' })
 			.eq('id', params.id);
 
-		if (error) return fail(500, { error: 'Could not end set' });
-		// Players stay assigned until recap "End & Reset" clears them
+		if (error) return fail(500, { error: 'Could not start recap' });
 		redirect(303, `/admin/sets/${params.id}/recap`);
 	},
 
@@ -132,7 +150,7 @@ export const actions: Actions = {
 			.eq('id', params.id)
 			.maybeSingle();
 
-		if (gameSet?.status !== 'draft') return fail(400, { error: 'Only draft sets can be deleted' });
+		if (gameSet?.status === 'active') return fail(400, { error: 'Cannot delete an active set' });
 
 		await db.from('game_sets').delete().eq('id', params.id);
 		redirect(303, '/admin/sets');

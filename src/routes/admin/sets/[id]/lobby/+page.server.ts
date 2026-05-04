@@ -35,17 +35,6 @@ export const load: PageServerLoad = async ({ params }) => {
 };
 
 export const actions: Actions = {
-	activate: async ({ params }) => {
-		const db = createAdminClient();
-		const { error } = await db
-			.from('game_sets')
-			.update({ status: 'active', started_at: new Date().toISOString() })
-			.eq('id', params.id)
-			.eq('status', 'draft');
-		if (error) return fail(500, { error: 'Could not activate' });
-		return { success: true };
-	},
-
 	reset: async ({ params }) => {
 		const db = createAdminClient();
 		await db.from('players').update({ set_id: null, team_id: null }).eq('set_id', params.id);

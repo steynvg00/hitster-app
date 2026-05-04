@@ -179,9 +179,9 @@ export const load: PageServerLoad = async ({ params, cookies, locals }) => {
 		};
 	}
 
-	// Check if player is in a set that's ended (for lockout)
+	// Check if player is in a set with an active recap (for redirect)
 	let activeSetId: string | null = null;
-	let activeSetStatus: string | null = null;
+	let activeSetRecapState: string | null = null;
 	if (locals.playerId) {
 		const { data: playerRow } = await admin
 			.from('players')
@@ -191,12 +191,12 @@ export const load: PageServerLoad = async ({ params, cookies, locals }) => {
 		if (playerRow?.set_id) {
 			const { data: gs } = await admin
 				.from('game_sets')
-				.select('id, status')
+				.select('id, recap_state')
 				.eq('id', playerRow.set_id)
 				.maybeSingle();
 			if (gs) {
 				activeSetId = gs.id;
-				activeSetStatus = gs.status;
+				activeSetRecapState = gs.recap_state ?? null;
 			}
 		}
 	}
@@ -214,7 +214,7 @@ export const load: PageServerLoad = async ({ params, cookies, locals }) => {
 		priorResult,
 		attempt,
 		activeSetId,
-		activeSetStatus
+		activeSetRecapState
 	};
 };
 

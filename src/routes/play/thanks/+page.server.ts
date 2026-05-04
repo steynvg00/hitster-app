@@ -13,11 +13,11 @@ export const load: PageServerLoad = async ({ locals, cookies, url }) => {
 
 	const [{ data: team }, { data: gameSet }] = await Promise.all([
 		supabase.from('teams').select('id, color, display_name').eq('id', locals.teamId).maybeSingle(),
-		admin.from('game_sets').select('id, name, status, recap_state').eq('id', setId).maybeSingle()
+		admin.from('game_sets').select('id, name, status, recap_state, ended_at').eq('id', setId).maybeSingle()
 	]);
 
 	if (!team) redirect(302, '/join');
-	if (!gameSet || gameSet.status !== 'completed') redirect(302, '/team');
+	if (!gameSet || !gameSet.ended_at) redirect(302, '/team');
 
 	// Load challenges in this set with this team's scores
 	const { data: setChallenges } = await admin

@@ -8,7 +8,7 @@
 		<div class="mb-6 text-6xl">🎵</div>
 		<h1 class="mb-3 text-2xl font-black text-white">No game running here yet</h1>
 		<p class="mb-8 text-zinc-400 text-lg">
-			{#if data.status === 'completed'}
+			{#if data.hasEnded}
 				This game set has ended.
 			{:else}
 				The host hasn't started this set yet. Check back soon!

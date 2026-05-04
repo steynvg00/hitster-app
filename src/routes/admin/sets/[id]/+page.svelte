@@ -5,7 +5,6 @@
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	const gs = $derived(data.gameSet);
-	const isDraft = $derived(gs.status === 'draft');
 	const isActive = $derived(gs.status === 'active');
 
 	// ── Challenge picker state ────────────────────────────────────────────────
@@ -72,7 +71,7 @@
 			<a href="/admin/sets" class="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">← Sets</a>
 			<h1 class="mt-1 text-2xl font-black text-white">{gs.name}</h1>
 			<span class="mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-semibold
-				{gs.status === 'active' ? 'bg-green-900/60 text-green-400' : gs.status === 'completed' ? 'bg-zinc-800 text-zinc-500' : 'bg-zinc-700 text-zinc-300'}">
+				{isActive ? 'bg-green-900/60 text-green-400' : 'bg-zinc-700 text-zinc-300'}">
 				{gs.status}
 			</span>
 		</div>
@@ -85,7 +84,7 @@
 					View Lobby
 				</a>
 			{/if}
-			{#if gs.status === 'completed'}
+			{#if gs.recap_state}
 				<a
 					href="/admin/sets/{gs.id}/recap"
 					class="rounded-lg bg-amber-400/15 px-4 py-2 text-sm font-semibold text-amber-400 hover:bg-amber-400/25 transition-colors"
@@ -93,37 +92,38 @@
 					Recap →
 				</a>
 			{/if}
-			{#if isDraft}
-				<form method="POST" action="?/activate" use:enhance
-					onsubmit={(e) => {
-						const count = gs.expected_player_count;
-						if (count && count > 0 && count % gs.team_count !== 0) {
-							const base = Math.floor(count / gs.team_count);
-							const extra = count % gs.team_count;
-							const msg = `Uneven distribution — ${extra} team${extra > 1 ? 's' : ''} will have ${base + 1} players and ${gs.team_count - extra} will have ${base}. Continue?`;
-							if (!confirm(msg)) e.preventDefault();
-						}
-					}}>
+			{#if isActive && !gs.recap_state}
+				<form method="POST" action="?/startRecap" use:enhance
+					onsubmit={(e) => { if (!confirm('Start recap? Players will be redirected to the waiting screen.')) e.preventDefault(); }}>
 					<button
 						type="submit"
-						class="rounded-lg bg-green-700 px-4 py-2 text-sm font-semibold text-white hover:bg-green-600 transition-colors"
+						class="rounded-lg bg-indigo-700 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-600 transition-colors"
 					>
-						Activate
+						Start Recap
 					</button>
 				</form>
 			{/if}
-			{#if isActive}
-				<form method="POST" action="?/end" use:enhance
-					onsubmit={(e) => { if (!confirm('End this set? All player assignments will be cleared.')) e.preventDefault(); }}>
-					<button
-						type="submit"
-						class="rounded-lg border border-red-800 px-4 py-2 text-sm font-semibold text-red-400 hover:bg-red-950 transition-colors"
-					>
-						End Set
-					</button>
-				</form>
-			{/if}
-			{#if isDraft}
+			<form method="POST" action="?/toggle" use:enhance={() => async ({ update }) => update({ reset: false })}
+				onsubmit={(e) => {
+					if (isActive) return; // deactivating — no confirm needed
+					const count = gs.expected_player_count;
+					if (count && count > 0 && count % gs.team_count !== 0) {
+						const base = Math.floor(count / gs.team_count);
+						const extra = count % gs.team_count;
+						const msg = `Uneven distribution — ${extra} team${extra > 1 ? 's' : ''} will have ${base + 1} players and ${gs.team_count - extra} will have ${base}. Continue?`;
+						if (!confirm(msg)) e.preventDefault();
+					}
+				}}>
+				<button
+					type="submit"
+					class="{isActive
+						? 'rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-400 hover:border-zinc-500 hover:text-white'
+						: 'rounded-lg bg-green-700 px-4 py-2 text-sm font-semibold text-white hover:bg-green-600'} transition-colors"
+				>
+					{isActive ? 'Set Inactive' : 'Set Active'}
+				</button>
+			</form>
+			{#if !isActive}
 				<form method="POST" action="?/delete" use:enhance
 					onsubmit={(e) => { if (!confirm(`Delete "${gs.name}"? This cannot be undone.`)) e.preventDefault(); }}>
 					<button
@@ -198,7 +198,7 @@
 		<p class="mb-4 text-xs text-zinc-500">Drag to reorder. Click + to add, × to remove.</p>
 
 		{#if isActive}
-			<p class="mb-3 text-xs text-amber-400">Set is active — challenge changes take effect immediately.</p>
+			<p class="mb-3 text-xs text-amber-400">Set is active — changes take effect immediately.</p>
 		{/if}
 
 		<form

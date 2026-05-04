@@ -51,7 +51,7 @@
 					table: 'game_sets',
 					filter: `id=eq.${data.activeSetId}`
 				}, (payload) => {
-					if ((payload.new as { status: string }).status === 'completed') {
+					if ((payload.new as { recap_state: string | null }).recap_state) {
 						goto(`/play/waiting?set_id=${data.activeSetId}`);
 					}
 				})
