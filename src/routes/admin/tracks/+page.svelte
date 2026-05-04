@@ -3,6 +3,7 @@
 	import { invalidateAll } from '$app/navigation';
 	import type { PageData, ActionData } from './$types';
 	import Waveform from '$lib/components/ui/Waveform.svelte';
+	import TrimModal from '$lib/components/ui/TrimModal.svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -190,6 +191,19 @@
 	// Per-clip waveform refs and play state
 	let waveformRefs = $state<Record<string, Waveform>>({});
 	let clipPlaying = $state<Record<string, boolean>>({});
+
+	// Trim modal state
+	type TrimState = { file: File; trackId: string; orderIndex: number | null } | null;
+	let trimModal = $state<TrimState>(null);
+
+	function openTrim(trackId: string, file: File, orderIndex: number | null = null) {
+		trimModal = { file, trackId, orderIndex };
+	}
+
+	async function onTrimUploaded(trackId: string) {
+		trimModal = null;
+		await invalidateAll();
+	}
 </script>
 
 <div class="p-6">
@@ -591,9 +605,25 @@
 
 						<!-- ── Drop zone ──────────────────────────────────────────────────── -->
 						<div class="mt-4 border-t border-zinc-800 pt-3">
-							<div class="mb-2 text-xs uppercase tracking-widest text-zinc-500">Upload clips</div>
+							<div class="mb-2 flex items-center justify-between">
+								<span class="text-xs uppercase tracking-widest text-zinc-500">Upload clips</span>
+								<!-- Trim upload: single file → opens trim modal -->
+								<label class="cursor-pointer rounded-lg border border-zinc-700 px-3 py-1 text-xs font-medium text-zinc-400 hover:border-amber-400/50 hover:text-amber-400 transition-colors">
+									✂ Upload + Trim
+									<input
+										type="file"
+										accept="audio/*"
+										class="hidden"
+										onchange={async (e) => {
+											const files = (e.target as HTMLInputElement).files;
+											if (files?.[0]) openTrim(track.id, files[0], (stagedFiles[track.id] ?? []).length + 1);
+											(e.target as HTMLInputElement).value = '';
+										}}
+									/>
+								</label>
+							</div>
 
-							<!-- Drop target -->
+							<!-- Drop target (quick upload — pre-trimmed files) -->
 							<!-- svelte-ignore a11y_no_static_element_interactions -->
 							<div
 								role="region"
@@ -625,7 +655,7 @@
 									}}
 								/>
 								<p class="text-sm text-zinc-500">
-									Drag audio files here, or <span class="text-amber-400">click to browse</span>
+									Quick upload — drag pre-trimmed files, or <span class="text-amber-400">click to browse</span>
 								</p>
 								<p class="mt-1 text-xs text-zinc-600">mp3 · wav · ogg · m4a · flac · webm · max 10 MB each</p>
 							</div>
@@ -772,6 +802,16 @@
 		{/each}
 	</div>
 </div>
+
+{#if trimModal}
+	<TrimModal
+		file={trimModal.file}
+		trackId={trimModal.trackId}
+		orderIndex={trimModal.orderIndex}
+		onClose={() => (trimModal = null)}
+		onUploaded={() => onTrimUploaded(trimModal!.trackId)}
+	/>
+{/if}
 
 <style>
 	:global(.input-field) {
