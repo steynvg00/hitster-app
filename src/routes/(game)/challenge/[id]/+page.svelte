@@ -9,6 +9,7 @@
 	import OpenText from '$lib/components/ui/OpenText.svelte';
 	import YearInput from '$lib/components/ui/YearInput.svelte';
 	import { supabaseBrowser } from '$lib/supabase-browser';
+	import Waveform from '$lib/components/ui/Waveform.svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -76,34 +77,17 @@
 	const activeTrack = $derived(data.challengeTracks[activeTrackIndex]);
 	const isMultiTrack = $derived(data.challengeTracks.length > 1);
 
-	// ── Audio player ─────────────────────────────────────────────────────────
-	let audio = $state<HTMLAudioElement | undefined>(undefined);
+	// ── Audio player (WaveSurfer) ─────────────────────────────────────────────
+	let waveformRef = $state<Waveform | undefined>(undefined);
+	let isPlaying = $state(false);
 	let currentTime = $state(0);
 	let duration = $state(0);
-	let isPlaying = $state(false);
-
-	$effect(() => {
-		// Reset playback state when switching tracks
-		const _ = activeTrack;
-		currentTime = 0;
-		duration = 0;
-		isPlaying = false;
-	});
 
 	const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
-	const progressPct = $derived(duration > 0 ? (currentTime / duration) * 100 : 0);
 	const timeLabel = $derived(`${fmt(currentTime)} / ${fmt(duration || 0)}`);
 
 	function togglePlay() {
-		if (!audio) return;
-		isPlaying ? audio.pause() : audio.play();
-	}
-
-	function seek(e: MouseEvent) {
-		if (!audio || !duration) return;
-		const bar = e.currentTarget as HTMLElement;
-		const pct = (e.clientX - bar.getBoundingClientRect().left) / bar.clientWidth;
-		audio.currentTime = Math.max(0, Math.min(1, pct)) * duration;
+		waveformRef?.playPause();
 	}
 
 	// ── Timer ─────────────────────────────────────────────────────────────────
@@ -470,24 +454,20 @@
 					{/if}
 				</button>
 				<div class="min-w-0 flex-1 space-y-1.5">
-					<button type="button" aria-label="Seek audio"
-						class="relative block h-2 w-full cursor-pointer rounded-full bg-zinc-700"
-						onclick={seek}>
-						<div class="h-full rounded-full transition-all duration-100"
-							style="background-color: {teamHex}; width: {progressPct}%"></div>
-					</button>
+					{#key activeTrackIndex}
+						<Waveform
+							bind:this={waveformRef}
+							src={activeTrack?.clipUrl ?? ''}
+							height={48}
+							progressColor={teamHex}
+							onPlayStateChange={(p) => (isPlaying = p)}
+							onTimeUpdate={(t, d) => { currentTime = t; duration = d; }}
+						/>
+					{/key}
 					<div class="font-mono text-xs text-zinc-500">{timeLabel}</div>
 				</div>
 			</div>
 		</div>
-
-		<audio bind:this={audio} src={activeTrack?.clipUrl}
-			ontimeupdate={() => (currentTime = audio?.currentTime ?? 0)}
-			onloadedmetadata={() => (duration = audio?.duration ?? 0)}
-			onplay={() => (isPlaying = true)}
-			onpause={() => (isPlaying = false)}
-			onended={() => (isPlaying = false)}>
-		</audio>
 
 		{#if formError}
 			<div class="mb-4 rounded-xl border border-red-600/50 bg-red-900/30 p-3 text-sm text-red-300">{formError}</div>

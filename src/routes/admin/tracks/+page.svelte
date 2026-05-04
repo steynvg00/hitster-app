@@ -2,6 +2,7 @@
 	import { enhance } from '$app/forms';
 	import { invalidateAll } from '$app/navigation';
 	import type { PageData, ActionData } from './$types';
+	import Waveform from '$lib/components/ui/Waveform.svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -185,6 +186,10 @@
 			editingTrack = null;
 		}
 	});
+
+	// Per-clip waveform refs and play state
+	let waveformRefs = $state<Record<string, Waveform>>({});
+	let clipPlaying = $state<Record<string, boolean>>({});
 </script>
 
 <div class="p-6">
@@ -549,13 +554,24 @@
 										{#if clip.duration != null}
 											<span class="text-xs text-zinc-600">{formatDuration(clip.duration)}</span>
 										{/if}
-										<!-- svelte-ignore a11y_media_has_caption -->
-										<audio
-											src={clip.storage_path}
-											controls
-											preload="none"
-											class="h-7 min-w-0 flex-1"
-										></audio>
+										<div class="flex min-w-0 flex-1 items-center gap-1.5">
+											<button
+												type="button"
+												onclick={() => waveformRefs[clip.id]?.playPause()}
+												class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-zinc-700 text-xs hover:bg-zinc-600 transition-colors"
+												aria-label={clipPlaying[clip.id] ? 'Pause' : 'Play'}
+											>
+												{clipPlaying[clip.id] ? '⏸' : '▶'}
+											</button>
+											<div class="min-w-0 flex-1">
+												<Waveform
+													bind:this={waveformRefs[clip.id]}
+													src={clip.storage_path}
+													height={32}
+													onPlayStateChange={(p) => (clipPlaying[clip.id] = p)}
+												/>
+											</div>
+										</div>
 										<form method="POST" action="?/deleteClip" use:enhance class="shrink-0">
 											<input type="hidden" name="id" value={clip.id} />
 											<button
