@@ -50,7 +50,6 @@
 <div class="min-h-screen p-6 md:p-10">
 	<!-- Header -->
 	<div class="mb-10 text-center">
-		<p class="mb-1 text-xs font-bold uppercase tracking-[0.3em] text-zinc-500">Defqon.1 Weekend</p>
 		<h1 class="text-4xl font-black uppercase tracking-tight md:text-6xl">Leaderboard</h1>
 	</div>
 
