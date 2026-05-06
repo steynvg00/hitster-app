@@ -1,4 +1,5 @@
 <script lang="ts">
+	import HomepageBackground from '$lib/components/HomepageBackground.svelte';
 </script>
 
 <svelte:head>
@@ -11,10 +12,20 @@
 	/>
 </svelte:head>
 
-<div class="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-6 py-16">
+<!-- Animated background (z-index 0) -->
+<HomepageBackground />
+
+<!-- Dark overlay for content readability (z-index 1) -->
+<div class="fixed inset-0" style="z-index: 1; background: rgba(10,10,15,0.60);"></div>
+
+<!-- Foreground content (z-index 10) -->
+<div
+	class="relative flex min-h-screen flex-col items-center justify-center px-6 py-16"
+	style="z-index: 10;"
+>
 	<div class="mb-12 text-center">
 		<h1
-			class="text-[5rem] font-black uppercase leading-none tracking-tighter text-white sm:text-[7rem]"
+			class="text-[5rem] font-black uppercase leading-none tracking-tighter text-white drop-shadow-lg sm:text-[7rem]"
 		>
 			MixUp!
 		</h1>
