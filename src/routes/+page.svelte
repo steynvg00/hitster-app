@@ -15,8 +15,8 @@
 <!-- Animated background (z-index 0) -->
 <HomepageBackground />
 
-<!-- Dark overlay for content readability (z-index 1) -->
-<div class="fixed inset-0" style="z-index: 1; background: rgba(10,10,15,0.60);"></div>
+<!-- Dark overlay — reduced to 0.42 so background colors pop through (z-index 1) -->
+<div class="fixed inset-0" style="z-index: 1; background: rgba(10,10,15,0.42);"></div>
 
 <!-- Foreground content (z-index 10) -->
 <div
@@ -29,7 +29,7 @@
 		>
 			MixUp!
 		</h1>
-		<p class="tagline mt-3 text-base text-zinc-300">music games for parties</p>
+		<p class="tagline mt-3 text-base text-white">music games for parties</p>
 	</div>
 
 	<div class="flex w-full max-w-xs flex-col gap-4">
@@ -41,6 +41,7 @@
 	.tagline {
 		font-family: 'Nunito', sans-serif;
 		font-weight: 600;
+		text-shadow: 0 1px 8px rgba(0, 0, 0, 0.75);
 	}
 
 	.host-btn {

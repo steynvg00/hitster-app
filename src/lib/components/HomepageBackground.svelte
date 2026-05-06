@@ -4,14 +4,13 @@
 	// Team palette: blue, yellow, green, red, indigo, slate
 	const C = ['#3b82f6', '#eab308', '#22c55e', '#ef4444', '#6366f1', '#64748b'];
 
-	// 0 = stripes NE, 1 = stripes NW, 2 = pulse, 3 = lava, 4 = disco, 5 = bokeh
+	// 0 = stripes NE, 1 = stripes NW,
+	// 2 = bouncing bubbles, 3 = grow/shrink, 4 = fade in/out, 5 = flat lava lamp
 	let variant = $state(-1);
 
-	type BlobDef = { left: number; top: number; size: number; color: string; dur: number; dx1: number; dy1: number; dx2: number; dy2: number };
-	type BokehDef = { left: number; size: number; color: string; blur: number; delay: number; dur: number; opacity: number };
+	type Dot = { left: number; top: number; size: number; color: string; dur: number; delay: number; driftX?: number };
+	let dots: Dot[] = $state([]);
 
-	let blobs: BlobDef[] = $state([]);
-	let bokeh: BokehDef[] = $state([]);
 	let canvas: HTMLCanvasElement | null = $state(null);
 	let rafId = 0;
 
@@ -19,37 +18,44 @@
 		variant = Math.floor(Math.random() * 6);
 
 		if (variant === 3) {
-			blobs = Array.from({ length: 5 }, (_, i) => {
-				const dx = 6 + Math.random() * 10;
-				const dy = 5 + Math.random() * 8;
-				return {
-					left: 5 + i * 19 + Math.random() * 8,
-					top: 10 + Math.random() * 65,
-					size: 300 + Math.random() * 200,
-					color: C[i],
-					dur: 14 + i * 3,
-					dx1: dx, dy1: dy,
-					dx2: dx * 0.6, dy2: dy * 0.7
-				};
-			});
-		} else if (variant === 5) {
-			bokeh = Array.from({ length: 20 }, (_, i) => ({
-				left: Math.random() * 100,
-				size: 70 + Math.random() * 90,
+			// grow/shrink: scattered circles
+			dots = Array.from({ length: 18 }, (_, i) => ({
+				left: 3 + Math.random() * 90,
+				top: 3 + Math.random() * 90,
+				size: 40 + Math.random() * 90,
 				color: C[i % 6],
-				blur: 25 + Math.random() * 35,
-				delay: -(Math.random() * 30),
-				dur: 18 + Math.random() * 18,
-				opacity: 0.2 + Math.random() * 0.35
+				dur: 2.5 + Math.random() * 4,
+				delay: -(Math.random() * 8)
+			}));
+		} else if (variant === 4) {
+			// fade in/out: scattered circles
+			dots = Array.from({ length: 18 }, (_, i) => ({
+				left: 3 + Math.random() * 90,
+				top: 3 + Math.random() * 90,
+				size: 40 + Math.random() * 90,
+				color: C[i % 6],
+				dur: 4 + Math.random() * 5,
+				delay: -(Math.random() * 9)
+			}));
+		} else if (variant === 5) {
+			// flat lava lamp: large bubbles in lower portion, alternate float up/down
+			dots = Array.from({ length: 14 }, (_, i) => ({
+				left: 3 + Math.random() * 88,
+				top: 48 + Math.random() * 42,
+				size: 55 + Math.random() * 110,
+				color: C[i % 6],
+				dur: 6 + Math.random() * 8,
+				delay: -(Math.random() * 14),
+				driftX: (Math.random() - 0.5) * 15
 			}));
 		}
 
 		return () => { if (rafId) cancelAnimationFrame(rafId); };
 	});
 
-	// Disco ball — start rAF once canvas element is bound
+	// Bouncing bubbles — start rAF once canvas is bound
 	$effect(() => {
-		if (variant !== 4 || !canvas) return;
+		if (variant !== 2 || !canvas) return;
 
 		const W = window.innerWidth;
 		const H = window.innerHeight;
@@ -57,16 +63,17 @@
 		canvas.height = H;
 
 		type Ball = { x: number; y: number; vx: number; vy: number; r: number; color: string };
-		const balls: Ball[] = Array.from({ length: 40 }, () => ({
+		const balls: Ball[] = Array.from({ length: 15 }, () => ({
 			x: Math.random() * W,
 			y: Math.random() * H,
-			vx: (1.5 + Math.random() * 2) * (Math.random() < 0.5 ? 1 : -1),
-			vy: (1.5 + Math.random() * 2) * (Math.random() < 0.5 ? 1 : -1),
-			r: 5 + Math.random() * 9,
+			vx: (0.8 + Math.random() * 1.5) * (Math.random() < 0.5 ? 1 : -1),
+			vy: (0.8 + Math.random() * 1.5) * (Math.random() < 0.5 ? 1 : -1),
+			r: 28 + Math.random() * 52,
 			color: C[Math.floor(Math.random() * 6)]
 		}));
 
 		const ctx = canvas.getContext('2d')!;
+		ctx.globalAlpha = 0.82;
 
 		const tick = () => {
 			ctx.clearRect(0, 0, W, H);
@@ -88,6 +95,24 @@
 
 		return () => cancelAnimationFrame(rafId);
 	});
+
+	/*
+	 * DISABLED — old circle variants (kept for reference, not reachable)
+	 *
+	 * Old variant 2: speaker bass pulse
+	 * Old variant 3: blurry lava lamp blobs
+	 * Old variant 4: disco ball (small dots, canvas)
+	 * Old variant 5: bokeh
+	 *
+	 * These used filter:blur() effects which didn't match the flat stripe aesthetic.
+	 * Replaced by flat bubble variants above.
+	 *
+	 * Old state vars that drove them:
+	 *   type BlobDef = { left, top, size, color, dur, dx1, dy1, dx2, dy2 }
+	 *   type BokehDef = { left, size, color, blur, delay, dur, opacity }
+	 *   let blobs: BlobDef[] = $state([]);
+	 *   let bokeh: BokehDef[] = $state([]);
+	 */
 </script>
 
 <!-- Variant 0: diagonal stripes → NE -->
@@ -98,56 +123,72 @@
 {:else if variant === 1}
 	<div class="bg stripe-nw" aria-hidden="true"></div>
 
-<!-- Variant 2: speaker bass pulse -->
+<!-- Variant 2: bouncing bubbles (flat, canvas) -->
 {:else if variant === 2}
-	<div class="bg pulse-wrap" aria-hidden="true">
-		{#each { length: 6 } as _, i}
-			<div class="pulse-ring" style="--c: {C[i]}; animation-delay: {-(i * 0.67).toFixed(2)}s;"></div>
-		{/each}
-	</div>
+	<canvas bind:this={canvas} class="bg bounce-canvas" aria-hidden="true"></canvas>
 
-<!-- Variant 3: lava lamp blobs -->
+<!-- Variant 3: growing / shrinking bubbles (flat) -->
 {:else if variant === 3}
-	<div class="bg lava-wrap" aria-hidden="true">
-		{#each blobs as b, i}
+	<div class="bg dots-wrap" aria-hidden="true">
+		{#each dots as d}
 			<div
-				class="lava-blob"
-				style="
-					left: {b.left}%; top: {b.top}%;
-					width: {b.size}px; height: {b.size}px;
-					background: {b.color};
-					animation-duration: {b.dur}s;
-					animation-delay: {-(i * b.dur * 0.22).toFixed(2)}s;
-					--dx1: {b.dx1.toFixed(1)}vw; --dy1: {b.dy1.toFixed(1)}vh;
-					--dx2: {b.dx2.toFixed(1)}vw; --dy2: {b.dy2.toFixed(1)}vh;
-				"
+				class="dot grow-dot"
+				style="left:{d.left}%;top:{d.top}%;width:{d.size}px;height:{d.size}px;background:{d.color};animation-duration:{d.dur.toFixed(2)}s;animation-delay:{d.delay.toFixed(2)}s;"
 			></div>
 		{/each}
 	</div>
 
-<!-- Variant 4: disco ball (canvas) -->
+<!-- Variant 4: fading in / out bubbles (flat) -->
 {:else if variant === 4}
-	<canvas bind:this={canvas} class="bg disco-canvas" aria-hidden="true"></canvas>
-
-<!-- Variant 5: bokeh -->
-{:else if variant === 5}
-	<div class="bg bokeh-wrap" aria-hidden="true">
-		{#each bokeh as b}
+	<div class="bg dots-wrap" aria-hidden="true">
+		{#each dots as d}
 			<div
-				class="bokeh-dot"
-				style="
-					left: {b.left}%;
-					width: {b.size}px; height: {b.size}px;
-					background: {b.color};
-					filter: blur({b.blur}px);
-					opacity: {b.opacity};
-					animation-delay: {b.delay.toFixed(2)}s;
-					animation-duration: {b.dur.toFixed(1)}s;
-				"
+				class="dot fade-dot"
+				style="left:{d.left}%;top:{d.top}%;width:{d.size}px;height:{d.size}px;background:{d.color};animation-duration:{d.dur.toFixed(2)}s;animation-delay:{d.delay.toFixed(2)}s;"
+			></div>
+		{/each}
+	</div>
+
+<!-- Variant 5: flat lava lamp bubbles -->
+{:else if variant === 5}
+	<div class="bg dots-wrap" aria-hidden="true">
+		{#each dots as d}
+			<div
+				class="dot lava-dot"
+				style="left:{d.left}%;top:{d.top}%;width:{d.size}px;height:{d.size}px;background:{d.color};animation-duration:{d.dur.toFixed(2)}s;animation-delay:{d.delay.toFixed(2)}s;--drift-x:{(d.driftX ?? 0).toFixed(1)}vw;"
 			></div>
 		{/each}
 	</div>
 {/if}
+
+<!--
+DISABLED — old circle variant markup (variants 6–9, unreachable).
+Kept as reference; remove once new variants are confirmed satisfactory.
+
+Variant 6 (old 2): speaker bass pulse
+  <div class="bg pulse-wrap" aria-hidden="true">
+    {#each { length: 6 } as _, i}
+      <div class="pulse-ring" style="- -c:{C[i]};animation-delay:{-(i*0.67).toFixed(2)}s;"></div>
+    {/each}
+  </div>
+
+Variant 7 (old 3): blurry lava lamp
+  <div class="bg lava-wrap" aria-hidden="true">
+    {#each blobs as b, i}
+      <div class="lava-blob" style="left:{b.left}%;top:{b.top}%;width:{b.size}px;height:{b.size}px;background:{b.color};animation-duration:{b.dur}s;animation-delay:{-(i*b.dur*0.22).toFixed(2)}s;- -dx1:{b.dx1}vw;- -dy1:{b.dy1}vh;- -dx2:{b.dx2}vw;- -dy2:{b.dy2}vh;"></div>
+    {/each}
+  </div>
+
+Variant 8 (old 4): disco ball (small dots, canvas)
+  <canvas bind:this={canvas} class="bg disco-canvas" aria-hidden="true"></canvas>
+
+Variant 9 (old 5): bokeh (blurry circles drifting up)
+  <div class="bg bokeh-wrap" aria-hidden="true">
+    {#each bokeh as b}
+      <div class="bokeh-dot" style="left:{b.left}%;width:{b.size}px;height:{b.size}px;background:{b.color};filter:blur({b.blur}px);opacity:{b.opacity};animation-delay:{b.delay.toFixed(2)}s;animation-duration:{b.dur.toFixed(1)}s;"></div>
+    {/each}
+  </div>
+-->
 
 <style>
 	/* ── shared ── */
@@ -160,15 +201,14 @@
 
 	/* ── stripes ──
 	   Period: 6 × 150px = 900px along gradient axis.
-	   45 ° gradient direction vector: (sin45°, -cos45°) = (0.707, -0.707).
-	   One period in screen px: 900 × 0.707 ≈ 636px each axis.
-	   inset: -800px ensures the oversized tile always covers the viewport
-	   even at the extreme of the translate animation.
+	   45° direction vector (sin45°, -cos45°) = (0.707, -0.707).
+	   One seamless-loop translation: 900 × 0.707 ≈ 636px per axis.
+	   inset: -800px keeps the oversized tile covering the viewport
+	   throughout the full translate range.
 	*/
 	.stripe-ne,
 	.stripe-nw {
 		inset: -800px;
-		opacity: 0.45;
 		will-change: transform;
 	}
 	.stripe-ne {
@@ -202,67 +242,72 @@
 		to { transform: translate(-636px, -636px); }
 	}
 
-	/* ── speaker pulse ── */
-	.pulse-wrap {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-	}
-	.pulse-ring {
-		position: absolute;
-		width: 80px;
-		height: 80px;
-		border-radius: 50%;
-		border: 4px solid var(--c);
-		opacity: 0;
-		will-change: transform, opacity;
-		/* 4s duration; 6 rings × 0.67s spacing → ~90bpm */
-		animation: pulse-out 4s ease-out infinite;
-	}
-	@keyframes pulse-out {
-		0%   { transform: scale(1);  opacity: 0.85; }
-		100% { transform: scale(28); opacity: 0; }
-	}
-
-	/* ── lava lamp ── */
-	.lava-wrap {
-		overflow: hidden;
-	}
-	.lava-blob {
-		position: absolute;
-		border-radius: 40% 60% 60% 40% / 50% 50% 60% 40%;
-		filter: blur(80px);
-		opacity: 0.5;
-		will-change: transform;
-		animation: lava-drift ease-in-out infinite alternate;
-	}
-	@keyframes lava-drift {
-		0%   { transform: translate(0, 0) scale(1); }
-		20%  { transform: translate(var(--dx1, 8vw), calc(-1 * var(--dy1, 10vh))) scale(1.1); }
-		50%  { transform: translate(calc(-1 * var(--dx2, 5vw)), var(--dy2, 8vh)) scale(0.9); }
-		75%  { transform: translate(var(--dx1, 8vw), var(--dy2, 8vh)) scale(1.05); }
-		100% { transform: translate(calc(-1 * var(--dx2, 5vw)), calc(-1 * var(--dy1, 10vh))) scale(0.95); }
-	}
-
-	/* ── disco ball ── */
-	.disco-canvas {
+	/* ── bouncing bubbles ── */
+	.bounce-canvas {
 		width: 100%;
 		height: 100%;
-		opacity: 0.7;
 	}
 
-	/* ── bokeh ── */
-	.bokeh-wrap {
+	/* ── shared flat dot base ── */
+	.dots-wrap {
 		overflow: hidden;
 	}
-	.bokeh-dot {
+	.dot {
 		position: absolute;
-		bottom: -200px;
 		border-radius: 50%;
-		will-change: transform;
-		animation: bokeh-rise linear infinite;
+		transform-origin: center;
+		will-change: transform, opacity;
 	}
-	@keyframes bokeh-rise {
-		to { transform: translateY(calc(-100vh - 400px)); }
+
+	/* ── growing / shrinking ── */
+	.grow-dot {
+		animation: grow-shrink ease-in-out infinite alternate;
 	}
+	@keyframes grow-shrink {
+		from { transform: scale(0.2);  opacity: 0.4; }
+		to   { transform: scale(1.0);  opacity: 0.85; }
+	}
+
+	/* ── fading in / out ── */
+	.fade-dot {
+		animation: fade-pop ease-in-out infinite;
+	}
+	@keyframes fade-pop {
+		0%   { opacity: 0;    transform: scale(0.88); }
+		20%  { opacity: 0.85; transform: scale(1); }
+		80%  { opacity: 0.85; transform: scale(1); }
+		100% { opacity: 0;    transform: scale(0.88); }
+	}
+
+	/* ── flat lava lamp ── */
+	.lava-dot {
+		animation: lava-float ease-in-out infinite alternate;
+	}
+	@keyframes lava-float {
+		from { transform: translate(0, 0) scale(1);   opacity: 0.6; }
+		to   { transform: translate(var(--drift-x, 0vw), -38vh) scale(1.25); opacity: 0.9; }
+	}
+
+	/*
+	 * DISABLED — old CSS for blurry circle variants (kept for reference)
+	 *
+	 * .pulse-wrap { display: flex; align-items: center; justify-content: center; }
+	 * .pulse-ring { position: absolute; width: 80px; height: 80px; border-radius: 50%;
+	 *   border: 4px solid var(- -c); opacity: 0; will-change: transform, opacity;
+	 *   animation: pulse-out 4s ease-out infinite; }
+	 * @keyframes pulse-out { 0% { transform: scale(1); opacity: .85; } 100% { transform: scale(28); opacity: 0; } }
+	 *
+	 * .lava-wrap { overflow: hidden; }
+	 * .lava-blob { position: absolute; border-radius: 40% 60% 60% 40% / 50% 50% 60% 40%;
+	 *   filter: blur(80px); opacity: .5; will-change: transform;
+	 *   animation: lava-drift ease-in-out infinite alternate; }
+	 * @keyframes lava-drift { ... }
+	 *
+	 * .disco-canvas { width: 100%; height: 100%; opacity: .7; }
+	 *
+	 * .bokeh-wrap { overflow: hidden; }
+	 * .bokeh-dot { position: absolute; bottom: -200px; border-radius: 50%;
+	 *   will-change: transform; animation: bokeh-rise linear infinite; }
+	 * @keyframes bokeh-rise { to { transform: translateY(calc(-100vh - 400px)); } }
+	 */
 </style>
