@@ -52,7 +52,7 @@ export const actions: Actions = {
 
 		const { data, error } = await db
 			.from('game_sets')
-			.insert({ name, description, team_count, total_timer_seconds, expected_player_count })
+			.insert({ name, description, team_count, total_timer_seconds, expected_player_count, status: 'inactive' })
 			.select('id')
 			.single();
 
