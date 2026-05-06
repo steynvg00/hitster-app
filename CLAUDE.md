@@ -227,9 +227,9 @@ DELETE FROM review_requests;
 DELETE FROM activity_log;
 -- Reset team scores
 UPDATE teams SET score = 0;
--- Return sets to draft so they can be activated again
+-- Return sets to inactive so they can be activated again
 UPDATE game_sets
-SET status = 'draft',
+SET status = 'inactive',
     started_at = NULL,
     ended_at = NULL,
     recap_ranking = NULL,
