@@ -108,8 +108,8 @@ export const actions: Actions = {
 					status: 'active',
 					started_at: new Date().toISOString(),
 					ended_at: null,
-					recap_state: null as never,
-					recap_ranking: null as never,
+					recap_state: 'pending',
+					recap_ranking: [] as never,
 					recap_reveal_index: 0,
 					assignment_slots: assignment_slots as never,
 					assignment_index: 0
