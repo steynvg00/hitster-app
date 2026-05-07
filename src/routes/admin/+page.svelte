@@ -10,20 +10,20 @@
 	function getInitial(name: string) {
 		return name.charAt(0).toUpperCase();
 	}
+
+	const countTiles = [
+		{ href: '/admin/sets', label: 'Sets', icon: '🎮', value: () => data.stats.sets },
+		{ href: '/admin/challenges', label: 'Challenges', icon: '🎯', value: () => data.stats.challenges },
+		{ href: '/admin/tracks', label: 'Tracks', icon: '🎵', value: () => data.stats.tracks },
+		{ href: '/admin/nfc-tags', label: 'NFC Tags', icon: '📲', value: () => data.stats.nfcTags }
+	];
 </script>
 
 <svelte:window onclick={() => (avatarMenuOpen = false)} />
 
 <div class="flex min-h-screen flex-col bg-zinc-950 font-[Nunito,sans-serif]">
-	<!-- Top bar -->
-	<header class="flex items-center justify-between border-b border-zinc-800 px-6 py-3">
-		<div class="text-sm text-zinc-500">
-			<span class="text-zinc-300">{data.stats.tracks}</span> tracks ·
-			<span class="text-zinc-300">{data.stats.challenges}</span> challenges ·
-			<span class="text-zinc-300">{data.stats.sets}</span> sets
-		</div>
-
-		<!-- Avatar + dropdown -->
+	<!-- Top bar — avatar only -->
+	<header class="flex items-center justify-end border-b border-zinc-800 px-6 py-3">
 		<div class="relative">
 			<button
 				onclick={(e) => {
@@ -71,15 +71,15 @@
 
 	<main class="flex-1 p-6">
 		<div class="mx-auto max-w-2xl space-y-6">
-			<!-- Status panel -->
+			<!-- Error -->
 			{#if form?.error}
 				<div class="rounded-xl border border-red-800 bg-red-950 px-4 py-3 text-sm text-red-300">
 					{form.error}
 				</div>
 			{/if}
 
+			<!-- Status panel -->
 			{#if data.activeSet}
-				<!-- Game in progress -->
 				<div class="rounded-2xl border border-green-800/50 bg-green-950/30 p-6">
 					<div class="mb-1 text-xs font-semibold uppercase tracking-widest text-green-400">
 						Game in progress
@@ -99,11 +99,8 @@
 					</a>
 				</div>
 			{:else}
-				<!-- No game running -->
 				<div class="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
-					<div class="mb-1 text-xs font-semibold uppercase tracking-widest text-zinc-500">
-						Status
-					</div>
+					<div class="mb-1 text-xs font-semibold uppercase tracking-widest text-zinc-500">Status</div>
 					<h2 class="mb-4 text-2xl font-black text-zinc-400">No game running</h2>
 					<div class="flex flex-wrap gap-3">
 						<a
@@ -139,43 +136,40 @@
 
 			<!-- Quick action tiles -->
 			<div class="grid grid-cols-3 gap-3">
-				{#each [
-					{ href: '/admin/sets', label: 'Sets', value: String(data.stats.sets) },
-					{ href: '/admin/challenges', label: 'Challenges', value: String(data.stats.challenges) },
-					{ href: '/admin/tracks', label: 'Tracks', value: String(data.stats.tracks) },
-					{ href: '/admin/nfc-tags', label: 'NFC Tags', value: String(data.stats.nfcTags) },
-				] as tile}
+				{#each countTiles as tile}
 					<a
 						href={tile.href}
-						class="flex flex-col gap-2 rounded-xl border border-zinc-800 bg-zinc-900 p-4 transition hover:border-zinc-700 hover:bg-zinc-800/80"
+						class="flex flex-col gap-1 rounded-xl border border-zinc-800 bg-zinc-900 p-4 transition hover:border-zinc-700 hover:bg-zinc-800/80"
 					>
-						<div class="text-xs font-semibold uppercase tracking-widest text-zinc-500">{tile.label}</div>
-						<div class="text-2xl font-black text-white">{tile.value}</div>
+						<span class="text-xl leading-none">{tile.icon}</span>
+						<span class="mt-1 text-2xl font-black text-white">{tile.value()}</span>
+						<span class="text-xs font-semibold uppercase tracking-widest text-zinc-500">{tile.label}</span>
 					</a>
 				{/each}
 
 				<a
 					href="/admin/live"
-					class="flex flex-col gap-2 rounded-xl border border-zinc-800 bg-zinc-900 p-4 transition hover:border-zinc-700 hover:bg-zinc-800/80"
+					class="flex flex-col gap-1 rounded-xl border border-zinc-800 bg-zinc-900 p-4 transition hover:border-zinc-700 hover:bg-zinc-800/80"
 				>
-					<div class="text-xs font-semibold uppercase tracking-widest text-zinc-500">Live</div>
+					<span class="text-xl leading-none">📡</span>
 					<span
-						class="w-fit rounded-md px-2 py-0.5 text-xs font-semibold {data.activeSet
+						class="mt-1 w-fit rounded-md px-2 py-0.5 text-xs font-semibold {data.activeSet
 							? 'bg-green-500/20 text-green-400'
 							: 'bg-zinc-700 text-zinc-400'}"
 					>
 						{data.activeSet ? 'active' : 'idle'}
 					</span>
+					<span class="text-xs font-semibold uppercase tracking-widest text-zinc-500">Live</span>
 				</a>
 
 				<a
 					href="/admin/variant-defaults"
-					class="flex flex-col gap-2 rounded-xl border border-zinc-800 bg-zinc-900 p-4 transition hover:border-zinc-700 hover:bg-zinc-800/80"
+					class="flex flex-col gap-1 rounded-xl border border-zinc-800 bg-zinc-900 p-4 transition hover:border-zinc-700 hover:bg-zinc-800/80"
 				>
-					<div class="text-xs font-semibold uppercase tracking-widest text-zinc-500">Defaults</div>
+					<span class="text-xl leading-none">⚙️</span>
+					<span class="mt-1 text-xs font-semibold uppercase tracking-widest text-zinc-500">Defaults</span>
 				</a>
 			</div>
 		</div>
 	</main>
 </div>
-

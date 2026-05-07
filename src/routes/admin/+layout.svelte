@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/stores';
+	import { onMount } from 'svelte';
 
 	let { children } = $props();
 
@@ -23,6 +24,17 @@
 	}
 
 	const isLogin = $derived($page.url.pathname === '/admin/login');
+
+	let collapsed = $state(false);
+
+	onMount(() => {
+		collapsed = localStorage.getItem('admin_sidebar_collapsed') === 'true';
+	});
+
+	function toggleSidebar() {
+		collapsed = !collapsed;
+		localStorage.setItem('admin_sidebar_collapsed', String(collapsed));
+	}
 </script>
 
 {#if isLogin}
@@ -30,34 +42,74 @@
 {:else}
 	<div class="flex min-h-screen bg-zinc-950">
 		<!-- Sidebar -->
-		<aside class="flex w-56 shrink-0 flex-col border-r border-zinc-800 bg-zinc-900">
-			<div class="border-b border-zinc-800 p-4">
-				<div class="text-lg font-black tracking-tight text-amber-400">MixUp!</div>
-				<div class="mt-0.5 text-xs uppercase tracking-widest text-zinc-500">Host Admin</div>
+		<aside
+			class="flex shrink-0 flex-col border-r border-zinc-800 bg-zinc-900 transition-all duration-200 {collapsed
+				? 'w-14'
+				: 'w-56'}"
+		>
+			<!-- Header -->
+			<div
+				class="flex items-center border-b border-zinc-800 {collapsed
+					? 'justify-center px-0 py-[1.125rem]'
+					: 'justify-between p-4'}"
+			>
+				{#if !collapsed}
+					<div class="min-w-0">
+						<div class="text-lg font-black tracking-tight text-amber-400">MixUp!</div>
+						<div class="mt-0.5 text-xs uppercase tracking-widest text-zinc-500">Host Admin</div>
+					</div>
+				{/if}
+				<button
+					onclick={toggleSidebar}
+					title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+					class="rounded-lg p-1.5 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+				>
+					<svg
+						class="h-4 w-4 transition-transform duration-200 {collapsed ? 'rotate-180' : ''}"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
+						<path d="M15 18l-6-6 6-6" />
+					</svg>
+				</button>
 			</div>
 
-			<nav class="flex-1 space-y-1 p-3">
+			<!-- Nav -->
+			<nav class="flex-1 space-y-1 p-2">
 				{#each nav as item}
 					<a
 						href={item.href}
-						class="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors
+						title={collapsed ? item.label : ''}
+						class="flex items-center rounded-lg py-2.5 text-sm transition-colors
+							{collapsed ? 'justify-center px-2' : 'gap-3 px-3'}
 							{isActive(item)
 							? 'bg-amber-400/15 font-medium text-amber-300'
 							: 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'}"
 					>
-						<span class="text-base">{item.icon}</span>
-						{item.label}
+						<span class="shrink-0 text-base">{item.icon}</span>
+						{#if !collapsed}
+							<span class="whitespace-nowrap">{item.label}</span>
+						{/if}
 					</a>
 				{/each}
 			</nav>
 
-			<div class="border-t border-zinc-800 p-3">
+			<!-- Logout -->
+			<div class="border-t border-zinc-800 p-2">
 				<a
 					href="/admin/logout"
-					class="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-red-400"
+					title={collapsed ? 'Logout' : ''}
+					class="flex items-center rounded-lg py-2.5 text-sm text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-red-400
+						{collapsed ? 'justify-center px-2' : 'gap-3 px-3'}"
 				>
-					<span class="text-base">🚪</span>
-					Logout
+					<span class="shrink-0 text-base">🚪</span>
+					{#if !collapsed}
+						<span class="whitespace-nowrap">Logout</span>
+					{/if}
 				</a>
 			</div>
 		</aside>
