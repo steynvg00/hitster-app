@@ -1,6 +1,7 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
+import { generateAssignmentSlots } from '$lib/server/randomize';
 
 export const load: PageServerLoad = async () => {
 	const db = createAdminClient();
@@ -59,5 +60,50 @@ export const actions: Actions = {
 		if (error || !data) return fail(500, { error: 'Could not create set' });
 
 		redirect(303, `/admin/sets/${data.id}`);
+	},
+
+	toggle: async ({ request }) => {
+		const db = createAdminClient();
+		const formData = await request.formData();
+		const id = formData.get('id') as string;
+		if (!id) return fail(400, { error: 'Missing set id' });
+
+		const { data: gameSet } = await db
+			.from('game_sets')
+			.select('id, status, team_count, expected_player_count')
+			.eq('id', id)
+			.maybeSingle();
+
+		if (!gameSet) return fail(404, { error: 'Set not found' });
+
+		if (gameSet.status === 'active') {
+			const { error } = await db.from('game_sets').update({ status: 'inactive' }).eq('id', id);
+			if (error) return fail(500, { error: error.message });
+		} else {
+			let assignment_slots: string[] = [];
+			if (gameSet.expected_player_count && gameSet.expected_player_count > 0) {
+				assignment_slots = await generateAssignmentSlots(
+					db,
+					gameSet.expected_player_count,
+					gameSet.team_count
+				);
+			}
+			const { error } = await db
+				.from('game_sets')
+				.update({
+					status: 'active',
+					started_at: new Date().toISOString(),
+					ended_at: null,
+					recap_state: 'pending',
+					recap_ranking: [] as never,
+					recap_reveal_index: 0,
+					assignment_slots: assignment_slots as never,
+					assignment_index: 0
+				})
+				.eq('id', id);
+			if (error) return fail(500, { error: error.message });
+		}
+
+		return { toggled: id };
 	}
 };

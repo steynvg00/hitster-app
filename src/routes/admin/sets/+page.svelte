@@ -6,6 +6,7 @@
 
 	let showCreate = $state(false);
 	let creating = $state(false);
+	let togglingId = $state<string | null>(null);
 
 	const STATUS_BADGE: Record<string, string> = {
 		inactive: 'bg-zinc-700 text-zinc-300',
@@ -121,9 +122,27 @@
 								{/if}
 							</td>
 							<td class="px-4 py-3">
-								<span class="rounded-full px-2 py-0.5 text-xs font-semibold {STATUS_BADGE[s.status] ?? 'bg-zinc-700 text-zinc-300'}">
-									{s.status}
-								</span>
+								<form
+									method="POST"
+									action="?/toggle"
+									use:enhance={() => {
+										togglingId = s.id;
+										return async ({ update }) => {
+											await update();
+											togglingId = null;
+										};
+									}}
+								>
+									<input type="hidden" name="id" value={s.id} />
+									<button
+										type="submit"
+										disabled={togglingId === s.id}
+										class="cursor-pointer rounded-full px-2 py-0.5 text-xs font-semibold transition-opacity hover:opacity-70 disabled:opacity-40 {STATUS_BADGE[s.status] ?? 'bg-zinc-700 text-zinc-300'}"
+										title="Click to toggle"
+									>
+										{togglingId === s.id ? '…' : s.status}
+									</button>
+								</form>
 							</td>
 							<td class="px-4 py-3 text-right text-zinc-300">{s.team_count}</td>
 							<td class="px-4 py-3 text-right text-zinc-300">{s.challenge_count}</td>

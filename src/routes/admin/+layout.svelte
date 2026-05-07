@@ -8,6 +8,7 @@
 		{ href: '/admin/sets', label: 'Sets', icon: '🎮' },
 		{ href: '/admin/challenges', label: 'Challenges', icon: '🎯' },
 		{ href: '/admin/tracks', label: 'Tracks', icon: '🎵' },
+		{ href: '/admin/nfc-tags', label: 'NFC Tags', icon: '📲' },
 		{ href: '/admin/teams', label: 'Teams', icon: '👥' },
 		{ href: '/admin/pools', label: 'Pools', icon: '🗂️' },
 		{ href: '/admin/review', label: 'Review', icon: '🔍' },
