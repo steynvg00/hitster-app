@@ -301,6 +301,7 @@ export type Database = {
 					assignment_slots: string[];
 					assignment_index: number;
 					status: 'active' | 'inactive';
+					play_state: 'joining' | 'playing' | 'recap';
 					started_at: string | null;
 					ended_at: string | null;
 					recap_state: string;
@@ -319,6 +320,7 @@ export type Database = {
 					assignment_slots?: string[];
 					assignment_index?: number;
 					status?: 'active' | 'inactive';
+					play_state?: 'joining' | 'playing' | 'recap';
 					started_at?: string | null;
 					ended_at?: string | null;
 					recap_state?: string;
@@ -337,6 +339,7 @@ export type Database = {
 					assignment_slots?: string[];
 					assignment_index?: number;
 					status?: 'active' | 'inactive';
+					play_state?: 'joining' | 'playing' | 'recap';
 					started_at?: string | null;
 					ended_at?: string | null;
 					recap_state?: string;
