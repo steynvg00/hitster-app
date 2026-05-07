@@ -1,11 +1,34 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { onMount } from 'svelte';
+	import { supabaseBrowser } from '$lib/supabase-browser';
 	import type { PageData, ActionData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	let avatarMenuOpen = $state(false);
 	let runningLastSet = $state(false);
+	let startingGame = $state(false);
+
+	// Live play_state — updated via realtime when host action changes it
+	let livePlayState = $state<'joining' | 'playing' | 'recap' | null>(
+		data.activeSet?.play_state ?? null
+	);
+
+	onMount(() => {
+		if (!data.activeSet) return;
+		const channel = supabaseBrowser
+			.channel('dashboard-set')
+			.on(
+				'postgres_changes',
+				{ event: 'UPDATE', schema: 'public', table: 'game_sets', filter: `id=eq.${data.activeSet.id}` },
+				(payload) => {
+					if (payload.new.play_state) livePlayState = payload.new.play_state as typeof livePlayState;
+				}
+			)
+			.subscribe();
+		return () => supabaseBrowser.removeChannel(channel);
+	});
 
 	function getInitial(name: string) {
 		return name.charAt(0).toUpperCase();
@@ -79,7 +102,49 @@
 			{/if}
 
 			<!-- Status panel -->
-			{#if data.activeSet}
+			{#if data.activeSet && livePlayState === 'joining'}
+				<!-- Joining phase: accepting players, game not yet started -->
+				<div class="rounded-2xl border border-amber-800/50 bg-amber-950/20 p-6">
+					<div class="mb-1 text-xs font-semibold uppercase tracking-widest text-amber-400">
+						Accepting players
+					</div>
+					<h2 class="mb-4 text-2xl font-black text-white">{data.activeSet.name}</h2>
+					<div class="mb-5 flex gap-6 text-sm text-zinc-400">
+						<span><span class="font-bold text-zinc-200">{data.activeSet.team_count}</span> teams</span>
+						<span>
+							<span class="font-bold text-zinc-200">{data.activeSet.player_count}</span> players joined
+						</span>
+					</div>
+					<div class="flex flex-wrap gap-3">
+						<form
+							method="POST"
+							action="?/startGame"
+							use:enhance={() => {
+								startingGame = true;
+								return async ({ update }) => {
+									await update({ reset: false });
+									startingGame = false;
+								};
+							}}
+						>
+							<button
+								type="submit"
+								disabled={startingGame}
+								class="rounded-lg bg-green-600 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-green-500 disabled:opacity-50"
+							>
+								{startingGame ? 'Starting…' : 'Start the game →'}
+							</button>
+						</form>
+						<a
+							href="/admin/sets/{data.activeSet.id}/lobby"
+							class="inline-block rounded-lg border border-zinc-700 px-5 py-2.5 text-sm font-medium text-zinc-300 transition hover:border-zinc-500 hover:text-white"
+						>
+							View lobby
+						</a>
+					</div>
+				</div>
+			{:else if data.activeSet && livePlayState === 'playing'}
+				<!-- Playing phase: game in progress -->
 				<div class="rounded-2xl border border-green-800/50 bg-green-950/30 p-6">
 					<div class="mb-1 text-xs font-semibold uppercase tracking-widest text-green-400">
 						Game in progress
@@ -98,7 +163,28 @@
 						Open live view →
 					</a>
 				</div>
+			{:else if data.activeSet && livePlayState === 'recap'}
+				<!-- Recap phase: podium reveal -->
+				<div class="rounded-2xl border border-indigo-800/50 bg-indigo-950/20 p-6">
+					<div class="mb-1 text-xs font-semibold uppercase tracking-widest text-indigo-400">
+						Recap playing
+					</div>
+					<h2 class="mb-4 text-2xl font-black text-white">{data.activeSet.name}</h2>
+					<div class="mb-5 flex gap-6 text-sm text-zinc-400">
+						<span><span class="font-bold text-zinc-200">{data.activeSet.team_count}</span> teams</span>
+						<span>
+							<span class="font-bold text-zinc-200">{data.activeSet.player_count}</span> players joined
+						</span>
+					</div>
+					<a
+						href="/admin/sets/{data.activeSet.id}/recap"
+						class="inline-block rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-indigo-500"
+					>
+						Open podium →
+					</a>
+				</div>
 			{:else}
+				<!-- No game running -->
 				<div class="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
 					<div class="mb-1 text-xs font-semibold uppercase tracking-widest text-zinc-500">Status</div>
 					<h2 class="mb-4 text-2xl font-black text-zinc-400">No game running</h2>
@@ -153,11 +239,15 @@
 				>
 					<span class="text-xl leading-none">📡</span>
 					<span
-						class="mt-1 w-fit rounded-md px-2 py-0.5 text-xs font-semibold {data.activeSet
+						class="mt-1 w-fit rounded-md px-2 py-0.5 text-xs font-semibold {livePlayState === 'playing'
 							? 'bg-green-500/20 text-green-400'
-							: 'bg-zinc-700 text-zinc-400'}"
+							: livePlayState === 'joining'
+								? 'bg-amber-500/20 text-amber-400'
+								: livePlayState === 'recap'
+									? 'bg-indigo-500/20 text-indigo-400'
+									: 'bg-zinc-700 text-zinc-400'}"
 					>
-						{data.activeSet ? 'active' : 'idle'}
+						{livePlayState ?? 'idle'}
 					</span>
 					<span class="text-xs font-semibold uppercase tracking-widest text-zinc-500">Live</span>
 				</a>

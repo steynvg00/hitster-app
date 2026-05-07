@@ -18,7 +18,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		db.from('challenges').select('*', { count: 'exact', head: true }),
 		db.from('game_sets').select('*', { count: 'exact', head: true }),
 		db.from('nfc_tags').select('*', { count: 'exact', head: true }),
-		db.from('game_sets').select('id, name, team_count').eq('status', 'active').limit(1),
+		db.from('game_sets').select('id, name, team_count, play_state').eq('status', 'active').limit(1),
 		db
 			.from('game_sets')
 			.select('id, name')
@@ -47,7 +47,13 @@ export const load: PageServerLoad = async ({ locals }) => {
 			nfcTags: nfcCount ?? 0
 		},
 		activeSet: activeSet
-			? { id: activeSet.id, name: activeSet.name, team_count: activeSet.team_count, player_count: activeSetPlayerCount }
+			? {
+					id: activeSet.id,
+					name: activeSet.name,
+					team_count: activeSet.team_count,
+					play_state: (activeSet.play_state ?? 'joining') as 'joining' | 'playing' | 'recap',
+					player_count: activeSetPlayerCount
+				}
 			: null,
 		lastInactiveSet: lastInactive?.[0] ?? null,
 		user: {
@@ -79,6 +85,7 @@ export const actions: Actions = {
 
 		const { error } = await db.from('game_sets').update({
 			status: 'active',
+			play_state: 'joining',
 			started_at: new Date().toISOString(),
 			ended_at: null,
 			recap_state: 'pending',
@@ -90,5 +97,27 @@ export const actions: Actions = {
 
 		if (error) return fail(500, { error: 'Could not activate set' });
 		return { activated: true };
+	},
+
+	startGame: async () => {
+		const db = createAdminClient();
+
+		const { data: sets } = await db
+			.from('game_sets')
+			.select('id, play_state')
+			.eq('status', 'active')
+			.limit(1);
+
+		const gameSet = sets?.[0];
+		if (!gameSet) return fail(404, { error: 'No active set found' });
+		if (gameSet.play_state !== 'joining') return fail(400, { error: 'Game already started' });
+
+		const { error } = await db
+			.from('game_sets')
+			.update({ play_state: 'playing' })
+			.eq('id', gameSet.id);
+
+		if (error) return fail(500, { error: 'Could not start game' });
+		return { gameStarted: true };
 	}
 };
