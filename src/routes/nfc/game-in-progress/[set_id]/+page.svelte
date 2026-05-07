@@ -5,14 +5,13 @@
 
 <div class="min-h-screen flex items-center justify-center p-8 text-center">
 	<div class="max-w-sm">
-		<div class="mb-6 text-6xl">🎵</div>
-		<h1 class="mb-3 text-2xl font-black text-white">No game running here yet</h1>
-		<p class="mb-8 text-zinc-400 text-lg">
-			{#if data.state === 'inactive' && data.hasEnded}
-				This game set has ended.
-			{:else}
-				The host hasn't started this set yet. Check back soon!
-			{/if}
+		<div class="mb-6 text-6xl">🎮</div>
+		<h1 class="mb-3 text-2xl font-black text-white">Game already in progress</h1>
+		<p class="mb-2 text-zinc-400 text-lg">
+			<span class="font-semibold text-white">{data.setName}</span> has already started.
+		</p>
+		<p class="mb-8 text-zinc-500 text-sm">
+			Ask the host if you can still join.
 		</p>
 		<a
 			href="/"

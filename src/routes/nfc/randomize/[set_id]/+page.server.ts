@@ -8,24 +8,38 @@ import { assignTeam } from '$lib/server/randomize';
 export const load: PageServerLoad = async ({ params, cookies }) => {
 	const { set_id } = params;
 
-	const playerId = getPlayerIdFromCookie(cookies);
-	if (!playerId) {
-		redirect(302, `/play/teams?next=/nfc/randomize/${set_id}`);
-	}
-
 	const db = createAdminClient();
 
-	const [{ data: gameSet }, { data: player }] = await Promise.all([
-		db.from('game_sets').select('*').eq('id', set_id).maybeSingle(),
-		db.from('players').select('id, set_id, team_id').eq('id', playerId).maybeSingle()
-	]);
+	const { data: gameSet } = await db.from('game_sets').select('*').eq('id', set_id).maybeSingle();
 
 	if (!gameSet) redirect(302, '/');
 
 	// Set is not active — render the "no game running" page
 	if (gameSet.status !== 'active') {
-		return { inactive: true as const, hasEnded: !!gameSet.ended_at, setName: gameSet.name };
+		return { state: 'inactive' as const, hasEnded: !!gameSet.ended_at, setName: gameSet.name };
 	}
+
+	// Game already in progress — send to placeholder page (no auth required)
+	if (gameSet.play_state === 'playing') {
+		redirect(302, `/nfc/game-in-progress/${set_id}`);
+	}
+
+	// Game in recap — send to game-over page (no auth required)
+	if (gameSet.play_state === 'recap') {
+		redirect(302, `/nfc/game-over/${set_id}`);
+	}
+
+	// play_state === 'joining' — player auth required to assign a team
+	const playerId = getPlayerIdFromCookie(cookies);
+	if (!playerId) {
+		redirect(302, `/play/teams?next=/nfc/randomize/${set_id}`);
+	}
+
+	const { data: player } = await db
+		.from('players')
+		.select('id, set_id, team_id')
+		.eq('id', playerId)
+		.maybeSingle();
 
 	// Already in this set — restore team cookie and continue
 	if (player?.set_id === set_id && player?.team_id) {
