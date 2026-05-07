@@ -89,12 +89,12 @@ export const actions: Actions = {
 		if (gameSet.status === 'active') {
 			const { error } = await db
 				.from('game_sets')
-				.update({ status: 'inactive' })
+				.update({ status: 'inactive', play_state: 'joining' })
 				.eq('id', params.id);
 			if (error) return fail(500, { error: 'Could not deactivate set' });
 			return { success: true };
 		} else {
-			// Activating: regenerate slots and reset recap state for a fresh round
+			// Activating: regenerate slots, reset recap state, start in joining phase
 			let assignment_slots: string[] = [];
 			if (gameSet.expected_player_count && gameSet.expected_player_count > 0) {
 				assignment_slots = await generateAssignmentSlots(
@@ -107,6 +107,7 @@ export const actions: Actions = {
 				.from('game_sets')
 				.update({
 					status: 'active',
+					play_state: 'joining',
 					started_at: new Date().toISOString(),
 					ended_at: null,
 					recap_state: 'pending',
@@ -121,21 +122,42 @@ export const actions: Actions = {
 		}
 	},
 
+	startGame: async ({ params }) => {
+		const db = createAdminClient();
+
+		const { data: gameSet } = await db
+			.from('game_sets')
+			.select('id, status, play_state')
+			.eq('id', params.id)
+			.maybeSingle();
+
+		if (!gameSet || gameSet.status !== 'active') return fail(400, { error: 'Set must be active' });
+		if (gameSet.play_state !== 'joining') return fail(400, { error: 'Game already started' });
+
+		const { error } = await db
+			.from('game_sets')
+			.update({ play_state: 'playing' })
+			.eq('id', params.id);
+
+		if (error) return fail(500, { error: 'Could not start game' });
+		redirect(303, `/admin/live`);
+	},
+
 	startRecap: async ({ params }) => {
 		const db = createAdminClient();
 
 		const { data: gameSet } = await db
 			.from('game_sets')
-			.select('id, status, recap_state')
+			.select('id, status, play_state')
 			.eq('id', params.id)
 			.maybeSingle();
 
 		if (!gameSet || gameSet.status !== 'active') return fail(400, { error: 'Set must be active to start recap' });
-		if (gameSet.recap_state) return fail(400, { error: 'Recap already started' });
+		if (gameSet.play_state === 'recap') return fail(400, { error: 'Recap already started' });
 
 		const { error } = await db
 			.from('game_sets')
-			.update({ recap_state: 'pending' })
+			.update({ play_state: 'recap', recap_state: 'pending' })
 			.eq('id', params.id);
 
 		if (error) return fail(500, { error: 'Could not start recap' });

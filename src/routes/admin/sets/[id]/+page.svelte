@@ -1,11 +1,30 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { onMount } from 'svelte';
+	import { supabaseBrowser } from '$lib/supabase-browser';
 	import type { PageData, ActionData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	const gs = $derived(data.gameSet);
 	const isActive = $derived(gs.status === 'active');
+
+	// Live play_state — updated via realtime when host clicks "Start the game"
+	let livePlayState = $state<'joining' | 'playing' | 'recap'>(data.gameSet.play_state ?? 'joining');
+
+	onMount(() => {
+		const channel = supabaseBrowser
+			.channel(`set-page-${data.gameSet.id}`)
+			.on(
+				'postgres_changes',
+				{ event: 'UPDATE', schema: 'public', table: 'game_sets', filter: `id=eq.${data.gameSet.id}` },
+				(payload) => {
+					if (payload.new.play_state) livePlayState = payload.new.play_state as typeof livePlayState;
+				}
+			)
+			.subscribe();
+		return () => supabaseBrowser.removeChannel(channel);
+	});
 
 	// ── Challenge picker state ────────────────────────────────────────────────
 	// Build the ordered list of selected challenge IDs from the loaded set_challenges
@@ -84,7 +103,21 @@
 					View Lobby
 				</a>
 			{/if}
-			{#if gs.recap_state}
+			{#if isActive && livePlayState === 'joining'}
+				<form method="POST" action="?/startGame" use:enhance>
+					<button
+						type="submit"
+						class="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-500 transition-colors"
+					>
+						Start the game →
+					</button>
+				</form>
+			{:else if isActive && livePlayState === 'playing'}
+				<span class="rounded-lg bg-green-900/40 px-4 py-2 text-sm font-semibold text-green-400">
+					Game in progress
+				</span>
+			{/if}
+			{#if livePlayState === 'recap' || gs.recap_state}
 				<a
 					href="/admin/sets/{gs.id}/recap"
 					class="rounded-lg bg-amber-400/15 px-4 py-2 text-sm font-semibold text-amber-400 hover:bg-amber-400/25 transition-colors"
@@ -92,7 +125,7 @@
 					Recap →
 				</a>
 			{/if}
-			{#if isActive && !gs.recap_state}
+			{#if isActive && livePlayState === 'playing'}
 				<form method="POST" action="?/startRecap" use:enhance
 					onsubmit={(e) => { if (!confirm('Start recap? Players will be redirected to the waiting screen.')) e.preventDefault(); }}>
 					<button
