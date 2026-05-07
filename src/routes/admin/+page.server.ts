@@ -1,6 +1,94 @@
-import { redirect } from '@sveltejs/kit';
-import type { PageServerLoad } from './$types';
+import { fail } from '@sveltejs/kit';
+import type { Actions, PageServerLoad } from './$types';
+import { createAdminClient } from '$lib/server/supabase';
+import { generateAssignmentSlots } from '$lib/server/randomize';
 
-export const load: PageServerLoad = () => {
-	redirect(302, '/admin/challenges');
+export const load: PageServerLoad = async ({ locals }) => {
+	const db = createAdminClient();
+
+	const [
+		{ count: trackCount },
+		{ count: challengeCount },
+		{ count: setCount },
+		{ count: nfcCount },
+		{ data: activeSets },
+		{ data: lastInactive }
+	] = await Promise.all([
+		db.from('tracks').select('*', { count: 'exact', head: true }),
+		db.from('challenges').select('*', { count: 'exact', head: true }),
+		db.from('game_sets').select('*', { count: 'exact', head: true }),
+		db.from('nfc_tags').select('*', { count: 'exact', head: true }),
+		db.from('game_sets').select('id, name, team_count').eq('status', 'active').limit(1),
+		db
+			.from('game_sets')
+			.select('id, name')
+			.eq('status', 'inactive')
+			.order('created_at', { ascending: false })
+			.limit(1)
+	]);
+
+	const activeSet = activeSets?.[0] ?? null;
+
+	// Count players currently in the active set
+	let activeSetPlayerCount = 0;
+	if (activeSet) {
+		const { count } = await db
+			.from('players')
+			.select('*', { count: 'exact', head: true })
+			.eq('set_id', activeSet.id);
+		activeSetPlayerCount = count ?? 0;
+	}
+
+	return {
+		stats: {
+			tracks: trackCount ?? 0,
+			challenges: challengeCount ?? 0,
+			sets: setCount ?? 0,
+			nfcTags: nfcCount ?? 0
+		},
+		activeSet: activeSet
+			? { id: activeSet.id, name: activeSet.name, team_count: activeSet.team_count, player_count: activeSetPlayerCount }
+			: null,
+		lastInactiveSet: lastInactive?.[0] ?? null,
+		user: {
+			email: locals.user?.email ?? null,
+			avatarUrl: (locals.user?.user_metadata?.avatar_url as string | undefined) ?? null,
+			displayName: (locals.user?.user_metadata?.full_name as string | undefined) ?? locals.user?.email?.split('@')[0] ?? 'Host'
+		}
+	};
+};
+
+export const actions: Actions = {
+	runLastSet: async ({ locals }) => {
+		const db = createAdminClient();
+
+		const { data: sets } = await db
+			.from('game_sets')
+			.select('id, team_count, expected_player_count')
+			.eq('status', 'inactive')
+			.order('created_at', { ascending: false })
+			.limit(1);
+
+		const gameSet = sets?.[0];
+		if (!gameSet) return fail(404, { error: 'No inactive set found' });
+
+		let assignment_slots: string[] = [];
+		if (gameSet.expected_player_count && gameSet.expected_player_count > 0) {
+			assignment_slots = await generateAssignmentSlots(db, gameSet.expected_player_count, gameSet.team_count);
+		}
+
+		const { error } = await db.from('game_sets').update({
+			status: 'active',
+			started_at: new Date().toISOString(),
+			ended_at: null,
+			recap_state: 'pending',
+			recap_ranking: [] as never,
+			recap_reveal_index: 0,
+			assignment_slots: assignment_slots as never,
+			assignment_index: 0
+		}).eq('id', gameSet.id);
+
+		if (error) return fail(500, { error: 'Could not activate set' });
+		return { activated: true };
+	}
 };
