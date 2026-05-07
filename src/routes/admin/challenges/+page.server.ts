@@ -47,7 +47,7 @@ export const load: PageServerLoad = async () => {
 };
 
 export const actions: Actions = {
-	create: async ({ request }) => {
+	create: async ({ request, locals }) => {
 		const db = createAdminClient();
 		const data = await request.formData();
 
@@ -70,7 +70,8 @@ export const actions: Actions = {
 
 		const { data: created, error } = await db.from('challenges').insert({
 			title, variant: variant as never, stage_label, timer_seconds,
-			points_config: points_config as never, status: 'draft', is_active: false
+			points_config: points_config as never, status: 'draft', is_active: false,
+			created_by: locals.user?.id ?? null
 		}).select('id').single();
 
 		if (error) return fail(500, { error: error.message });

@@ -78,7 +78,7 @@ export const actions: Actions = {
 		return { success: true, action: 'status' };
 	},
 
-	addTrack: async ({ request, params }) => {
+	addTrack: async ({ request, params, locals }) => {
 		const db = createAdminClient();
 		const data = await request.formData();
 
@@ -98,7 +98,8 @@ export const actions: Actions = {
 		const sort_order = (existing?.[0]?.sort_order ?? 0) + 1;
 
 		const { error: e } = await db.from('challenge_tracks').insert({
-			challenge_id: params.id, track_id, clip_id, sort_order
+			challenge_id: params.id, track_id, clip_id, sort_order,
+			created_by: locals.user?.id ?? null
 		});
 		if (e) return fail(500, { error: e.message });
 		return { success: true, action: 'addTrack' };
@@ -144,7 +145,7 @@ export const actions: Actions = {
 	},
 
 	// Generate default answer options: correct answer + up to 7 distractors from other tracks
-	generateOptions: async ({ request, params }) => {
+	generateOptions: async ({ request, params, locals }) => {
 		const db = createAdminClient();
 		const data = await request.formData();
 		const ct_id = data.get('ct_id') as string;
@@ -183,14 +184,14 @@ export const actions: Actions = {
 		await db.from('answer_options').delete().eq('challenge_id', params.id).eq('field', field as never);
 		if (options.length > 0) {
 			const { error: e } = await db.from('answer_options').insert(
-				options.map((value) => ({ challenge_id: params.id, field: field as never, value }))
+				options.map((value) => ({ challenge_id: params.id, field: field as never, value, created_by: locals.user?.id ?? null }))
 			);
 			if (e) return fail(500, { error: e.message });
 		}
 		return { success: true, action: 'generateOptions' };
 	},
 
-	saveOptions: async ({ request, params }) => {
+	saveOptions: async ({ request, params, locals }) => {
 		const db = createAdminClient();
 		const data = await request.formData();
 		const field = data.get('field') as string;
@@ -203,7 +204,7 @@ export const actions: Actions = {
 		await db.from('answer_options').delete().eq('challenge_id', params.id).eq('field', field as never);
 		if (options.length > 0) {
 			const { error: e } = await db.from('answer_options').insert(
-				options.map((value) => ({ challenge_id: params.id, field: field as never, value }))
+				options.map((value) => ({ challenge_id: params.id, field: field as never, value, created_by: locals.user?.id ?? null }))
 			);
 			if (e) return fail(500, { error: e.message });
 		}

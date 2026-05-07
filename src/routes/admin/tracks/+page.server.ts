@@ -19,7 +19,7 @@ export const load: PageServerLoad = async () => {
 };
 
 export const actions: Actions = {
-	createTrack: async ({ request }) => {
+	createTrack: async ({ request, locals }) => {
 		const db = createAdminClient();
 		const data = await request.formData();
 
@@ -37,7 +37,8 @@ export const actions: Actions = {
 		}
 
 		const { data: inserted, error } = await db.from('tracks').insert({
-			artist, title, year, record_label, festival, vocal_source, genre, subgenre
+			artist, title, year, record_label, festival, vocal_source, genre, subgenre,
+			created_by: locals.user?.id ?? null
 		}).select('id').single();
 		if (error) return fail(500, { error: error.message });
 		return { success: true, id: inserted.id };
@@ -106,7 +107,7 @@ export const actions: Actions = {
 		return { success: true };
 	},
 
-	addClip: async ({ request }) => {
+	addClip: async ({ request, locals }) => {
 		const db = createAdminClient();
 		const data = await request.formData();
 
@@ -124,7 +125,8 @@ export const actions: Actions = {
 			track_id,
 			type: type as never,
 			storage_path,
-			position: isNaN(position as number) ? null : position
+			position: isNaN(position as number) ? null : position,
+			created_by: locals.user?.id ?? null
 		});
 		if (error) return fail(500, { error: error.message });
 		return { success: true };

@@ -62,7 +62,8 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 		storage_path: publicUrl,
 		storage_object_path: objectPath,
 		position,
-		duration
+		duration,
+		created_by: locals.user?.id ?? null
 	});
 
 	if (insertError) {

@@ -36,7 +36,7 @@ export const load: PageServerLoad = async () => {
 };
 
 export const actions: Actions = {
-	create: async ({ request }) => {
+	create: async ({ request, locals }) => {
 		const db = createAdminClient();
 		const formData = await request.formData();
 		const name = (formData.get('name') as string | null)?.trim() ?? '';
@@ -52,7 +52,7 @@ export const actions: Actions = {
 
 		const { data, error } = await db
 			.from('game_sets')
-			.insert({ name, description, team_count, total_timer_seconds, expected_player_count, status: 'inactive' })
+			.insert({ name, description, team_count, total_timer_seconds, expected_player_count, status: 'inactive', created_by: locals.user?.id ?? null })
 			.select('id')
 			.single();
 

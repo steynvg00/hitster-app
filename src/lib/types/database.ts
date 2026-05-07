@@ -92,6 +92,7 @@ export type Database = {
 					genre: string | null;
 					subgenre: string | null;
 					accepted_titles: string[];
+					created_by: string | null;
 					created_at: string;
 				};
 				Insert: {
@@ -105,6 +106,7 @@ export type Database = {
 					genre?: string | null;
 					subgenre?: string | null;
 					accepted_titles?: string[];
+					created_by?: string | null;
 					created_at?: string;
 				};
 				Update: {
@@ -118,6 +120,7 @@ export type Database = {
 					genre?: string | null;
 					subgenre?: string | null;
 					accepted_titles?: string[];
+					created_by?: string | null;
 					created_at?: string;
 				};
 				Relationships: [];
@@ -132,6 +135,7 @@ export type Database = {
 					duration: number | null;
 					storage_object_path: string | null;
 					effects: { pitch?: number; tempo?: number };
+					created_by: string | null;
 					created_at: string;
 				};
 				Insert: {
@@ -143,6 +147,7 @@ export type Database = {
 					duration?: number | null;
 					storage_object_path?: string | null;
 					effects?: { pitch?: number; tempo?: number };
+					created_by?: string | null;
 					created_at?: string;
 				};
 				Update: {
@@ -154,6 +159,7 @@ export type Database = {
 					duration?: number | null;
 					storage_object_path?: string | null;
 					effects?: { pitch?: number; tempo?: number };
+					created_by?: string | null;
 					created_at?: string;
 				};
 				Relationships: [];
@@ -168,6 +174,7 @@ export type Database = {
 					stage_label: string | null;
 					status: string;
 					points_config: Json;
+					created_by: string | null;
 					created_at: string;
 				};
 				Insert: {
@@ -179,6 +186,7 @@ export type Database = {
 					stage_label?: string | null;
 					status?: string;
 					points_config?: Json;
+					created_by?: string | null;
 					created_at?: string;
 				};
 				Update: {
@@ -190,6 +198,7 @@ export type Database = {
 					stage_label?: string | null;
 					status?: string;
 					points_config?: Json;
+					created_by?: string | null;
 					created_at?: string;
 				};
 				Relationships: [];
@@ -228,6 +237,7 @@ export type Database = {
 					track_id: string;
 					clip_id: string;
 					sort_order: number;
+					created_by: string | null;
 					created_at: string;
 				};
 				Insert: {
@@ -236,6 +246,7 @@ export type Database = {
 					track_id: string;
 					clip_id: string;
 					sort_order?: number;
+					created_by?: string | null;
 					created_at?: string;
 				};
 				Update: {
@@ -244,6 +255,7 @@ export type Database = {
 					track_id?: string;
 					clip_id?: string;
 					sort_order?: number;
+					created_by?: string | null;
 					created_at?: string;
 				};
 				Relationships: [];
@@ -255,6 +267,7 @@ export type Database = {
 					team_color: TeamColor | null;
 					challenge_id: string | null;
 					set_id: string | null;
+					created_by: string | null;
 					created_at: string;
 				};
 				Insert: {
@@ -263,6 +276,7 @@ export type Database = {
 					team_color?: TeamColor | null;
 					challenge_id?: string | null;
 					set_id?: string | null;
+					created_by?: string | null;
 					created_at?: string;
 				};
 				Update: {
@@ -271,6 +285,7 @@ export type Database = {
 					team_color?: TeamColor | null;
 					challenge_id?: string | null;
 					set_id?: string | null;
+					created_by?: string | null;
 					created_at?: string;
 				};
 				Relationships: [];
@@ -291,6 +306,7 @@ export type Database = {
 					recap_state: string;
 					recap_ranking: string[];
 					recap_reveal_index: number;
+					created_by: string | null;
 					created_at: string;
 				};
 				Insert: {
@@ -308,6 +324,7 @@ export type Database = {
 					recap_state?: string;
 					recap_ranking?: string[];
 					recap_reveal_index?: number;
+					created_by?: string | null;
 					created_at?: string;
 				};
 				Update: {
@@ -325,6 +342,7 @@ export type Database = {
 					recap_state?: string;
 					recap_ranking?: string[];
 					recap_reveal_index?: number;
+					created_by?: string | null;
 					created_at?: string;
 				};
 				Relationships: [];
@@ -335,18 +353,21 @@ export type Database = {
 					set_id: string;
 					challenge_id: string;
 					position: number;
+					created_by: string | null;
 				};
 				Insert: {
 					id?: string;
 					set_id: string;
 					challenge_id: string;
 					position?: number;
+					created_by?: string | null;
 				};
 				Update: {
 					id?: string;
 					set_id?: string;
 					challenge_id?: string;
 					position?: number;
+					created_by?: string | null;
 				};
 				Relationships: [];
 			};
@@ -357,6 +378,7 @@ export type Database = {
 					field: AnswerField;
 					value: string;
 					input_mode: string;
+					created_by: string | null;
 					created_at: string;
 				};
 				Insert: {
@@ -365,6 +387,7 @@ export type Database = {
 					field: AnswerField;
 					value: string;
 					input_mode?: string;
+					created_by?: string | null;
 					created_at?: string;
 				};
 				Update: {
@@ -373,6 +396,7 @@ export type Database = {
 					field?: AnswerField;
 					value?: string;
 					input_mode?: string;
+					created_by?: string | null;
 					created_at?: string;
 				};
 				Relationships: [];

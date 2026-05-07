@@ -48,7 +48,7 @@ export const actions: Actions = {
 		return { success: true };
 	},
 
-	setChallenges: async ({ request, params }) => {
+	setChallenges: async ({ request, params, locals }) => {
 		const db = createAdminClient();
 		const formData = await request.formData();
 		// challenge_ids is a comma-separated ordered list
@@ -65,7 +65,8 @@ export const actions: Actions = {
 			const rows = challengeIds.map((challenge_id, i) => ({
 				set_id: params.id,
 				challenge_id,
-				position: i
+				position: i,
+				created_by: locals.user?.id ?? null
 			}));
 			const { error } = await db.from('set_challenges').insert(rows);
 			if (error) return fail(500, { error: 'Could not save challenges' });
@@ -156,7 +157,7 @@ export const actions: Actions = {
 		redirect(303, '/admin/sets');
 	},
 
-	addCard: async ({ request, params }) => {
+	addCard: async ({ request, params, locals }) => {
 		const db = createAdminClient();
 		const formData = await request.formData();
 		const slug = (formData.get('slug') as string | null)?.trim() ?? '';
@@ -165,7 +166,7 @@ export const actions: Actions = {
 
 		const { error } = await db
 			.from('nfc_tags')
-			.insert({ id: slug, purpose: 'randomizer', set_id: params.id });
+			.insert({ id: slug, purpose: 'randomizer', set_id: params.id, created_by: locals.user?.id ?? null });
 
 		if (error) {
 			if (error.code === '23505') {
