@@ -6,7 +6,7 @@ export const load: PageServerLoad = async ({ cookies }) => {
 
 	const { data: teams } = await supabase
 		.from('teams')
-		.select('*')
+		.select('id, color, display_name, score, current_streak, photo_url')
 		.order('score', { ascending: false });
 
 	return { teams: teams ?? [] };
