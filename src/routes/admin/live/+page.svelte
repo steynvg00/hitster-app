@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { supabaseBrowser } from '$lib/supabase-browser';
 	import type { PageData } from './$types';
 	import type { ActivityLogRow } from '$lib/types/database';
@@ -25,6 +25,9 @@
 
 	// ── Live clock for per-attempt timer countdown ────────────────────────────
 	let now = $state(Date.now());
+
+	// ── Popover state (challenges panel) ─────────────────────────────────────
+	let openPopover = $state<string | null>(null);
 
 	// ── Team color map ────────────────────────────────────────────────────────
 	const teamColorHex: Record<string, string> = {
@@ -53,19 +56,22 @@
 		return submissions.find((s) => s.challenge_id === challengeId && s.team_id === teamId);
 	}
 
-	function cellStatus(challengeId: string, teamId: string, nowMs: number) {
+	type CellStatus = { label: string; color: string; hasAttempt: boolean; phase: 'none' | 'active' | 'done' | 'expired' };
+
+	function cellStatus(challengeId: string, teamId: string, nowMs: number): CellStatus {
 		const attempt = getAttempt(challengeId, teamId);
 		const sub = getSubmission(challengeId, teamId);
 
-		if (!attempt) return { label: '—', color: 'text-zinc-700', hasAttempt: false };
+		if (!attempt) return { label: '—', color: 'text-zinc-700', hasAttempt: false, phase: 'none' };
 		if (sub?.is_final || attempt.ended_at)
-			return { label: 'Done', color: 'text-green-400', hasAttempt: true };
+			return { label: 'Done', color: 'text-green-400', hasAttempt: true, phase: 'done' };
 
 		const challenge = data.challenges.find((c) => c.id === challengeId);
 		if (challenge?.timer_seconds && challenge.timer_seconds > 0) {
 			const endsAt = new Date(attempt.started_at).getTime() + challenge.timer_seconds * 1000;
 			const remaining = endsAt - nowMs;
-			if (remaining <= 0) return { label: 'Expired', color: 'text-amber-400', hasAttempt: true };
+			if (remaining <= 0)
+				return { label: 'Expired', color: 'text-amber-400', hasAttempt: true, phase: 'expired' };
 			const mins = Math.floor(remaining / 60000);
 			const secs = Math.floor((remaining % 60000) / 1000);
 			const color =
@@ -74,14 +80,10 @@
 					: remaining < 60_000
 						? 'text-yellow-400'
 						: 'text-blue-400';
-			return {
-				label: `${mins}:${String(secs).padStart(2, '0')}`,
-				color,
-				hasAttempt: true
-			};
+			return { label: `${mins}:${String(secs).padStart(2, '0')}`, color, hasAttempt: true, phase: 'active' };
 		}
 
-		return { label: 'Active', color: 'text-blue-400', hasAttempt: true };
+		return { label: 'Active', color: 'text-blue-400', hasAttempt: true, phase: 'active' };
 	}
 
 	function fmtTime(iso: string) {
@@ -109,41 +111,36 @@
 		return teams.find((t) => t.id === teamId)?.display_name ?? teamId.slice(0, 8);
 	}
 
-	// ── Realtime + polling ────────────────────────────────────────────────────
-	onMount(() => {
-		const clockIv = setInterval(() => {
-			now = Date.now();
-		}, 1000);
+	// ── Effect: sync data + manage channels reactively on set change ──────────
+	// Tracks data.selectedSetId; uses untrack() for other data props so the effect
+	// only re-runs when the selected set changes (tab switch), not on every load refresh.
+	$effect(() => {
+		const setId = data.selectedSetId; // tracked dependency
 
-		const pollIv = setInterval(async () => {
-			pollingActive = true;
-			try {
-				await Promise.all([
-					fetch('/api/auto-submit', { method: 'POST' }),
-					fetch('/api/player/sweep', { method: 'POST' })
-				]);
-			} catch {
-				/* swallow network errors */
-			}
-			pollingActive = false;
-			lastPolledAt = new Date();
-		}, 10_000);
+		// Sync all panel data from the latest server load
+		const t = untrack(() => data.teams);
+		const p = untrack(() => data.players);
+		const a = untrack(() => data.attempts);
+		const s = untrack(() => data.submissions);
+		const ac = untrack(() => data.activity);
 
-		if (!data.selectedSetId) {
-			return () => {
-				clearInterval(clockIv);
-				clearInterval(pollIv);
-			};
-		}
+		teams = [...t];
+		players = [...p];
+		attempts = [...a];
+		submissions = [...s];
+		activity = [...ac];
 
-		const setId = data.selectedSetId;
-		const teamIds = data.teams.map((t) => t.id);
+		openPopover = null;
+
+		if (!setId) return;
+
+		const teamIds = t.map((tm) => tm.id);
 
 		const teamSub = supabaseBrowser
 			.channel(`live-teams-${setId}`)
 			.on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'teams' }, (payload) => {
-				teams = teams.map((t) =>
-					t.id === payload.new.id ? ({ ...t, ...payload.new } as TeamRow) : t
+				teams = teams.map((tm) =>
+					tm.id === payload.new.id ? ({ ...tm, ...payload.new } as TeamRow) : tm
 				);
 			})
 			.subscribe();
@@ -155,12 +152,12 @@
 				{ event: '*', schema: 'public', table: 'players', filter: `set_id=eq.${setId}` },
 				(payload) => {
 					if (payload.eventType === 'DELETE') {
-						players = players.filter((p) => p.id !== (payload.old as PlayerRow).id);
+						players = players.filter((pl) => pl.id !== (payload.old as PlayerRow).id);
 					} else {
-						const p = payload.new as PlayerRow;
-						const idx = players.findIndex((x) => x.id === p.id);
-						if (idx >= 0) players = [...players.slice(0, idx), p, ...players.slice(idx + 1)];
-						else players = [...players, p];
+						const pl = payload.new as PlayerRow;
+						const idx = players.findIndex((x) => x.id === pl.id);
+						if (idx >= 0) players = [...players.slice(0, idx), pl, ...players.slice(idx + 1)];
+						else players = [...players, pl];
 					}
 				}
 			)
@@ -173,12 +170,13 @@
 				{ event: '*', schema: 'public', table: 'challenge_attempts' },
 				(payload) => {
 					if (payload.eventType === 'DELETE') {
-						attempts = attempts.filter((a) => a.id !== (payload.old as AttemptRow).id);
+						attempts = attempts.filter((at) => at.id !== (payload.old as AttemptRow).id);
 					} else {
-						const a = payload.new as AttemptRow;
-						const idx = attempts.findIndex((x) => x.id === a.id);
-						if (idx >= 0) attempts = [...attempts.slice(0, idx), a, ...attempts.slice(idx + 1)];
-						else attempts = [...attempts, a];
+						const at = payload.new as AttemptRow;
+						const idx = attempts.findIndex((x) => x.id === at.id);
+						if (idx >= 0)
+							attempts = [...attempts.slice(0, idx), at, ...attempts.slice(idx + 1)];
+						else attempts = [...attempts, at];
 					}
 				}
 			)
@@ -193,16 +191,17 @@
 					if (payload.eventType === 'DELETE') {
 						const old = payload.old as SubmissionRow;
 						submissions = submissions.filter(
-							(s) => !(s.challenge_id === old.challenge_id && s.team_id === old.team_id)
+							(sub) =>
+								!(sub.challenge_id === old.challenge_id && sub.team_id === old.team_id)
 						);
 					} else {
-						const s = payload.new as SubmissionRow;
+						const sub = payload.new as SubmissionRow;
 						const idx = submissions.findIndex(
-							(x) => x.challenge_id === s.challenge_id && x.team_id === s.team_id
+							(x) => x.challenge_id === sub.challenge_id && x.team_id === sub.team_id
 						);
 						if (idx >= 0)
-							submissions = [...submissions.slice(0, idx), s, ...submissions.slice(idx + 1)];
-						else submissions = [...submissions, s];
+							submissions = [...submissions.slice(0, idx), sub, ...submissions.slice(idx + 1)];
+						else submissions = [...submissions, sub];
 					}
 				}
 			)
@@ -223,8 +222,6 @@
 			.subscribe();
 
 		return () => {
-			clearInterval(clockIv);
-			clearInterval(pollIv);
 			supabaseBrowser.removeChannel(teamSub);
 			supabaseBrowser.removeChannel(playerSub);
 			supabaseBrowser.removeChannel(attemptSub);
@@ -232,7 +229,35 @@
 			supabaseBrowser.removeChannel(actSub);
 		};
 	});
+
+	// ── Polling (clock + auto-submit) — runs once on mount ───────────────────
+	onMount(() => {
+		const clockIv = setInterval(() => {
+			now = Date.now();
+		}, 1000);
+
+		const pollIv = setInterval(async () => {
+			pollingActive = true;
+			try {
+				await Promise.all([
+					fetch('/api/auto-submit', { method: 'POST' }),
+					fetch('/api/player/sweep', { method: 'POST' })
+				]);
+			} catch {
+				/* swallow network errors */
+			}
+			pollingActive = false;
+			lastPolledAt = new Date();
+		}, 10_000);
+
+		return () => {
+			clearInterval(clockIv);
+			clearInterval(pollIv);
+		};
+	});
 </script>
+
+<svelte:window onclick={() => (openPopover = null)} />
 
 <div class="p-6">
 	<!-- Header -->
@@ -274,10 +299,10 @@
 				{#each data.activeSets as set}
 					<a
 						href="?set={set.id}"
-						class="flex shrink-0 items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium whitespace-nowrap transition
+						class="flex shrink-0 items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium whitespace-nowrap transition
 							{set.id === data.selectedSetId
-							? 'border-amber-400/50 bg-amber-400/10 text-amber-300'
-							: 'border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'}"
+							? 'bg-zinc-800 text-zinc-100'
+							: 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'}"
 					>
 						{set.name}
 						<span
@@ -367,7 +392,7 @@
 				</div>
 			</div>
 
-			<!-- Panel 2: Challenge progress -->
+			<!-- Panel 2: Challenge progress (compact rows) -->
 			<div>
 				<h2 class="mb-3 text-xs font-semibold uppercase tracking-widest text-zinc-400">
 					Challenges ({data.challenges.length})
@@ -379,63 +404,96 @@
 						No challenges in this set.
 					</div>
 				{:else}
-					<div class="space-y-2">
+					<div class="space-y-1">
 						{#each data.challenges as challenge (challenge.id)}
-							<div class="rounded-xl border border-zinc-800 bg-zinc-900 p-3">
-								<div class="mb-2">
-									<div class="text-sm font-semibold leading-tight text-white">
-										{challenge.title}
+							<div
+								class="flex items-center rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 gap-2"
+							>
+								<!-- Left: name + badge -->
+								<div class="min-w-0 flex-1">
+									<div class="flex items-center gap-1.5 min-w-0">
+										<span class="truncate text-sm text-zinc-200 leading-tight">{challenge.title}</span>
+										<span class="shrink-0 rounded bg-zinc-800 px-1 py-0.5 text-[10px] text-zinc-500">{challenge.variant}</span>
 									</div>
-									<div class="mt-0.5 flex items-center gap-1.5 text-xs text-zinc-500">
-										<span class="rounded bg-zinc-800 px-1 py-0.5">{challenge.variant}</span>
-										{#if challenge.timer_seconds > 0}
-											<span>{challenge.timer_seconds}s</span>
-										{/if}
-										<span
-											class="rounded px-1 py-0.5 {challenge.status === 'active'
-												? 'bg-green-900/50 text-green-400'
-												: 'text-zinc-600'}"
-										>
-											{challenge.status}
-										</span>
-									</div>
+									{#if challenge.status !== 'active'}
+										<span class="text-[10px] text-zinc-600">{challenge.status}</span>
+									{/if}
 								</div>
-								<!-- Per-team grid -->
-								<div class="space-y-0.5">
+
+								<!-- Right: team status dots -->
+								<div class="flex items-center gap-1 shrink-0">
 									{#each teams as team}
 										{@const cell = cellStatus(challenge.id, team.id, now)}
-										<div
-											class="flex items-center justify-between rounded px-2 py-1 text-xs even:bg-zinc-800/30"
-										>
-											<div class="flex items-center gap-1.5">
-												<div
-													class="h-1.5 w-1.5 rounded-full"
-													style="background-color: {teamColorHex[team.color] ?? '#666'}"
-												></div>
-												<span class="text-zinc-400">{team.display_name}</span>
-											</div>
-											<div class="flex items-center gap-1">
-												<span class="tabular-nums {cell.color}">{cell.label}</span>
-												{#if cell.hasAttempt}
-													<form method="POST" action="?/resetTeamAttempt" use:enhance>
-														<input type="hidden" name="challenge_id" value={challenge.id} />
-														<input type="hidden" name="team_id" value={team.id} />
-														<button
-															type="submit"
-															onclick={(e) => {
-																if (
-																	!confirm(
-																		`Reset ${team.display_name}'s attempt? This will delete their submission and deduct points.`
-																	)
-																)
-																	e.preventDefault();
-															}}
-															title="Reset attempt"
-															class="text-zinc-600 transition-colors hover:text-red-400"
-														>↺</button>
-													</form>
+										{@const popKey = `${challenge.id}-${team.id}`}
+										<div class="relative">
+											<button
+												type="button"
+												onclick={(e) => {
+													e.stopPropagation();
+													openPopover = openPopover === popKey ? null : popKey;
+												}}
+												class="relative flex h-6 w-6 items-center justify-center rounded-full transition-transform hover:scale-110 focus:outline-none
+													{cell.phase === 'none' ? 'opacity-20' : ''}
+													{cell.phase === 'expired' ? 'opacity-50' : ''}"
+												style="background-color: {teamColorHex[team.color] ?? '#666'}"
+												title="{team.display_name}: {cell.label}"
+											>
+												{#if cell.phase === 'active'}
+													<!-- Pulsing ring for in-progress -->
+													<span
+														class="absolute -inset-0.5 animate-ping rounded-full opacity-30"
+														style="background-color: {teamColorHex[team.color] ?? '#666'}"
+													></span>
 												{/if}
-											</div>
+												{#if cell.phase === 'done'}
+													<span class="relative z-10 text-[9px] font-black text-white/80">✓</span>
+												{:else if cell.phase === 'expired'}
+													<span class="relative z-10 text-[9px] font-black text-white/80">✕</span>
+												{/if}
+											</button>
+
+											<!-- Popover -->
+											{#if openPopover === popKey}
+												<div
+													class="absolute bottom-full left-1/2 z-30 mb-2 w-44 -translate-x-1/2 rounded-xl border border-zinc-700 bg-zinc-900 p-3 shadow-2xl"
+												>
+													<div class="mb-1 flex items-center gap-1.5">
+														<div
+															class="h-2 w-2 rounded-full"
+															style="background-color: {teamColorHex[team.color] ?? '#666'}"
+														></div>
+														<span class="text-xs font-bold text-zinc-200">{team.display_name}</span>
+													</div>
+													<div class="mb-2 text-xs {cell.color}">{cell.label}</div>
+													{#if cell.hasAttempt}
+														<form
+															method="POST"
+															action="?/resetTeamAttempt"
+															use:enhance={() => {
+																openPopover = null;
+																return async ({ update }) => update();
+															}}
+														>
+															<input type="hidden" name="challenge_id" value={challenge.id} />
+															<input type="hidden" name="team_id" value={team.id} />
+															<button
+																type="submit"
+																onclick={(e) => {
+																	if (
+																		!confirm(
+																			`Reset ${team.display_name}'s attempt? This will delete their submission and deduct points.`
+																		)
+																	)
+																		e.preventDefault();
+																}}
+																class="w-full rounded-lg bg-red-950 px-2 py-1.5 text-xs font-medium text-red-400 transition hover:bg-red-900"
+															>
+																Force reset
+															</button>
+														</form>
+													{/if}
+												</div>
+											{/if}
 										</div>
 									{/each}
 								</div>
