@@ -1,7 +1,7 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
-import { generateAssignmentSlots } from '$lib/server/randomize';
+import { generateAssignmentSlots, TEAM_COLOR_ORDER } from '$lib/server/randomize';
 
 export const load: PageServerLoad = async () => {
 	const db = createAdminClient();
@@ -77,7 +77,10 @@ export const actions: Actions = {
 		if (!gameSet) return fail(404, { error: 'Set not found' });
 
 		if (gameSet.status === 'active') {
-			const { error } = await db.from('game_sets').update({ status: 'inactive' }).eq('id', id);
+			const { error } = await db
+				.from('game_sets')
+				.update({ status: 'inactive', play_state: 'joining' })
+				.eq('id', id);
 			if (error) return fail(500, { error: error.message });
 		} else {
 			let assignment_slots: string[] = [];
@@ -88,10 +91,22 @@ export const actions: Actions = {
 					gameSet.team_count
 				);
 			}
+
+			// Get challenge IDs for this set so we can clear stale attempts/submissions
+			const { data: scRows } = await db
+				.from('set_challenges')
+				.select('challenge_id')
+				.eq('set_id', id);
+			const challengeIds = (scRows ?? []).map((r) => r.challenge_id);
+
+			// Scoped team colors for this set
+			const scopedColors = TEAM_COLOR_ORDER.slice(0, gameSet.team_count);
+
 			const { error } = await db
 				.from('game_sets')
 				.update({
 					status: 'active',
+					play_state: 'joining',
 					started_at: new Date().toISOString(),
 					ended_at: null,
 					recap_state: 'pending',
@@ -102,6 +117,17 @@ export const actions: Actions = {
 				})
 				.eq('id', id);
 			if (error) return fail(500, { error: error.message });
+
+			// Reset team scores and clear stale game data in parallel
+			await Promise.all([
+				db.from('teams').update({ score: 0 }).in('color', scopedColors),
+				...(challengeIds.length > 0
+					? [
+							db.from('challenge_attempts').delete().in('challenge_id', challengeIds),
+							db.from('submissions').delete().in('challenge_id', challengeIds)
+						]
+					: [])
+			]);
 		}
 
 		return { toggled: id };
