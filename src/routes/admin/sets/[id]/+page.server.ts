@@ -157,7 +157,7 @@ export const actions: Actions = {
 
 		const { error } = await db
 			.from('game_sets')
-			.update({ play_state: 'recap', recap_state: 'pending' })
+			.update({ play_state: 'recap', recap_state: 'pending', ended_at: new Date().toISOString() })
 			.eq('id', params.id);
 
 		if (error) return fail(500, { error: 'Could not start recap' });
