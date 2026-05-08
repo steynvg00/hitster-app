@@ -3,6 +3,8 @@
 	import { onMount } from 'svelte';
 	import { supabaseBrowser } from '$lib/supabase-browser';
 	import type { PageData, ActionData } from './$types';
+	import '$lib/styles/themes.css';
+	import { themeStore } from '$lib/stores/theme.svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -49,6 +51,7 @@
 	}
 
 	onMount(() => {
+		themeStore.init();
 		updateTimer();
 		const clockIv = setInterval(updateTimer, 1000);
 
@@ -115,9 +118,32 @@
 
 <svelte:window onclick={() => (avatarMenuOpen = false)} />
 
-<div class="flex min-h-screen flex-col bg-zinc-950 font-[Nunito,sans-serif]">
-	<!-- Top bar — avatar only -->
-	<header class="flex items-center justify-end border-b border-zinc-800 px-6 py-3">
+<div
+	class="dashboard-theme theme-{themeStore.current} bg-zinc-950 font-[Nunito,sans-serif]"
+	data-play-state={livePlayState ?? 'none'}
+>
+	<!-- Animated background elements -->
+	<div class="theme-bg" aria-hidden="true">
+		{#if themeStore.current === 'sound_reactive'}
+			<div class="eq-bars">
+				{#each Array.from({ length: 32 }, (_, i) => i) as i}
+					<span style="--i:{i}"></span>
+				{/each}
+			</div>
+		{:else if themeStore.current === 'max_defqon'}
+			<div class="laser-beam"></div>
+			<div class="particles">
+				{#each Array.from({ length: 15 }, (_, i) => i) as i}
+					<span style="--i:{i}"></span>
+				{/each}
+			</div>
+		{/if}
+	</div>
+
+	<!-- Content above background -->
+	<div class="theme-content">
+		<!-- Top bar — avatar only -->
+		<header class="flex items-center justify-end border-b border-zinc-800 px-6 py-3">
 		<div class="relative">
 			<button
 				onclick={(e) => {
@@ -163,7 +189,13 @@
 		</div>
 	</header>
 
-	<main class="flex-1 p-6">
+	<main class="relative flex-1 p-6">
+		<!-- Tactical theme LIVE indicator -->
+		<div class="tactical-live-dot pointer-events-none absolute right-6 top-16 z-20 hidden items-center gap-2">
+			<span class="h-2.5 w-2.5 animate-pulse rounded-full bg-red-500"></span>
+			<span class="text-xs font-bold tracking-widest text-red-400">LIVE</span>
+		</div>
+
 		<div class="mx-auto max-w-2xl space-y-6">
 			<!-- Error -->
 			{#if form?.error}
@@ -175,7 +207,7 @@
 			<!-- Status panel -->
 			{#if data.activeSet && livePlayState === 'joining'}
 				<!-- Joining phase: accepting players, game not yet started -->
-				<div class="rounded-2xl border border-amber-800/50 bg-amber-950/20 p-6">
+				<div class="dash-status dash-status--joining rounded-2xl border border-amber-800/50 bg-amber-950/20 p-6">
 					<div class="mb-1 text-xs font-semibold uppercase tracking-widest text-amber-400">
 						Accepting players
 					</div>
@@ -219,7 +251,10 @@
 				</div>
 			{:else if data.activeSet && livePlayState === 'playing'}
 				<!-- Playing phase: game in progress -->
-				<div class="rounded-2xl border border-green-800/50 bg-green-950/30 p-6">
+				<div
+					class="dash-status dash-status--playing rounded-2xl border border-green-800/50 bg-green-950/30 p-6
+						{timerRemaining !== null && timerRemaining <= 60 ? 'dash-status--timer-critical' : ''}"
+				>
 					<div class="mb-1 text-xs font-semibold uppercase tracking-widest text-green-400">
 						Game in progress
 					</div>
@@ -279,7 +314,7 @@
 				</div>
 			{:else if data.activeSet && livePlayState === 'recap'}
 				<!-- Recap phase: podium reveal -->
-				<div class="rounded-2xl border border-indigo-800/50 bg-indigo-950/20 p-6">
+				<div class="dash-status dash-status--recap rounded-2xl border border-indigo-800/50 bg-indigo-950/20 p-6">
 					<div class="mb-1 text-xs font-semibold uppercase tracking-widest text-indigo-400">
 						Recap playing
 					</div>
@@ -299,7 +334,7 @@
 				</div>
 			{:else}
 				<!-- No game running -->
-				<div class="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
+				<div class="dash-status dash-status--idle rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
 					<div class="mb-1 text-xs font-semibold uppercase tracking-widest text-zinc-500">Status</div>
 					<h2 class="mb-4 text-2xl font-black text-zinc-400">No game running</h2>
 					<div class="flex flex-wrap gap-3">
@@ -339,11 +374,11 @@
 				{#each countTiles as tile}
 					<a
 						href={tile.href}
-						class="flex flex-col gap-2 rounded-xl border border-zinc-800 bg-zinc-900 p-4 transition hover:border-zinc-700 hover:bg-zinc-800/80"
+						class="dash-tile flex flex-col gap-2 rounded-xl border border-zinc-800 bg-zinc-900 p-4 transition hover:border-zinc-700 hover:bg-zinc-800/80"
 					>
 						<div class="flex items-center gap-3">
 							<span class="text-xl leading-none">{tile.icon}</span>
-							<span class="text-2xl font-black text-white">{tile.value()}</span>
+							<span class="dash-tile-count text-2xl font-black text-white">{tile.value()}</span>
 						</div>
 						<span class="text-xs font-semibold uppercase tracking-widest text-zinc-500">{tile.label}</span>
 					</a>
@@ -351,12 +386,12 @@
 
 				<a
 					href="/admin/live"
-					class="flex flex-col gap-2 rounded-xl border border-zinc-800 bg-zinc-900 p-4 transition hover:border-zinc-700 hover:bg-zinc-800/80"
+					class="dash-tile flex flex-col gap-2 rounded-xl border border-zinc-800 bg-zinc-900 p-4 transition hover:border-zinc-700 hover:bg-zinc-800/80"
 				>
 					<div class="flex items-center gap-3">
 						<span class="text-xl leading-none">📡</span>
 						<span
-							class="w-fit rounded-md px-2 py-0.5 text-xs font-semibold {livePlayState === 'playing'
+							class="dash-tile-count w-fit rounded-md px-2 py-0.5 text-xs font-semibold {livePlayState === 'playing'
 								? 'bg-green-500/20 text-green-400'
 								: livePlayState === 'joining'
 									? 'bg-amber-500/20 text-amber-400'
@@ -372,7 +407,7 @@
 
 				<a
 					href="/admin/variant-defaults"
-					class="flex flex-col gap-2 rounded-xl border border-zinc-800 bg-zinc-900 p-4 transition hover:border-zinc-700 hover:bg-zinc-800/80"
+					class="dash-tile flex flex-col gap-2 rounded-xl border border-zinc-800 bg-zinc-900 p-4 transition hover:border-zinc-700 hover:bg-zinc-800/80"
 				>
 					<div class="flex items-center gap-3">
 						<span class="text-xl leading-none">⚙️</span>
@@ -382,4 +417,5 @@
 			</div>
 		</div>
 	</main>
+	</div>
 </div>
