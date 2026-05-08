@@ -12,12 +12,7 @@ export const load: PageServerLoad = async ({ params, cookies }) => {
 
 	const { data: gameSet } = await db.from('game_sets').select('*').eq('id', set_id).maybeSingle();
 
-	if (!gameSet) redirect(302, '/');
-
-	// Set is not active — render the "no game running" page
-	if (gameSet.status !== 'active') {
-		return { state: 'inactive' as const, hasEnded: !!gameSet.ended_at, setName: gameSet.name };
-	}
+	if (!gameSet || gameSet.status !== 'active') redirect(302, '/nfc/no-game');
 
 	// Game already in progress — send to placeholder page (no auth required)
 	if (gameSet.play_state === 'playing') {

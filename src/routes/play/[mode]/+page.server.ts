@@ -16,8 +16,8 @@ const PHOTO_BUCKET = 'player_photos';
 
 function postOnboardRedirect(mode: PlayMode, next?: string | null): string {
 	if (mode === 'teams') {
-		// Allow safe NFC return URLs only
-		if (next?.startsWith('/nfc/randomize/')) return next;
+		// Allow any safe internal path (starts with / and no protocol)
+		if (next && next.startsWith('/') && !next.includes('://')) return next;
 		return '/play/teams/sets';
 	}
 	return `/play/${mode}/lobby`;
