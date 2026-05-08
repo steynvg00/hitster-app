@@ -168,8 +168,11 @@ export const load: PageServerLoad = async ({ params, cookies, locals }) => {
 			return { trackId: entry.track_id ?? '', trackIndex: i + 1, fields, total, maxTotal };
 		});
 
-		const total = existing.score ?? tracks.reduce((s, tr) => s + tr.total, 0);
+		const total = tracks.reduce((s, tr) => s + tr.total, 0);
 		const maxTotal = tracks.reduce((s, tr) => s + tr.maxTotal, 0);
+
+		// Restore breakdown from stored answers if available
+		const storedBreakdown = Array.isArray(answersArray) ? answersArray[0]?.breakdown : undefined;
 
 		priorResult = {
 			total,
@@ -177,7 +180,8 @@ export const load: PageServerLoad = async ({ params, cookies, locals }) => {
 			tracks,
 			status: (existing.status ?? 'auto_wrong') as ChallengeResult['status'],
 			submissionId: existing.id,
-			isFinal: existing.is_final ?? true
+			isFinal: existing.is_final ?? true,
+			breakdown: storedBreakdown
 		};
 	}
 

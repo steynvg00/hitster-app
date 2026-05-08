@@ -10,6 +10,7 @@
 	import YearInput from '$lib/components/ui/YearInput.svelte';
 	import { supabaseBrowser } from '$lib/supabase-browser';
 	import Waveform from '$lib/components/ui/Waveform.svelte';
+	import BonusTracker from '$lib/components/game/BonusTracker.svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -226,7 +227,7 @@
 		const submissionId = result?.submissionId;
 		if (!submissionId) return;
 
-		liveScore = result!.total;
+		liveScore = result!.breakdown?.final ?? result!.total;
 		liveStatus = result!.status;
 		reviewJustResolved = false;
 		pointsAwarded = 0;
@@ -389,11 +390,15 @@
 			</div>
 		{/if}
 
+		{#if result.breakdown}
+			<BonusTracker breakdown={result.breakdown} teamColor={teamHex} />
+		{/if}
+
 		<div class="mb-6 rounded-2xl border p-6 text-center"
 			style="border-color: {teamHex}40; background-color: {teamHex}1a;">
 			<div class="mb-1 text-sm text-zinc-400">Total Score</div>
-			<div class="tabular-nums text-6xl font-black text-white">{liveScore ?? result.total}</div>
-			<div class="mt-1 text-sm text-zinc-400">out of {result.maxTotal} pts</div>
+			<div class="tabular-nums text-6xl font-black text-white">{liveScore ?? (result.breakdown?.final ?? result.total)}</div>
+			<div class="mt-1 text-sm text-zinc-400">out of {result.maxTotal} base pts</div>
 		</div>
 
 		<div class="text-center">
