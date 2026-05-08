@@ -135,6 +135,8 @@ All migrations run **manually via Supabase SQL Editor** — no CLI runner. Files
 | 0021 | active_inactive | Status simplified to `active|inactive` only (dropped draft, completed) |
 | 0022 | clip_effects | `clips.effects` JSONB (pitch + tempo) |
 | 0023 | fix_status_default | `game_sets.status` default changed from `draft` to `inactive` |
+| 0024 | ownership | `created_by uuid` added to 8 tables (game_sets, challenges, tracks, clips, answer_options, nfc_tags, set_challenges, challenge_tracks) |
+| 0025 | play_state | `game_sets.play_state text NOT NULL DEFAULT 'joining' CHECK IN (joining, playing, recap)`; backfills active→playing |
 
 ---
 
@@ -157,10 +159,14 @@ All migrations run **manually via Supabase SQL Editor** — no CLI runner. Files
 - `team_count` (2–10), `expected_player_count` (nullable)
 - `total_timer_seconds` (DB stored as seconds, admin UI displays/accepts minutes)
 - `status`: `active | inactive` (only — draft and completed removed in 0021)
+- `play_state`: `joining | playing | recap` — sub-phase within an active set (migration 0025)
+  - `joining`: set is active, NFC randomizer assigns teams, game not started
+  - `playing`: host clicked "Start the game", no new NFC joins
+  - `recap`: host started podium reveal
 - `recap_state`: `pending | revealing | complete`
 - `recap_ranking`, `recap_reveal_index` for podium reveal sequence
 - `assignment_slots` (jsonb pre-shuffled team_id list), `assignment_index` (cursor)
-- `started_at`, `ended_at` timestamps
+- `started_at` (when set activated), `ended_at` timestamps
 
 ### Challenges
 - `variant`: `normal | label | anthem | vocal | fragments | kick | mashup | battle`
@@ -179,6 +185,7 @@ All migrations run **manually via Supabase SQL Editor** — no CLI runner. Files
 - `slug` unique
 - `type`: `team_identity | challenge_station | randomizer`
 - Bound to `set_id` (for randomizers), `challenge_id` (for challenge stations), or `team_id` (legacy team-identity cards)
+- Randomizer tap behaviour depends on `game_sets.play_state`: joining → assign team; playing → /nfc/game-in-progress; recap → /nfc/game-over
 
 ---
 
@@ -204,7 +211,8 @@ All migrations run **manually via Supabase SQL Editor** — no CLI runner. Files
 - **`/admin/tracks`** — CRUD with inline clip upload (drop zone, type tagging, batch upload), search/filter, bulk delete, per-clip effects ⚙ button, accepted_titles editor
 - **`/admin/challenges`** — CRUD with variant picker, JSON points config (planned form replacement in Session 7b), input mode picker per (track, field)
 - **`/admin/sets`** — CRUD, toggle active/inactive, per-set lobby + randomizer NFC card management
-- **`/admin/sets/[id]/lobby`** — live grid of teams + players, manual move modal, Start Set button, Reset All
+- **`/admin/sets/[id]`** — set details + challenge picker + NFC cards; "Start the game →" button appears when play_state=joining; "Game in progress" badge when playing; realtime via game_sets subscription
+- **`/admin/sets/[id]/lobby`** — live grid of teams + players, manual move modal, Reset All
 - **`/admin/sets/[id]/recap`** — host-controlled reveal sequence; "Reveal next" button cascades through bottom-up; pedestal at top 3 (olympic style: 1st middle/tallest, 2nd left, 3rd right)
 - **`/admin/teams`** — per-team score adjustment with required reason → activity_log, per-team reset, "Reset Everything" button
 - **`/admin/pools`** — tabbed CRUD for answer pools
@@ -276,14 +284,13 @@ In order. Three sessions for the dashboard arc, then bug pile, then variants, th
   - Top-right: profile avatar + dropdown (Settings, Logout)
 - Note: Session A status panel only handles 2 states. Sessions B handles the joining-vs-playing split (4 states total).
 
-### Session B — Game lifecycle (joining vs playing)
-- New `play_state` field on `game_sets`: `joining | playing | recap`
-- "Start the game" button on host dashboard / set page — locks joins, triggers timers
-- NFC randomizer behavior split:
-  - Set is `active` + `joining`: assign team, animation, land on team page
-  - Set is `active` + `playing`: show "game in progress, request to join?" page
-- "Request to join" flow (host approves to add player to a balanced team) — small feature, can defer
-- Status panel handles 4 states: no game / joining / in-progress / recap
+### Session B — Game lifecycle (joining vs playing) ✓ COMPLETE
+- `play_state` column added to `game_sets` (migration 0025): `joining | playing | recap`
+- "Start the game" button on host dashboard and set page — transitions joining→playing
+- NFC randomizer splits by play_state: joining→assign, playing→/nfc/game-in-progress, recap→/nfc/game-over
+- Placeholder pages: `/nfc/game-in-progress/[set_id]` and `/nfc/game-over/[set_id]`
+- Dashboard status panel: 4 states with realtime updates (amber/joining, green/playing, indigo/recap, zinc/idle)
+- "Request to join" flow deferred to future session
 
 ### Session C — Tile customization + NFC tag manager + dashboard aesthetics
 - Drag to reorder tiles; hide/show toggle; persist user preferences
@@ -399,7 +406,6 @@ User decisions for the next phase:
 
 ## Session A complete ✓
 
-Just finished:
 - Supabase Auth setup (email magic link working; Google OAuth pending cloud propagation)
 - Test login button for local dev
 - Ownership migration 0024_ownership (created_by on 8 tables)
@@ -407,8 +413,20 @@ Just finished:
 - Quick fixes: NFC Tags in sidebar, active/inactive toggle in set list
 - Session C polish: collapsible sidebar, icons on tiles, removed stats line
 
-Remaining: Google OAuth propagation (wait a few hours or contact Google support)
+---
+
+## Session B complete ✓
+
+- Migration 0025: `play_state` column on `game_sets` (`joining | playing | recap`, default `joining`)
+- "Start the game →" button on `/admin/sets/[id]` (only in joining phase); disappears once playing; realtime update via `supabaseBrowser` subscription
+- Same button inline on admin dashboard (`/admin`) with 4-state status panel (no game / joining / playing / recap), each with appropriate action button and colour scheme; realtime subscription keeps panel live without reload
+- NFC randomizer (`/nfc/randomize/[set_id]`) now checks `play_state` **before** player auth:
+  - `joining` → assign team as before
+  - `playing` → redirect to `/nfc/game-in-progress/[set_id]` ("Game already in progress")
+  - `recap` → redirect to `/nfc/game-over/[set_id]` ("Game over, view leaderboard")
+- `toggle` deactivation now resets `play_state = 'joining'` so next activation starts fresh
+- `startRecap` action now sets `play_state = 'recap'` alongside `recap_state = 'pending'`
 
 ---
 
-## Pick up here — Session B kickoff
+## Pick up here — Session C kickoff

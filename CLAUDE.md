@@ -42,16 +42,16 @@ Copy `.env.example` → `.env`. Required keys:
 
 The admin client is server-only. It must never be imported from `.svelte` files or `+page.ts` (client-runnable) files.
 
-### Authentication — no Supabase Auth
+### Authentication
 
-There are two custom HMAC-SHA256 signed cookies, both handled by `src/lib/server/`:
+Host auth uses **Supabase Auth** (email magic link + Google OAuth), added in Session A. The admin layout guard (`/admin/+layout.server.ts`) checks `locals.user` (set by `hooks.server.ts` from the Supabase session) and redirects to `/admin/login` if absent.
+
+Player and team identity still use custom HMAC-SHA256 signed cookies:
 
 - **`hitster_team`** (7 days) — team identity. Set by `/nfc/[tag]` or `/join`. Read by `hooks.server.ts` → `locals.teamId`.
-- **`hitster_admin`** (24h) — host identity. Set by `/admin/login` via `HOST_PASSWORD`. Read by `hooks.server.ts` → `locals.isAdmin`.
+- **`hitster_player`** (12h) — player session. Set by `/play/[mode]` form action. Decoded into `locals.playerId`. `$lib/server/player.ts` owns sign/verify.
 
-`hooks.server.ts` populates `locals.teamId` and `locals.isAdmin` on every request. Both are available in `+page.server.ts` load functions and form actions via `event.locals`.
-
-The admin layout server guard (`/admin/+layout.server.ts`) redirects to `/admin/login` unless `locals.isAdmin` is true.
+`hooks.server.ts` populates `locals.teamId`, `locals.isAdmin`, `locals.user`, and `locals.playerId` on every request.
 
 ### Svelte 5 runes mode
 
@@ -135,7 +135,9 @@ src/
       tracks/          ← track + clip CRUD
     leaderboard/       ← TV display (realtime)
     nfc/[tag]/         ← NFC tap handler (server route only)
-    nfc/randomize/[set_id]/ ← randomizer entry point (verifies set active, assigns team)
+    nfc/randomize/[set_id]/ ← randomizer entry point: joining→assign team, playing→game-in-progress, recap→game-over
+    nfc/game-in-progress/[set_id]/ ← placeholder: "game already started" page
+    nfc/game-over/[set_id]/ ← placeholder: "game over, view leaderboard" page
     play/[mode]/       ← player onboarding (mode = solo | teams)
       lobby/           ← lobby stub (solo mode only; teams mode goes to /sets)
     play/teams/        ← static routes under teams (higher priority than [mode])
@@ -181,6 +183,7 @@ src/
 | 2026-05-02 | Session 8b: landing page + player identity — three-mode landing (Host/Solo/Teams), player onboarding with name + optional photo, hitster_player cookie, lobby stub, leave/sweep endpoints (migration 0017) |
 | 2026-05-02 | Session 8c: game sets + randomizer — game_sets/set_challenges tables (migration 0018), /admin/sets CRUD + challenge picker + NFC card management, /admin/sets/[id]/lobby realtime grid with move-player modal, /play/teams/sets picker, /play/teams/randomizing animation, NFC randomizer tag routing, assignTeam snake-order util |
 | 2026-05-08 | Session A: Supabase Auth (email magic link + Google OAuth), dev test-login bypass, ownership migration (0024, created_by on 8 tables), minimal host dashboard (/admin), host login UI moved to main page (HostAuthForm component), NFC Tags added to sidebar, active/inactive toggle in sets list, Session C polish (collapsible sidebar with localStorage, icons on dashboard tiles, removed stats line) |
+| 2026-05-08 | Session B: play_state lifecycle (joining/playing/recap) on game_sets (migration 0025), "Start the game" button on set page + dashboard with realtime, NFC randomizer split by play_state, /nfc/game-in-progress and /nfc/game-over placeholder pages, 4-state admin dashboard status panel |
 
 ## Technical notes
 
@@ -212,6 +215,25 @@ Hosts can reset an individual team's attempt from `/admin/live` (deletes attempt
 ### is_final flag
 `submissions.is_final = true` means no further changes. Set on all submissions (both player-submitted and auto-submitted). Server rejects duplicate submissions with 409.
 
+### play_state lifecycle (migration 0025)
+`game_sets.play_state` is a text column with CHECK constraint: `joining | playing | recap`. It tracks the sub-phase of an active set independently of `status`:
+
+| play_state | Meaning |
+|---|---|
+| `joining` | Set is active, players can join via NFC randomizer, game not yet started |
+| `playing` | Host clicked "Start the game"; no new NFC joins, challenge timers can run |
+| `recap` | Host started recap; podium reveal in progress |
+
+Key transitions:
+- Toggle activate → `play_state = 'joining'`
+- Toggle deactivate → `play_state = 'joining'` (reset for next activation)
+- `?/startGame` action → `play_state = 'playing'`
+- `?/startRecap` action → `play_state = 'recap'`
+
+NFC randomizer (`/nfc/randomize/[set_id]`) checks play_state **before** player auth: `playing` → redirects to `/nfc/game-in-progress/[set_id]`; `recap` → `/nfc/game-over/[set_id]`.
+
+Dashboard status panel and set page both subscribe to `game_sets` realtime updates and update the UI when play_state changes without a full reload.
+
 ### Reset SQL
 
 Two distinct resets — run manually in Supabase SQL Editor.
@@ -231,6 +253,7 @@ UPDATE teams SET score = 0;
 -- Return sets to inactive so they can be activated again
 UPDATE game_sets
 SET status = 'inactive',
+    play_state = 'joining',
     started_at = NULL,
     ended_at = NULL,
     recap_ranking = NULL,
