@@ -8,7 +8,7 @@ type TeamColor = 'blue' | 'yellow' | 'green' | 'red' | 'indigo' | 'black';
 type ClipType = 'snippet' | 'fragment' | 'kick' | 'vocal' | 'mashup';
 type ChallengeVariant = 'normal' | 'label' | 'anthem' | 'vocal' | 'fragments' | 'kick' | 'mashup' | 'battle';
 type AnswerField = 'artist' | 'title' | 'year' | 'label' | 'festival' | 'vocal_source';
-type NfcTagPurpose = 'team_identity' | 'team_entry' | 'challenge' | 'randomizer';
+type NfcTagPurpose = 'team_identity' | 'team_entry' | 'challenge' | 'randomizer' | 'hint';
 type SubmissionStatus = 'auto_correct' | 'auto_wrong' | 'review_requested' | 'review_approved' | 'review_rejected';
 
 export type Database = {

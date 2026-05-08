@@ -15,8 +15,10 @@ import {
 
 // ─── Load ────────────────────────────────────────────────────────────────────
 
-export const load: PageServerLoad = async ({ params, cookies, locals }) => {
+export const load: PageServerLoad = async ({ params, cookies, locals, url }) => {
 	if (!locals.teamId) redirect(302, `/join?redirect=/challenge/${params.id}`);
+
+	const showHint = url.searchParams.get('hint') === '1';
 
 	const supabase = createPublicClient(cookies);
 	const admin = createAdminClient();
@@ -185,6 +187,18 @@ export const load: PageServerLoad = async ({ params, cookies, locals }) => {
 		};
 	}
 
+	// ── Hint usage ────────────────────────────────────────────────────────────
+	let hintUsed = false;
+	if (challenge.hint_text && locals.teamId) {
+		const { data: hintRow } = await admin
+			.from('challenge_hints_used')
+			.select('challenge_id')
+			.eq('challenge_id', params.id)
+			.eq('team_id', locals.teamId)
+			.maybeSingle();
+		hintUsed = !!hintRow;
+	}
+
 	// Check if player is in a set with an active recap (for redirect)
 	let activeSetId: string | null = null;
 	let activeSetRecapState: string | null = null;
@@ -220,7 +234,9 @@ export const load: PageServerLoad = async ({ params, cookies, locals }) => {
 		priorResult,
 		attempt,
 		activeSetId,
-		activeSetRecapState
+		activeSetRecapState,
+		showHint,
+		hintUsed
 	};
 };
 

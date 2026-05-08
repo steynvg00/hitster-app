@@ -244,6 +244,9 @@
 		if (f?.reviewRequested && f.reviewedField) reviewedKeys.add(f.reviewedField);
 	});
 
+	// ── Hint modal ────────────────────────────────────────────────────────────
+	let showHintModal = $state(data.showHint && !!data.challenge.hint_text);
+
 	// ── Field label display ───────────────────────────────────────────────────
 	const FIELD_LABELS: Record<AnswerField, string> = {
 		artist: 'Artist', title: 'Title', year: 'Year',
@@ -310,6 +313,29 @@
 		return () => cancelAnimationFrame(rafId);
 	});
 </script>
+
+{#if showHintModal && data.challenge.hint_text}
+	<!-- ── Hint modal ──────────────────────────────────────────────────────── -->
+	<div class="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm"
+		role="dialog" aria-modal="true"
+		onclick={() => (showHintModal = false)}>
+		<div class="w-full max-w-lg rounded-t-3xl bg-zinc-900 border-t border-zinc-700 px-6 py-8 pb-10"
+			onclick={(e) => e.stopPropagation()}>
+			<div class="mb-4 flex items-center gap-3">
+				<span class="text-2xl">💡</span>
+				<h2 class="text-lg font-black text-white">Hint</h2>
+				<span class="ml-auto text-xs text-zinc-500">{data.challenge.title}</span>
+			</div>
+			<p class="text-base text-zinc-200 leading-relaxed">{data.challenge.hint_text}</p>
+			<button
+				onclick={() => (showHintModal = false)}
+				class="mt-6 w-full rounded-xl py-3 text-sm font-bold transition-colors"
+				style="background-color: {teamHex}22; color: {teamHex}; border: 1px solid {teamHex}44;">
+				Got it
+			</button>
+		</div>
+	</div>
+{/if}
 
 {#if !data.attempt && !result}
 	<!-- ── Challenge not available (inactive, no prior attempt) ─────────────── -->
@@ -483,7 +509,17 @@
 			{/if}
 		</div>
 
-		<h1 class="mb-4 text-2xl font-black">{data.challenge.title}</h1>
+		<div class="mb-4 flex items-start justify-between gap-3">
+			<h1 class="text-2xl font-black">{data.challenge.title}</h1>
+			{#if data.challenge.hint_text && data.hintUsed}
+				<button
+					onclick={() => (showHintModal = true)}
+					class="shrink-0 rounded-full px-3 py-1 text-xs font-semibold transition-colors"
+					style="background-color: {teamHex}22; color: {teamHex}; border: 1px solid {teamHex}44;">
+					💡 Hint
+				</button>
+			{/if}
+		</div>
 
 		<!-- Track tabs (multi-track only) -->
 		{#if isMultiTrack}
