@@ -18,7 +18,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		db.from('challenges').select('*', { count: 'exact', head: true }),
 		db.from('game_sets').select('*', { count: 'exact', head: true }),
 		db.from('nfc_tags').select('*', { count: 'exact', head: true }),
-		db.from('game_sets').select('id, name, team_count, play_state').eq('status', 'active').limit(1),
+		db.from('game_sets').select('id, name, team_count, play_state, total_timer_seconds, started_at').eq('status', 'active').limit(1),
 		db
 			.from('game_sets')
 			.select('id, name')
@@ -52,7 +52,9 @@ export const load: PageServerLoad = async ({ locals }) => {
 					name: activeSet.name,
 					team_count: activeSet.team_count,
 					play_state: (activeSet.play_state ?? 'joining') as 'joining' | 'playing' | 'recap',
-					player_count: activeSetPlayerCount
+					player_count: activeSetPlayerCount,
+					total_timer_seconds: activeSet.total_timer_seconds ?? null,
+					started_at: activeSet.started_at ?? null
 				}
 			: null,
 		lastInactiveSet: lastInactive?.[0] ?? null,
@@ -114,10 +116,32 @@ export const actions: Actions = {
 
 		const { error } = await db
 			.from('game_sets')
-			.update({ play_state: 'playing' })
+			.update({ play_state: 'playing', started_at: new Date().toISOString() })
 			.eq('id', gameSet.id);
 
 		if (error) return fail(500, { error: 'Could not start game' });
 		return { gameStarted: true };
+	},
+
+	endGame: async () => {
+		const db = createAdminClient();
+
+		const { data: sets } = await db
+			.from('game_sets')
+			.select('id, play_state')
+			.eq('status', 'active')
+			.limit(1);
+
+		const gameSet = sets?.[0];
+		if (!gameSet) return fail(404, { error: 'No active set found' });
+		if (gameSet.play_state !== 'playing') return fail(400, { error: 'Game is not in playing state' });
+
+		const { error } = await db
+			.from('game_sets')
+			.update({ play_state: 'recap', ended_at: new Date().toISOString() })
+			.eq('id', gameSet.id);
+
+		if (error) return fail(500, { error: 'Could not end game' });
+		return { gameEnded: true };
 	}
 };

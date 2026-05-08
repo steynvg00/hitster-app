@@ -136,7 +136,7 @@ export const actions: Actions = {
 
 		const { error } = await db
 			.from('game_sets')
-			.update({ play_state: 'playing' })
+			.update({ play_state: 'playing', started_at: new Date().toISOString() })
 			.eq('id', params.id);
 
 		if (error) return fail(500, { error: 'Could not start game' });

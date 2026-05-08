@@ -9,25 +9,96 @@
 	let avatarMenuOpen = $state(false);
 	let runningLastSet = $state(false);
 	let startingGame = $state(false);
+	let endingGame = $state(false);
+	let endGameForm = $state<HTMLFormElement | null>(null);
+	let timerExpired = $state(false);
 
-	// Live play_state — updated via realtime when host action changes it
+	// Live play_state + started_at — updated via realtime
 	let livePlayState = $state<'joining' | 'playing' | 'recap' | null>(
 		data.activeSet?.play_state ?? null
 	);
+	let gameStartedAt = $state<string | null>(data.activeSet?.started_at ?? null);
+
+	// Realtime-updated player count
+	let livePlayerCount = $state(data.activeSet?.player_count ?? 0);
+
+	// Countdown state (updated every second from the interval)
+	let timerRemaining = $state<number | null>(null);
+
+	function updateTimer() {
+		if (!data.activeSet?.total_timer_seconds || !gameStartedAt || livePlayState !== 'playing') {
+			timerRemaining = null;
+			return;
+		}
+		const startMs = new Date(gameStartedAt).getTime();
+		const totalMs = data.activeSet.total_timer_seconds * 1000;
+		const rem = Math.max(0, Math.ceil((totalMs - (Date.now() - startMs)) / 1000));
+		timerRemaining = rem;
+	}
+
+	// Auto-end game when countdown reaches zero
+	$effect(() => {
+		if (timerRemaining === 0 && !timerExpired && livePlayState === 'playing') {
+			timerExpired = true;
+			endGameForm?.requestSubmit();
+		}
+	});
+
+	function fmtTimer(s: number) {
+		return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+	}
 
 	onMount(() => {
-		if (!data.activeSet) return;
-		const channel = supabaseBrowser
+		updateTimer();
+		const clockIv = setInterval(updateTimer, 1000);
+
+		if (!data.activeSet) return () => clearInterval(clockIv);
+
+		const setChannel = supabaseBrowser
 			.channel('dashboard-set')
 			.on(
 				'postgres_changes',
-				{ event: 'UPDATE', schema: 'public', table: 'game_sets', filter: `id=eq.${data.activeSet.id}` },
+				{
+					event: 'UPDATE',
+					schema: 'public',
+					table: 'game_sets',
+					filter: `id=eq.${data.activeSet.id}`
+				},
 				(payload) => {
-					if (payload.new.play_state) livePlayState = payload.new.play_state as typeof livePlayState;
+					livePlayState = payload.new.play_state as typeof livePlayState;
+					gameStartedAt = payload.new.started_at as string | null;
+					if (payload.new.play_state !== 'playing') timerExpired = false;
 				}
 			)
 			.subscribe();
-		return () => supabaseBrowser.removeChannel(channel);
+
+		const playerChannel = supabaseBrowser
+			.channel('dashboard-players')
+			.on(
+				'postgres_changes',
+				{
+					event: '*',
+					schema: 'public',
+					table: 'players',
+					filter: `set_id=eq.${data.activeSet.id}`
+				},
+				() => {
+					supabaseBrowser
+						.from('players')
+						.select('*', { count: 'exact', head: true })
+						.eq('set_id', data.activeSet!.id)
+						.then(({ count }) => {
+							if (count !== null) livePlayerCount = count;
+						});
+				}
+			)
+			.subscribe();
+
+		return () => {
+			clearInterval(clockIv);
+			supabaseBrowser.removeChannel(setChannel);
+			supabaseBrowser.removeChannel(playerChannel);
+		};
 	});
 
 	function getInitial(name: string) {
@@ -109,12 +180,15 @@
 						Accepting players
 					</div>
 					<h2 class="mb-4 text-2xl font-black text-white">{data.activeSet.name}</h2>
-					<div class="mb-5 flex gap-6 text-sm text-zinc-400">
+					<div class="mb-4 flex gap-6 text-sm text-zinc-400">
 						<span><span class="font-bold text-zinc-200">{data.activeSet.team_count}</span> teams</span>
 						<span>
-							<span class="font-bold text-zinc-200">{data.activeSet.player_count}</span> players joined
+							<span class="font-bold text-zinc-200">{livePlayerCount}</span> players joined
 						</span>
 					</div>
+					{#if livePlayerCount === 0}
+						<p class="mb-4 text-sm text-zinc-500">Waiting for players to join...</p>
+					{/if}
 					<div class="flex flex-wrap gap-3">
 						<form
 							method="POST"
@@ -150,18 +224,58 @@
 						Game in progress
 					</div>
 					<h2 class="mb-4 text-2xl font-black text-white">{data.activeSet.name}</h2>
-					<div class="mb-5 flex gap-6 text-sm text-zinc-400">
+					<div class="mb-5 flex flex-wrap gap-6 text-sm text-zinc-400">
 						<span><span class="font-bold text-zinc-200">{data.activeSet.team_count}</span> teams</span>
 						<span>
-							<span class="font-bold text-zinc-200">{data.activeSet.player_count}</span> players joined
+							<span class="font-bold text-zinc-200">{livePlayerCount}</span> players
 						</span>
+						{#if timerRemaining !== null}
+							<span class="flex items-center gap-1.5">
+								<span
+									class="tabular-nums font-bold {timerRemaining <= 60
+										? 'text-red-400'
+										: timerRemaining <= 300
+											? 'text-yellow-400'
+											: 'text-zinc-200'}"
+								>
+									{fmtTimer(timerRemaining)}
+								</span>
+								<span>remaining</span>
+							</span>
+						{/if}
 					</div>
-					<a
-						href="/admin/live"
-						class="inline-block rounded-lg bg-green-500 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-green-400"
-					>
-						Open live view →
-					</a>
+					<div class="flex flex-wrap gap-3">
+						<a
+							href="/admin/live"
+							class="inline-block rounded-lg bg-green-500 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-green-400"
+						>
+							Open game status →
+						</a>
+						<form
+							bind:this={endGameForm}
+							method="POST"
+							action="?/endGame"
+							use:enhance={() => {
+								endingGame = true;
+								return async ({ update }) => {
+									await update({ reset: false });
+									endingGame = false;
+								};
+							}}
+						>
+							<button
+								type="submit"
+								disabled={endingGame}
+								onclick={(e) => {
+									if (!confirm('End the game now? This will stop accepting submissions.'))
+										e.preventDefault();
+								}}
+								class="rounded-lg border border-red-800 bg-red-950/50 px-5 py-2.5 text-sm font-medium text-red-300 transition hover:bg-red-900 disabled:opacity-50"
+							>
+								{endingGame ? 'Ending…' : 'End game'}
+							</button>
+						</form>
+					</div>
 				</div>
 			{:else if data.activeSet && livePlayState === 'recap'}
 				<!-- Recap phase: podium reveal -->
@@ -173,14 +287,14 @@
 					<div class="mb-5 flex gap-6 text-sm text-zinc-400">
 						<span><span class="font-bold text-zinc-200">{data.activeSet.team_count}</span> teams</span>
 						<span>
-							<span class="font-bold text-zinc-200">{data.activeSet.player_count}</span> players joined
+							<span class="font-bold text-zinc-200">{livePlayerCount}</span> players joined
 						</span>
 					</div>
 					<a
 						href="/admin/sets/{data.activeSet.id}/recap"
 						class="inline-block rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-indigo-500"
 					>
-						Open podium →
+						Open recap →
 					</a>
 				</div>
 			{:else}
@@ -225,39 +339,45 @@
 				{#each countTiles as tile}
 					<a
 						href={tile.href}
-						class="flex flex-col gap-1 rounded-xl border border-zinc-800 bg-zinc-900 p-4 transition hover:border-zinc-700 hover:bg-zinc-800/80"
+						class="flex flex-col gap-2 rounded-xl border border-zinc-800 bg-zinc-900 p-4 transition hover:border-zinc-700 hover:bg-zinc-800/80"
 					>
-						<span class="text-xl leading-none">{tile.icon}</span>
-						<span class="mt-1 text-2xl font-black text-white">{tile.value()}</span>
+						<div class="flex items-center gap-3">
+							<span class="text-xl leading-none">{tile.icon}</span>
+							<span class="text-2xl font-black text-white">{tile.value()}</span>
+						</div>
 						<span class="text-xs font-semibold uppercase tracking-widest text-zinc-500">{tile.label}</span>
 					</a>
 				{/each}
 
 				<a
 					href="/admin/live"
-					class="flex flex-col gap-1 rounded-xl border border-zinc-800 bg-zinc-900 p-4 transition hover:border-zinc-700 hover:bg-zinc-800/80"
+					class="flex flex-col gap-2 rounded-xl border border-zinc-800 bg-zinc-900 p-4 transition hover:border-zinc-700 hover:bg-zinc-800/80"
 				>
-					<span class="text-xl leading-none">📡</span>
-					<span
-						class="mt-1 w-fit rounded-md px-2 py-0.5 text-xs font-semibold {livePlayState === 'playing'
-							? 'bg-green-500/20 text-green-400'
-							: livePlayState === 'joining'
-								? 'bg-amber-500/20 text-amber-400'
-								: livePlayState === 'recap'
-									? 'bg-indigo-500/20 text-indigo-400'
-									: 'bg-zinc-700 text-zinc-400'}"
-					>
-						{livePlayState ?? 'idle'}
-					</span>
-					<span class="text-xs font-semibold uppercase tracking-widest text-zinc-500">Live</span>
+					<div class="flex items-center gap-3">
+						<span class="text-xl leading-none">📡</span>
+						<span
+							class="w-fit rounded-md px-2 py-0.5 text-xs font-semibold {livePlayState === 'playing'
+								? 'bg-green-500/20 text-green-400'
+								: livePlayState === 'joining'
+									? 'bg-amber-500/20 text-amber-400'
+									: livePlayState === 'recap'
+										? 'bg-indigo-500/20 text-indigo-400'
+										: 'bg-zinc-700 text-zinc-400'}"
+						>
+							{livePlayState ?? 'idle'}
+						</span>
+					</div>
+					<span class="text-xs font-semibold uppercase tracking-widest text-zinc-500">Game status</span>
 				</a>
 
 				<a
 					href="/admin/variant-defaults"
-					class="flex flex-col gap-1 rounded-xl border border-zinc-800 bg-zinc-900 p-4 transition hover:border-zinc-700 hover:bg-zinc-800/80"
+					class="flex flex-col gap-2 rounded-xl border border-zinc-800 bg-zinc-900 p-4 transition hover:border-zinc-700 hover:bg-zinc-800/80"
 				>
-					<span class="text-xl leading-none">⚙️</span>
-					<span class="mt-1 text-xs font-semibold uppercase tracking-widest text-zinc-500">Defaults</span>
+					<div class="flex items-center gap-3">
+						<span class="text-xl leading-none">⚙️</span>
+					</div>
+					<span class="text-xs font-semibold uppercase tracking-widest text-zinc-500">Defaults</span>
 				</a>
 			</div>
 		</div>

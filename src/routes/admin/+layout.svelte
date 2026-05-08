@@ -14,7 +14,7 @@
 		{ href: '/admin/pools', label: 'Pools', icon: '🗂️' },
 		{ href: '/admin/review', label: 'Review', icon: '🔍' },
 		{ href: '/admin/variant-defaults', label: 'Defaults', icon: '⚙️' },
-		{ href: '/admin/live', label: 'Live', icon: '📡' }
+		{ href: '/admin/live', label: 'Game status', icon: '📡' }
 	];
 
 	function isActive(item: { href: string; exact?: boolean }) {

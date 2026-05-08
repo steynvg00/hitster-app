@@ -88,5 +88,25 @@ export const POST: RequestHandler = async ({ locals }) => {
 			.eq('id', attempt.id);
 	}
 
+	// Check if any active game_sets have a total timer that has expired
+	const { data: activeSets } = await db
+		.from('game_sets')
+		.select('id, total_timer_seconds, started_at, play_state')
+		.eq('status', 'active')
+		.eq('play_state', 'playing')
+		.not('total_timer_seconds', 'is', null)
+		.not('started_at', 'is', null);
+
+	for (const set of activeSets ?? []) {
+		if (!set.total_timer_seconds || !set.started_at) continue;
+		const endsAt = new Date(set.started_at).getTime() + set.total_timer_seconds * 1000;
+		if (Date.now() >= endsAt) {
+			await db
+				.from('game_sets')
+				.update({ play_state: 'recap', ended_at: new Date().toISOString() })
+				.eq('id', set.id);
+		}
+	}
+
 	return json({ created });
 };
