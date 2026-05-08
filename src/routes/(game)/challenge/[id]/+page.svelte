@@ -219,6 +219,7 @@
 
 	// ── Live result (realtime submissions subscription) ───────────────────────
 	let liveScore = $state<number | null>(null);
+	let animatedScore = $state(0);
 	let liveStatus = $state<string | null>(null);
 	let reviewJustResolved = $state(false);
 	let pointsAwarded = $state(0);
@@ -253,6 +254,24 @@
 			.subscribe();
 
 		return () => supabaseBrowser.removeChannel(channel);
+	});
+
+	// ── Animated score count-up ───────────────────────────────────────────────
+	$effect(() => {
+		const target = liveScore ?? 0;
+		if (target === 0) { animatedScore = 0; return; }
+		const from = animatedScore;
+		const duration = Math.min(1400, 400 + Math.abs(target - from) * 8);
+		const startTime = performance.now();
+		let rafId: number;
+		const tick = (now: number) => {
+			const p = Math.min((now - startTime) / duration, 1);
+			const eased = 1 - Math.pow(1 - p, 3); // ease-out cubic
+			animatedScore = Math.round(from + (target - from) * eased);
+			if (p < 1) rafId = requestAnimationFrame(tick);
+		};
+		rafId = requestAnimationFrame(tick);
+		return () => cancelAnimationFrame(rafId);
 	});
 </script>
 
@@ -397,8 +416,12 @@
 		<div class="mb-6 rounded-2xl border p-6 text-center"
 			style="border-color: {teamHex}40; background-color: {teamHex}1a;">
 			<div class="mb-1 text-sm text-zinc-400">Total Score</div>
-			<div class="tabular-nums text-6xl font-black text-white">{liveScore ?? (result.breakdown?.final ?? result.total)}</div>
-			<div class="mt-1 text-sm text-zinc-400">out of {result.maxTotal} base pts</div>
+			<div class="tabular-nums text-6xl font-black text-white transition-none">{animatedScore}</div>
+			{#if result.breakdown && result.breakdown.base !== result.breakdown.final}
+				<div class="mt-1 text-xs text-zinc-500">{result.breakdown.base} base pts</div>
+			{:else}
+				<div class="mt-1 text-sm text-zinc-400">out of {result.maxTotal} pts</div>
+			{/if}
 		</div>
 
 		<div class="text-center">
