@@ -39,6 +39,31 @@
 		})
 	);
 
+	// Multi-artist collab state: [trackIndex][slotIndex] → string
+	// Only used when artist field is in combobox mode; joined with " & " on submit
+	const hasArtistCombobox = $derived(
+		data.variantFields.includes('artist' as AnswerField) && data.fieldModes['artist'] === 'combobox'
+	);
+	let collabArtists = $state<string[][]>(
+		data.challengeTracks.map((ct) => {
+			const saved = savedDraft[ct.trackId];
+			const savedArtist = saved?.['artist'] ?? '';
+			return savedArtist ? savedArtist.split(' & ') : [''];
+		})
+	);
+
+	function addArtistSlot(trackIdx: number) {
+		if (collabArtists[trackIdx].length < 3) {
+			collabArtists[trackIdx] = [...collabArtists[trackIdx], ''];
+		}
+	}
+	function removeArtistSlot(trackIdx: number, slotIdx: number) {
+		collabArtists[trackIdx] = collabArtists[trackIdx].filter((_, i) => i !== slotIdx);
+		if (collabArtists[trackIdx].length === 0) collabArtists[trackIdx] = [''];
+		// Sync back to allFieldValues
+		allFieldValues[trackIdx]['artist'] = collabArtists[trackIdx].filter(Boolean).join(' & ');
+	}
+
 	// Year is numeric — bindable as number, stored separately
 	const hasYear = data.variantFields.includes('year' as AnswerField);
 	let allYearValues = $state<number[]>(
@@ -52,8 +77,12 @@
 	$effect(() => {
 		const d: Record<string, Record<string, string>> = {};
 		for (let i = 0; i < data.challengeTracks.length; i++) {
+			const artistValue = hasArtistCombobox
+				? collabArtists[i].filter((a) => a.trim()).join(' & ')
+				: allFieldValues[i]['artist'] ?? '';
 			d[data.challengeTracks[i].trackId] = {
 				...allFieldValues[i],
+				...(hasArtistCombobox ? { artist: artistValue } : {}),
 				...(hasYear ? { year: String(allYearValues[i]) } : {})
 			};
 		}
@@ -65,8 +94,12 @@
 	function buildAnswersForSubmit(): Record<string, Record<string, string>> {
 		const d: Record<string, Record<string, string>> = {};
 		for (let i = 0; i < data.challengeTracks.length; i++) {
+			const artistValue = hasArtistCombobox
+				? collabArtists[i].filter((a) => a.trim()).join(' & ')
+				: allFieldValues[i]['artist'] ?? '';
 			d[data.challengeTracks[i].trackId] = {
 				...allFieldValues[i],
+				...(hasArtistCombobox ? { artist: artistValue } : {}),
 				...(hasYear ? { year: String(allYearValues[i]) } : {})
 			};
 		}
@@ -193,9 +226,12 @@
 		!submitting &&
 		!result &&
 		(timerMs === null || timerMs > 0) &&
-		data.challengeTracks.every((_, i) =>
-			comboboxFields.every((f: AnswerField) => (allFieldValues[i]?.[f] ?? '').length > 0)
-		)
+		data.challengeTracks.every((_, i) => {
+			const otherComboFields = comboboxFields.filter((f: AnswerField) => !(f === 'artist' && hasArtistCombobox));
+			const otherOk = otherComboFields.every((f: AnswerField) => (allFieldValues[i]?.[f] ?? '').length > 0);
+			const artistOk = !hasArtistCombobox || collabArtists[i].some((a) => a.trim().length > 0);
+			return otherOk && artistOk;
+		})
 	);
 	const formError = $derived<string | null>(f?.formError ?? null);
 	const reviewError = $derived<string | null>(f?.reviewError ?? null);
@@ -524,7 +560,37 @@
 					<div>
 						<label class="mb-1.5 block text-sm font-semibold text-zinc-400">{fieldLabel(field)}</label>
 
-						{#if mode === 'combobox'}
+						{#if field === 'artist' && hasArtistCombobox}
+							<!-- Multi-artist collab input -->
+							{#each collabArtists[activeTrackIndex] as _, slotIdx}
+								<div class="mb-2 flex gap-2 items-start">
+									<div class="flex-1 min-w-0">
+										<Combobox
+											name="artist_slot_{slotIdx}"
+											pool={data.pools['artist'] ?? []}
+											{teamHex}
+											bind:value={collabArtists[activeTrackIndex][slotIdx]}
+										/>
+									</div>
+									{#if collabArtists[activeTrackIndex].length > 1}
+										<button
+											type="button"
+											onclick={() => removeArtistSlot(activeTrackIndex, slotIdx)}
+											class="mt-2 text-zinc-600 hover:text-red-400 text-lg leading-none shrink-0"
+											aria-label="Remove artist">−</button>
+									{/if}
+								</div>
+							{/each}
+							{#if collabArtists[activeTrackIndex].length < 3}
+								<button
+									type="button"
+									onclick={() => addArtistSlot(activeTrackIndex)}
+									class="text-xs font-semibold underline underline-offset-2 mt-1"
+									style="color: {teamHex};">
+									+ Add collab artist
+								</button>
+							{/if}
+						{:else if mode === 'combobox'}
 							<Combobox
 								name={field}
 								pool={data.pools[field] ?? []}
