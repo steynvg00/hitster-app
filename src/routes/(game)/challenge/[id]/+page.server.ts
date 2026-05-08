@@ -9,7 +9,8 @@ import {
 	DEFAULT_FIELD_MAX,
 	buildFieldResults,
 	scoreSubmission,
-	type TrackData
+	type TrackData,
+	type BonusParams
 } from '$lib/server/scoring.js';
 
 // ─── Load ────────────────────────────────────────────────────────────────────
@@ -242,15 +243,13 @@ export const actions: Actions = {
 			return fail(409, { formError: 'Already submitted — reload to see your result' });
 		}
 
-		const { data: challenge } = await supabase.from('challenges').select('*').eq('id', params.id).single();
+		const [challengeRes, challengeTracksRes] = await Promise.all([
+			supabase.from('challenges').select('*').eq('id', params.id).single(),
+			supabase.from('challenge_tracks').select('id, track_id, sort_order').eq('challenge_id', params.id).order('sort_order')
+		]);
+		const challenge = challengeRes.data;
+		const challengeTracks = challengeTracksRes.data;
 		if (!challenge) return fail(404, { formError: 'Challenge not found' });
-
-		const { data: challengeTracks } = await supabase
-			.from('challenge_tracks')
-			.select('id, track_id, sort_order')
-			.eq('challenge_id', params.id)
-			.order('sort_order');
-
 		if (!challengeTracks?.length) return fail(500, { formError: 'Challenge track not found' });
 
 		const trackIds = challengeTracks.map((ct) => ct.track_id);
@@ -267,12 +266,9 @@ export const actions: Actions = {
 			fieldModes[f] = (savedModes[f] as InputMode) ?? DEFAULT_INPUT_MODES[variant]?.[f as AnswerField] ?? 'open_text';
 		}
 
-		let variantDefaultPoints: Record<string, number> = {};
-		const { data: vd } = await admin.from('variant_defaults').select('points_config').eq('variant', variant).maybeSingle();
-		if (vd) {
-			const vdConfig = vd.points_config as Record<string, unknown>;
-			variantDefaultPoints = (vdConfig.field_points ?? {}) as Record<string, number>;
-		}
+		const { data: vdRow } = await admin.from('variant_defaults').select('points_config, streak_config').eq('variant', variant).maybeSingle();
+		const variantDefaultPoints = ((vdRow?.points_config as Record<string, unknown> | null)?.field_points ?? {}) as Record<string, number>;
+		const streakThresholds = ((vdRow?.streak_config as Record<string, unknown> | null)?.thresholds ?? []) as Array<{ streak: number; bonus: number }>;
 
 		const challengeFieldPoints = (pcRaw.field_points ?? {}) as Record<string, number>;
 		const fieldPoints: Record<string, number> = {};
@@ -289,18 +285,62 @@ export const actions: Actions = {
 			return fail(400, { formError: 'Invalid answers format' });
 		}
 
+		// ── Bonus params ─────────────────────────────────────────────────────────
+		// Fetch team (for score + streak), all teams (for leader score), player's
+		// set (for challenge_multiplier), and attempt (for elapsed seconds) in parallel.
+		const [teamRes, allTeamsRes, attemptRes] = await Promise.all([
+			admin.from('teams').select('score, current_streak').eq('id', teamId).single(),
+			admin.from('teams').select('score').order('score', { ascending: false }).limit(1),
+			admin.from('challenge_attempts').select('started_at').eq('challenge_id', params.id).eq('team_id', teamId).maybeSingle()
+		]);
+
+		const teamRow = teamRes.data;
+		const leaderScore = allTeamsRes.data?.[0]?.score ?? 0;
+		const attemptStartedAt = attemptRes.data?.started_at ?? null;
+		const elapsedSeconds = attemptStartedAt
+			? Math.floor((Date.now() - new Date(attemptStartedAt).getTime()) / 1000)
+			: null;
+
+		// challenge_multiplier: look up set_challenges for the player's active set
+		let challengeMultiplier = 1;
+		if (locals.playerId) {
+			const { data: playerRow } = await admin.from('players').select('set_id').eq('id', locals.playerId).maybeSingle();
+			if (playerRow?.set_id) {
+				const { data: sc } = await admin
+					.from('set_challenges')
+					.select('challenge_multiplier')
+					.eq('challenge_id', params.id)
+					.eq('set_id', playerRow.set_id)
+					.maybeSingle();
+				challengeMultiplier = (sc as { challenge_multiplier?: number } | null)?.challenge_multiplier ?? 1;
+			}
+		}
+
+		const bonusParams: BonusParams = {
+			difficulty_rating: (challenge as unknown as { difficulty_rating?: number }).difficulty_rating ?? 3,
+			challenge_multiplier: challengeMultiplier,
+			team_score: teamRow?.score ?? 0,
+			leader_score: leaderScore,
+			current_streak: teamRow?.current_streak ?? 0,
+			streak_thresholds: streakThresholds,
+			elapsed_seconds: elapsedSeconds,
+			speed_threshold_seconds: (challenge as unknown as { speed_threshold_seconds?: number | null }).speed_threshold_seconds ?? null
+		};
+
 		const trackDataMap = new Map<string, TrackData>(tracks.map((t) => [t.id, t as TrackData]));
 		const ctList = challengeTracks.map((ct) => ({ id: ct.id, trackId: ct.track_id }));
 
 		const { answersArray, result: scoredResult } = scoreSubmission(
-			draftByTrack, ctList, trackDataMap, variantFields, fieldModes, fieldPoints
+			draftByTrack, ctList, trackDataMap, variantFields, fieldModes, fieldPoints, bonusParams
 		);
+
+		const finalScore = scoredResult.breakdown?.final ?? scoredResult.total;
 
 		const { data: sub, error: subErr } = await supabase.from('submissions').insert({
 			challenge_id: params.id,
 			team_id: teamId,
 			answers: answersArray as never,
-			score: scoredResult.total,
+			score: finalScore,
 			is_final: true
 		}).select('id').single();
 
@@ -310,19 +350,14 @@ export const actions: Actions = {
 		}
 		if (!sub) return fail(500, { formError: 'Submission insert returned no data' });
 
+		// Update streak: increment if any base score, else reset
+		const newStreak = scoredResult.total > 0 ? (teamRow?.current_streak ?? 0) + 1 : 0;
+
 		await Promise.all([
 			admin.from('submissions').update({ status: scoredResult.status } as never).eq('id', sub.id),
-			// Mark the team's attempt as ended
-			admin
-				.from('challenge_attempts')
-				.update({ ended_at: new Date().toISOString() })
-				.eq('challenge_id', params.id)
-				.eq('team_id', teamId)
+			admin.from('challenge_attempts').update({ ended_at: new Date().toISOString() }).eq('challenge_id', params.id).eq('team_id', teamId),
+			admin.from('teams').update({ score: (teamRow?.score ?? 0) + finalScore, current_streak: newStreak }).eq('id', teamId)
 		]);
-
-		// Increment team score
-		const { data: teamRow } = await admin.from('teams').select('score').eq('id', teamId).single();
-		await admin.from('teams').update({ score: (teamRow?.score ?? 0) + scoredResult.total }).eq('id', teamId);
 
 		const result: ChallengeResult = {
 			...scoredResult,

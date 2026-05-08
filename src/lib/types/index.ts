@@ -101,12 +101,24 @@ export type SubmissionStatus =
 	| 'review_approved'
 	| 'review_rejected';
 
+// Breakdown of how a submission's final score was derived
+export interface ScoreBreakdown {
+	base: number;
+	difficulty_multiplier: number;
+	round_multiplier: number;
+	comeback_multiplier: number;
+	streak_bonus: number;
+	speed_bonus: number;
+	final: number;
+}
+
 // One element of submissions.answers JSONB array (new multi-track format)
 export interface AnswerArrayEntry {
 	track_id: string | null;
 	field_values: Record<string, string>;
 	scored: Record<string, number>;
 	total: number;
+	breakdown?: ScoreBreakdown; // present on answers[0] of scored submissions
 }
 
 export interface Submission {
@@ -153,12 +165,13 @@ export interface TrackFieldResult {
 
 // Challenge result returned by submit action + stored as priorResult in load()
 export interface ChallengeResult {
-	total: number;
+	total: number;        // base field-score sum
 	maxTotal: number;
 	tracks: TrackFieldResult[]; // one entry per challenge_track
 	status: SubmissionStatus;
 	submissionId: string;
 	isFinal: boolean;
+	breakdown?: ScoreBreakdown; // present after bonus scoring
 }
 
 // ─── NFC ─────────────────────────────────────────────────────────────────────

@@ -21,6 +21,8 @@ export type Database = {
 					label: string;
 					display_name: string;
 					score: number;
+					current_streak: number;
+					photo_url: string | null;
 					created_at: string;
 				};
 				Insert: {
@@ -29,6 +31,8 @@ export type Database = {
 					label: string;
 					display_name?: string;
 					score?: number;
+					current_streak?: number;
+					photo_url?: string | null;
 					created_at?: string;
 				};
 				Update: {
@@ -37,6 +41,8 @@ export type Database = {
 					label?: string;
 					display_name?: string;
 					score?: number;
+					current_streak?: number;
+					photo_url?: string | null;
 					created_at?: string;
 				};
 				Relationships: [];
@@ -174,6 +180,9 @@ export type Database = {
 					stage_label: string | null;
 					status: string;
 					points_config: Json;
+					difficulty_rating: number;
+					speed_threshold_seconds: number | null;
+					hint_text: string | null;
 					created_by: string | null;
 					created_at: string;
 				};
@@ -186,6 +195,9 @@ export type Database = {
 					stage_label?: string | null;
 					status?: string;
 					points_config?: Json;
+					difficulty_rating?: number;
+					speed_threshold_seconds?: number | null;
+					hint_text?: string | null;
 					created_by?: string | null;
 					created_at?: string;
 				};
@@ -198,6 +210,9 @@ export type Database = {
 					stage_label?: string | null;
 					status?: string;
 					points_config?: Json;
+					difficulty_rating?: number;
+					speed_threshold_seconds?: number | null;
+					hint_text?: string | null;
 					created_by?: string | null;
 					created_at?: string;
 				};
@@ -307,6 +322,7 @@ export type Database = {
 					recap_state: string;
 					recap_ranking: string[];
 					recap_reveal_index: number;
+					scores_hidden: boolean;
 					created_by: string | null;
 					created_at: string;
 				};
@@ -326,6 +342,7 @@ export type Database = {
 					recap_state?: string;
 					recap_ranking?: string[];
 					recap_reveal_index?: number;
+					scores_hidden?: boolean;
 					created_by?: string | null;
 					created_at?: string;
 				};
@@ -345,6 +362,7 @@ export type Database = {
 					recap_state?: string;
 					recap_ranking?: string[];
 					recap_reveal_index?: number;
+					scores_hidden?: boolean;
 					created_by?: string | null;
 					created_at?: string;
 				};
@@ -356,6 +374,7 @@ export type Database = {
 					set_id: string;
 					challenge_id: string;
 					position: number;
+					challenge_multiplier: number;
 					created_by: string | null;
 				};
 				Insert: {
@@ -363,6 +382,7 @@ export type Database = {
 					set_id: string;
 					challenge_id: string;
 					position?: number;
+					challenge_multiplier?: number;
 					created_by?: string | null;
 				};
 				Update: {
@@ -370,6 +390,7 @@ export type Database = {
 					set_id?: string;
 					challenge_id?: string;
 					position?: number;
+					challenge_multiplier?: number;
 					created_by?: string | null;
 				};
 				Relationships: [];
@@ -474,14 +495,38 @@ export type Database = {
 				Row: {
 					variant: string;
 					points_config: Json;
+					streak_config: Json | null;
 				};
 				Insert: {
 					variant: string;
 					points_config?: Json;
+					streak_config?: Json | null;
 				};
 				Update: {
 					variant?: string;
 					points_config?: Json;
+					streak_config?: Json | null;
+				};
+				Relationships: [];
+			};
+			challenge_hints_used: {
+				Row: {
+					id: string;
+					challenge_id: string;
+					team_id: string;
+					used_at: string;
+				};
+				Insert: {
+					id?: string;
+					challenge_id: string;
+					team_id: string;
+					used_at?: string;
+				};
+				Update: {
+					id?: string;
+					challenge_id?: string;
+					team_id?: string;
+					used_at?: string;
 				};
 				Relationships: [];
 			};
@@ -559,6 +604,7 @@ export type NfcTagRow = Database['public']['Tables']['nfc_tags']['Row'];
 export type ActivityLogRow = Database['public']['Tables']['activity_log']['Row'];
 export type ReviewRequestRow = Database['public']['Tables']['review_requests']['Row'];
 export type VariantDefaultRow = Database['public']['Tables']['variant_defaults']['Row'];
+export type ChallengeHintUsedRow = Database['public']['Tables']['challenge_hints_used']['Row'];
 export type AnswerPoolArtistRow = Database['public']['Tables']['answer_pool_artists']['Row'];
 export type AnswerPoolLabelRow = Database['public']['Tables']['answer_pool_labels']['Row'];
 export type AnswerPoolFestivalRow = Database['public']['Tables']['answer_pool_festivals']['Row'];

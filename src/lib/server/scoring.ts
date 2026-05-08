@@ -1,4 +1,15 @@
-import type { AnswerField, InputMode, FieldResult, TrackFieldResult, ChallengeResult, SubmissionStatus, AnswerArrayEntry } from '$lib/types/index.js';
+import type { AnswerField, InputMode, FieldResult, TrackFieldResult, ChallengeResult, SubmissionStatus, AnswerArrayEntry, ScoreBreakdown } from '$lib/types/index.js';
+
+export interface BonusParams {
+	difficulty_rating: number;      // 1–5; default 3 (neutral)
+	challenge_multiplier: number;   // set_challenges.challenge_multiplier; default 1
+	team_score: number;             // team's score BEFORE this submission
+	leader_score: number;           // highest score among all teams right now
+	current_streak: number;         // team's consecutive-score streak
+	streak_thresholds: Array<{ streak: number; bonus: number }>;
+	elapsed_seconds: number | null; // seconds from attempt start to submit; null = unknown
+	speed_threshold_seconds: number | null; // null = no speed bonus for this challenge
+}
 
 export const VARIANT_FIELDS: Record<string, AnswerField[]> = {
 	normal:    ['artist', 'title', 'year'],
@@ -116,13 +127,40 @@ export function buildFieldResults(
 	});
 }
 
+export function computeBreakdown(base: number, bonus: BonusParams): ScoreBreakdown {
+	const difficulty_multiplier = bonus.difficulty_rating / 3;
+	const round_multiplier = bonus.challenge_multiplier;
+	const comeback_multiplier =
+		base > 0 && bonus.leader_score > 0 && bonus.team_score < bonus.leader_score * 0.5 ? 1.5 : 1.0;
+
+	// Streak bonus: highest threshold the current streak meets
+	let streak_bonus = 0;
+	for (const t of bonus.streak_thresholds) {
+		if (bonus.current_streak >= t.streak) streak_bonus = t.bonus;
+	}
+
+	// Speed bonus: flat 5 pts if submitted within threshold
+	const speed_bonus =
+		base > 0 &&
+		bonus.elapsed_seconds !== null &&
+		bonus.speed_threshold_seconds !== null &&
+		bonus.elapsed_seconds <= bonus.speed_threshold_seconds
+			? 5
+			: 0;
+
+	const final = Math.round(base * difficulty_multiplier * round_multiplier * comeback_multiplier) + streak_bonus + speed_bonus;
+
+	return { base, difficulty_multiplier, round_multiplier, comeback_multiplier, streak_bonus, speed_bonus, final };
+}
+
 export function scoreSubmission(
 	draftByTrack: Record<string, Record<string, string>>,
 	challengeTracks: Array<{ id: string; trackId: string }>,
 	trackDataMap: Map<string, TrackData>,
 	variantFields: AnswerField[],
 	fieldModes: Record<string, InputMode>,
-	fieldPoints: Record<string, number>
+	fieldPoints: Record<string, number>,
+	bonus?: BonusParams
 ): { answersArray: AnswerArrayEntry[]; result: Omit<ChallengeResult, 'submissionId' | 'isFinal'> & { status: SubmissionStatus } } {
 	const trackResults: TrackFieldResult[] = [];
 	const answersArray: AnswerArrayEntry[] = [];
@@ -151,12 +189,19 @@ export function scoreSubmission(
 		}
 	}
 
-	const total = trackResults.reduce((s, tr) => s + tr.total, 0);
+	const base = trackResults.reduce((s, tr) => s + tr.total, 0);
 	const maxTotal = trackResults.reduce((s, tr) => s + tr.maxTotal, 0);
-	const status: SubmissionStatus = total === maxTotal ? 'auto_correct' : 'auto_wrong';
+	const status: SubmissionStatus = base === maxTotal ? 'auto_correct' : 'auto_wrong';
+
+	const breakdown = bonus ? computeBreakdown(base, bonus) : undefined;
+
+	// Attach breakdown to the first answers entry so it's persisted in submissions.answers
+	if (breakdown && answersArray.length > 0) {
+		answersArray[0] = { ...answersArray[0], breakdown };
+	}
 
 	return {
 		answersArray,
-		result: { total, maxTotal, tracks: trackResults, status }
+		result: { total: base, maxTotal, tracks: trackResults, status, breakdown }
 	};
 }
