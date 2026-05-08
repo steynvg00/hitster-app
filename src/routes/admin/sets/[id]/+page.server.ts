@@ -51,14 +51,14 @@ export const actions: Actions = {
 	setChallenges: async ({ request, params, locals }) => {
 		const db = createAdminClient();
 		const formData = await request.formData();
-		// challenge_ids is a comma-separated ordered list
 		const raw = (formData.get('challenge_ids') as string | null) ?? '';
-		const challengeIds = raw
-			.split(',')
-			.map((s) => s.trim())
-			.filter(Boolean);
+		const challengeIds = raw.split(',').map((s) => s.trim()).filter(Boolean);
 
-		// Delete existing then re-insert in order
+		let multipliersMap: Record<string, number> = {};
+		try {
+			multipliersMap = JSON.parse((formData.get('multipliers_json') as string | null) ?? '{}');
+		} catch { /* ignore parse errors — default to 1 */ }
+
 		await db.from('set_challenges').delete().eq('set_id', params.id);
 
 		if (challengeIds.length > 0) {
@@ -66,6 +66,7 @@ export const actions: Actions = {
 				set_id: params.id,
 				challenge_id,
 				position: i,
+				challenge_multiplier: Math.max(1, parseInt(String(multipliersMap[challenge_id] ?? 1), 10) || 1),
 				created_by: locals.user?.id ?? null
 			}));
 			const { error } = await db.from('set_challenges').insert(rows);

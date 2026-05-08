@@ -9,7 +9,7 @@ export const load: PageServerLoad = async ({ url }) => {
 	// Find active sets that have at least one player joined
 	const { data: activeSets } = await db
 		.from('game_sets')
-		.select('id, name, team_count, play_state, total_timer_seconds, started_at')
+		.select('id, name, team_count, play_state, total_timer_seconds, started_at, scores_hidden')
 		.eq('status', 'active');
 
 	const setsWithPlayers: Array<{
@@ -19,6 +19,7 @@ export const load: PageServerLoad = async ({ url }) => {
 		play_state: 'joining' | 'playing' | 'recap';
 		total_timer_seconds: number | null;
 		started_at: string | null;
+		scores_hidden: boolean;
 		player_count: number;
 	}> = [];
 
@@ -32,6 +33,7 @@ export const load: PageServerLoad = async ({ url }) => {
 				setsWithPlayers.push({
 					...set,
 					play_state: (set.play_state ?? 'joining') as 'joining' | 'playing' | 'recap',
+					scores_hidden: (set as unknown as { scores_hidden?: boolean }).scores_hidden ?? false,
 					player_count: count!
 				});
 			}
@@ -125,6 +127,19 @@ export const load: PageServerLoad = async ({ url }) => {
 };
 
 export const actions: Actions = {
+	toggleScoresHidden: async ({ request }) => {
+		const db = createAdminClient();
+		const data = await request.formData();
+		const setId = data.get('set_id') as string;
+		if (!setId) return fail(400, { error: 'Missing set_id' });
+
+		const { data: gs } = await db.from('game_sets').select('scores_hidden').eq('id', setId).maybeSingle();
+		if (!gs) return fail(404, { error: 'Set not found' });
+
+		await db.from('game_sets').update({ scores_hidden: !(gs as unknown as { scores_hidden?: boolean }).scores_hidden }).eq('id', setId);
+		return { success: true };
+	},
+
 	resetTeamAttempt: async ({ request }) => {
 		const db = createAdminClient();
 		const data = await request.formData();

@@ -47,6 +47,11 @@ export const actions: Actions = {
 		const timer_seconds = parseInt(data.get('timer_seconds') as string, 10) || 60;
 		const variant = data.get('variant') as string;
 		const pointsRaw = (data.get('points_config') as string)?.trim();
+		const difficultyRaw = parseInt(data.get('difficulty_rating') as string, 10);
+		const difficulty_rating = difficultyRaw >= 1 && difficultyRaw <= 5 ? difficultyRaw : 3;
+		const speedRaw = (data.get('speed_threshold_seconds') as string | null)?.trim();
+		const speed_threshold_seconds = speedRaw ? parseInt(speedRaw, 10) || null : null;
+		const hint_text = (data.get('hint_text') as string | null)?.trim() || null;
 
 		let points_config: object;
 		try {
@@ -58,7 +63,8 @@ export const actions: Actions = {
 		if (!title) return fail(400, { error: 'Title is required' });
 
 		const { error: e } = await db.from('challenges').update({
-			title, stage_label, timer_seconds, variant: variant as never, points_config: points_config as never
+			title, stage_label, timer_seconds, variant: variant as never, points_config: points_config as never,
+			difficulty_rating, speed_threshold_seconds, hint_text
 		}).eq('id', params.id);
 		if (e) return fail(500, { error: e.message });
 		return { success: true, action: 'meta' };

@@ -8,7 +8,7 @@ export const load: PageServerLoad = async ({ params }) => {
 	if (!VARIANT_FIELDS[variant]) redirect(302, '/admin/variant-defaults');
 
 	const db = createAdminClient();
-	const { data: row } = await db.from('variant_defaults').select('points_config').eq('variant', variant).maybeSingle();
+	const { data: row } = await db.from('variant_defaults').select('points_config, streak_config').eq('variant', variant).maybeSingle();
 
 	const saved = (row?.points_config as Record<string, unknown> | null) ?? {};
 	const savedPoints = (saved.field_points ?? {}) as Record<string, number>;
@@ -18,7 +18,11 @@ export const load: PageServerLoad = async ({ params }) => {
 		points: savedPoints[f] ?? DEFAULT_FIELD_MAX[f] ?? 5
 	}));
 
-	return { variant, fields };
+	const streakConfigJson = row?.streak_config
+		? JSON.stringify(row.streak_config, null, 2)
+		: JSON.stringify({ thresholds: [{ streak: 3, bonus: 5 }, { streak: 5, bonus: 10 }] }, null, 2);
+
+	return { variant, fields, streakConfigJson };
 };
 
 export const actions: Actions = {
@@ -35,9 +39,20 @@ export const actions: Actions = {
 			field_points[f] = isNaN(v) || v < 0 ? 0 : v;
 		}
 
+		const streakRaw = (data.get('streak_config') as string | null)?.trim();
+		let streak_config: object | null = null;
+		if (streakRaw) {
+			try {
+				streak_config = JSON.parse(streakRaw);
+			} catch {
+				return fail(400, { error: 'streak_config must be valid JSON' });
+			}
+		}
+
 		const { error: upsertErr } = await db.from('variant_defaults').upsert({
 			variant,
-			points_config: { field_points }
+			points_config: { field_points },
+			streak_config: streak_config as never
 		});
 
 		if (upsertErr) return fail(500, { error: upsertErr.message });

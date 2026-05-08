@@ -68,6 +68,9 @@
 		selectedClipId = clipsForSelected[0]?.id ?? '';
 	});
 
+	// Difficulty star state
+	let difficulty = $state((data.challenge as unknown as { difficulty_rating?: number }).difficulty_rating ?? 3);
+
 	// Points JSON editor
 	let pointsJson = $state(JSON.stringify(data.challenge.points_config ?? {}, null, 2));
 
@@ -145,6 +148,34 @@
 					<label class="block text-xs text-zinc-400 mb-1">Timer (seconds)</label>
 					<input name="timer_seconds" type="number" value={data.challenge.timer_seconds} min="10" max="600" class="input-field" />
 				</div>
+			</div>
+			<div class="grid grid-cols-2 gap-3">
+				<div>
+					<label class="block text-xs text-zinc-400 mb-1">Difficulty</label>
+					<div class="flex gap-1 items-center">
+						{#each [1,2,3,4,5] as star}
+							<button
+								type="button"
+								onclick={() => difficulty = star}
+								class="text-2xl leading-none transition-colors {difficulty >= star ? 'text-amber-400' : 'text-zinc-700'} hover:text-amber-300"
+								aria-label="Difficulty {star}"
+							>★</button>
+						{/each}
+						<span class="ml-2 text-xs text-zinc-500">{difficulty}/5</span>
+					</div>
+					<input type="hidden" name="difficulty_rating" value={difficulty} />
+				</div>
+				<div>
+					<label class="block text-xs text-zinc-400 mb-1">Speed bonus threshold (sec, optional)</label>
+					<input name="speed_threshold_seconds" type="number" min="1" max="600" placeholder="none"
+						value={(data.challenge as unknown as { speed_threshold_seconds?: number | null }).speed_threshold_seconds ?? ''}
+						class="input-field" />
+				</div>
+			</div>
+			<div>
+				<label class="block text-xs text-zinc-400 mb-1">Hint text (optional — shown when team scans hint NFC tag)</label>
+				<textarea name="hint_text" rows="2" placeholder="Leave empty for no hint"
+					class="input-field text-sm">{(data.challenge as unknown as { hint_text?: string | null }).hint_text ?? ''}</textarea>
 			</div>
 			<div>
 				<label class="block text-xs text-zinc-400 mb-1">Points config (JSON)</label>

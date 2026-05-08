@@ -74,6 +74,21 @@
 		return data.allChallenges.find((c) => c.id === id)?.variant ?? '';
 	}
 
+	// ── Challenge multipliers (per selected challenge) ───────────────────────
+	let multipliers = $state<Record<string, number>>(
+		Object.fromEntries(
+			data.setChallenges.map((sc) => [sc.challenge_id, (sc as unknown as { challenge_multiplier?: number }).challenge_multiplier ?? 1])
+		)
+	);
+
+	// Ensure a new multiplier entry is added when a challenge is added
+	function addWithMultiplier(id: string) {
+		if (!selected.includes(id)) {
+			selected = [...selected, id];
+			if (!multipliers[id]) multipliers = { ...multipliers, [id]: 1 };
+		}
+	}
+
 	// ── Card state ────────────────────────────────────────────────────────────
 	let newSlug = $state('');
 	let savingChallenges = $state(false);
@@ -247,6 +262,7 @@
 		>
 			<!-- Hidden ordered list submitted on save -->
 			<input type="hidden" name="challenge_ids" value={selected.join(',')} />
+			<input type="hidden" name="multipliers_json" value={JSON.stringify(multipliers)} />
 
 			<!-- Selected (ordered) list -->
 			{#if selected.length > 0}
@@ -264,6 +280,19 @@
 							<div class="flex-1 min-w-0">
 								<div class="text-sm font-medium text-white truncate">{challengeTitle(id)}</div>
 								<div class="text-xs text-zinc-500">{challengeVariant(id)}</div>
+							</div>
+							<!-- Round multiplier -->
+							<div class="flex items-center gap-1 shrink-0">
+								<span class="text-xs text-zinc-500">×</span>
+								<select
+									class="rounded border border-zinc-700 bg-zinc-900 px-1 py-0.5 text-xs text-zinc-200 focus:outline-none"
+									value={multipliers[id] ?? 1}
+									onchange={(e) => { multipliers = { ...multipliers, [id]: parseInt((e.target as HTMLSelectElement).value) }; }}
+								>
+									{#each [1,2,3,4,5] as m}
+										<option value={m}>{m}×</option>
+									{/each}
+								</select>
 							</div>
 							<div class="flex gap-1">
 								<button
@@ -300,7 +329,7 @@
 					{#each available as c}
 						<button
 							type="button"
-							onclick={() => add(c.id)}
+							onclick={() => addWithMultiplier(c.id)}
 							class="flex w-full items-center gap-3 border-b border-zinc-700/50 px-3 py-2 text-left last:border-0 hover:bg-zinc-700/50 transition-colors"
 						>
 							<span class="text-amber-400 text-sm">+</span>

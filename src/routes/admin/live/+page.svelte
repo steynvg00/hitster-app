@@ -22,6 +22,7 @@
 	// ── Polling state ─────────────────────────────────────────────────────────
 	let pollingActive = $state(false);
 	let lastPolledAt = $state<Date | null>(null);
+	let scoresHidden = $state(data.selectedSet?.scores_hidden ?? false);
 
 	// ── Live clock for per-attempt timer countdown ────────────────────────────
 	let now = $state(Date.now());
@@ -129,6 +130,7 @@
 		attempts = [...a];
 		submissions = [...s];
 		activity = [...ac];
+		scoresHidden = untrack(() => data.selectedSet)?.scores_hidden ?? false;
 
 		openPopover = null;
 
@@ -320,7 +322,7 @@
 			</div>
 		{:else}
 			<!-- Single set: just show heading -->
-			<div class="mb-5 flex items-center gap-3">
+			<div class="mb-5 flex items-center gap-3 flex-wrap">
 				<h2 class="text-lg font-bold text-white">{data.selectedSet?.name}</h2>
 				<span
 					class="rounded-full px-2 py-0.5 text-xs font-semibold
@@ -332,6 +334,15 @@
 				>
 					{data.selectedSet?.play_state}
 				</span>
+				{#if data.selectedSet}
+					<form method="POST" action="?/toggleScoresHidden" use:enhance={() => async ({ update }) => { scoresHidden = !scoresHidden; await update({ reset: false }); }}>
+						<input type="hidden" name="set_id" value={data.selectedSet.id} />
+						<button type="submit" class="rounded-full px-2 py-0.5 text-xs font-semibold border transition-colors
+							{scoresHidden ? 'border-amber-600 bg-amber-900/30 text-amber-400' : 'border-zinc-700 text-zinc-400 hover:border-zinc-500'}">
+							{scoresHidden ? 'Scores hidden' : 'Hide scores'}
+						</button>
+					</form>
+				{/if}
 			</div>
 		{/if}
 
