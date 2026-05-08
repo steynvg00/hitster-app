@@ -16,6 +16,12 @@
 
 	const themes: { name: ThemeName; label: string; description: string; preview: string }[] = [
 		{
+			name: 'classic',
+			label: 'Classic',
+			description: 'Clean utilitarian. No effects.',
+			preview: 'bg-zinc-900 border-zinc-700'
+		},
+		{
 			name: 'tactical',
 			label: 'Tactical Console',
 			description: 'Clean angular UI, dot-grid background, clipped tile corners.',
@@ -65,7 +71,7 @@
 			Applies to the host dashboard only. Other admin pages stay neutral.
 		</p>
 
-		<div class="grid grid-cols-2 gap-4 sm:grid-cols-3">
+		<div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
 			{#each themes as theme}
 				<button
 					type="button"
@@ -88,7 +94,10 @@
 										{theme.name === 'max_defqon'
 										? 'bg-gradient-to-r from-fuchsia-400 to-blue-400 bg-clip-text text-transparent'
 										: ''}
-										{theme.name === 'tactical' ? 'text-[#8ab4f8]' : ''}"
+										{theme.name === 'tactical' ? 'text-[#8ab4f8]' : ''}
+										{theme.name === 'classic' ? 'text-white' : ''}
+										{theme.name === 'mainstage' ? 'text-[#e0e8ff]' : ''}
+										{theme.name === 'showtime' ? 'text-[#fca5a5]' : ''}"
 								>12</span>
 							</div>
 							<div class="text-[10px] font-semibold uppercase tracking-widest text-zinc-500">

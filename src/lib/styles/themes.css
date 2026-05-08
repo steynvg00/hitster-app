@@ -1,3 +1,10 @@
+/* ══════════════════════════════════════════════
+   THEME 0 — classic (intentional no-op)
+══════════════════════════════════════════════ */
+
+/* classic: no background, no effects — base zinc-950 shows through */
+.theme-classic .theme-bg { display: none; }
+
 /* ── Base ── */
 .dashboard-theme {
   position: relative;
