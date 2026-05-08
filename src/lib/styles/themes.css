@@ -464,6 +464,140 @@
 }
 
 /* ══════════════════════════════════════════════
+   THEME 6 — showtime
+══════════════════════════════════════════════ */
+
+/* Cycling LED glow color */
+@keyframes showtime-led-cycle {
+  0%   { --showtime-led-color: #dc2626; }
+  17%  { --showtime-led-color: #d946ef; }
+  33%  { --showtime-led-color: #7c3aed; }
+  50%  { --showtime-led-color: #0ea5e9; }
+  67%  { --showtime-led-color: #10b981; }
+  83%  { --showtime-led-color: #f59e0b; }
+  100% { --showtime-led-color: #dc2626; }
+}
+
+@keyframes showtime-glow-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 1.5; }
+}
+
+@property --showtime-led-color {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #dc2626;
+}
+
+.theme-showtime .theme-bg {
+  background: #050505;
+}
+
+.showtime-stage {
+  position: absolute;
+  inset: 0;
+  --showtime-led-color: #dc2626;
+  animation: showtime-led-cycle 12s linear infinite;
+}
+
+.showtime-stage svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* LED glow on structural outlines */
+.showtime-led-glow {
+  filter: drop-shadow(0 0 6px var(--showtime-led-color, #dc2626));
+  animation: showtime-glow-pulse 4s ease-in-out infinite;
+}
+
+/* Spotlight beam sweep */
+.showtime-spotlight {
+  position: absolute;
+  top: 0;
+  left: -40%;
+  width: 20%;
+  height: 100%;
+  background: linear-gradient(
+    100deg,
+    transparent 40%,
+    rgba(255, 240, 200, 0.06) 48%,
+    rgba(255, 240, 200, 0.18) 50%,
+    rgba(255, 240, 200, 0.06) 52%,
+    transparent 60%
+  );
+  animation: showtime-spotlight-sweep 25s ease-in-out infinite;
+  will-change: transform;
+  pointer-events: none;
+}
+
+@keyframes showtime-spotlight-sweep {
+  0%, 10%   { transform: translateX(0%); opacity: 0; }
+  12%        { opacity: 1; }
+  45%        { transform: translateX(600%); opacity: 1; }
+  47%, 100%  { transform: translateX(600%); opacity: 0; }
+}
+
+/* Flame throwers */
+.showtime-flame {
+  position: absolute;
+  bottom: 0;
+  width: 40px;
+  height: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.showtime-flame-left  { left: calc(50% - 180px); }
+.showtime-flame-right { left: calc(50% + 140px); }
+
+.showtime-flame-inner {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 40px;
+  border-radius: 50% 50% 20% 20%;
+  background: linear-gradient(to top, #fbbf24 0%, #f97316 30%, #ef4444 60%, rgba(239,68,68,0) 100%);
+  transform-origin: center bottom;
+  opacity: 0;
+}
+
+.showtime-flame--active .showtime-flame-inner {
+  animation: showtime-flame-burst 1.2s ease-out forwards;
+}
+
+@keyframes showtime-flame-burst {
+  0%   { height: 0px;  opacity: 0.9; transform: scaleX(1); }
+  20%  { height: 120px; opacity: 1;   transform: scaleX(0.85); }
+  60%  { height: 180px; opacity: 0.8; transform: scaleX(0.6); }
+  100% { height: 200px; opacity: 0;   transform: scaleX(0.3); }
+}
+
+/* Status panel sits inside the LED wall zone */
+.theme-showtime .dash-status {
+  background: rgba(8, 2, 2, 0.92) !important;
+  border: 2px solid var(--showtime-led-color, #dc2626) !important;
+  box-shadow: 0 0 20px rgba(220, 38, 38, 0.15), inset 0 0 30px rgba(0,0,0,0.5) !important;
+  transition: border-color 0.5s, box-shadow 0.5s;
+}
+
+.theme-showtime .dash-tile {
+  background: rgba(8, 2, 2, 0.88) !important;
+  border-color: rgba(220, 38, 38, 0.25) !important;
+  transition: border-color 0.5s;
+}
+
+.theme-showtime .dash-tile:hover {
+  border-color: rgba(220, 38, 38, 0.6) !important;
+  box-shadow: 0 0 12px rgba(220, 38, 38, 0.2);
+}
+
+.theme-showtime .dash-tile-count {
+  color: #fca5a5 !important;
+  font-weight: 900 !important;
+}
+
+/* ══════════════════════════════════════════════
    REDUCED MOTION
 ══════════════════════════════════════════════ */
 
@@ -507,5 +641,24 @@
   .mainstage-beam-b,
   .mainstage-beam-c {
     animation: none;
+  }
+
+  .showtime-stage {
+    animation: none;
+    --showtime-led-color: #dc2626;
+  }
+
+  .showtime-led-glow {
+    animation: none;
+  }
+
+  .showtime-spotlight {
+    animation: none;
+    display: none;
+  }
+
+  .showtime-flame--active .showtime-flame-inner {
+    animation: none;
+    opacity: 0;
   }
 }
