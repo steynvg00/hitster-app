@@ -314,6 +314,156 @@
 }
 
 /* ══════════════════════════════════════════════
+   THEME 5 — mainstage
+══════════════════════════════════════════════ */
+
+.theme-mainstage .theme-bg {
+  background: linear-gradient(to bottom, #0a0e1a 0%, #050709 100%);
+}
+
+/* Haze layer — bottom 35% */
+.mainstage-haze {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 35%;
+  background: radial-gradient(ellipse at 50% 100%, rgba(60, 60, 80, 0.4), transparent);
+  animation: haze-drift 40s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+@keyframes haze-drift {
+  0%   { transform: translateX(-20px); }
+  100% { transform: translateX(20px); }
+}
+
+/* Ambient particles — tiny white squares rising */
+.mainstage-particles {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.mainstage-particles span {
+  position: absolute;
+  bottom: -6px;
+  width: 2px;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.4);
+  left: calc(var(--i) * 7.14%);
+  animation: mainstage-particle-rise calc(8s + var(--i) * 0.5s) linear infinite;
+  animation-delay: calc(var(--i) * 0.62s);
+}
+
+@keyframes mainstage-particle-rise {
+  0%   { transform: translateY(0); opacity: 0.5; }
+  80%  { opacity: 0.2; }
+  100% { transform: translateY(-100vh); opacity: 0; }
+}
+
+/* Light cones from truss fixtures */
+.mainstage-beams {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 55%;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.mainstage-beams svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* Slow beam rotation animations */
+@keyframes beam-sway-a {
+  0%, 100% { transform: rotate(-5deg); }
+  50%       { transform: rotate(5deg); }
+}
+@keyframes beam-sway-b {
+  0%, 100% { transform: rotate(4deg); }
+  50%       { transform: rotate(-4deg); }
+}
+@keyframes beam-sway-c {
+  0%, 100% { transform: rotate(-3deg); }
+  50%       { transform: rotate(6deg); }
+}
+
+.mainstage-beam-a { transform-origin: 50% 0; animation: beam-sway-a 25s ease-in-out infinite; }
+.mainstage-beam-b { transform-origin: 50% 0; animation: beam-sway-b 28s ease-in-out infinite; }
+.mainstage-beam-c { transform-origin: 50% 0; animation: beam-sway-c 22s ease-in-out infinite; }
+
+/* Status panel — industrial LED screen frame */
+.theme-mainstage .dash-status {
+  border: 8px solid #1a1a1a !important;
+  box-shadow: 0 0 0 1px #0a0a0a, inset 0 0 0 1px #2a2a2a !important;
+  position: relative;
+  overflow: hidden;
+}
+
+.theme-mainstage .dash-status::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-linear-gradient(0deg, transparent 0, transparent 2px, rgba(255,255,255,0.018) 2px, rgba(255,255,255,0.018) 3px),
+    repeating-linear-gradient(90deg, transparent 0, transparent 2px, rgba(255,255,255,0.018) 2px, rgba(255,255,255,0.018) 3px);
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* Scanlines */
+.theme-mainstage .dash-status::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent 0px,
+    transparent 3px,
+    rgba(0, 0, 0, 0.07) 3px,
+    rgba(0, 0, 0, 0.07) 4px
+  );
+  pointer-events: none;
+  z-index: 2;
+}
+
+.theme-mainstage .dash-status * {
+  position: relative;
+  z-index: 3;
+}
+
+.theme-mainstage .dash-tile {
+  background: rgba(8, 10, 22, 0.92) !important;
+  border: 2px solid #1c1c1c !important;
+  box-shadow: inset 0 0 0 1px #2a2a2a;
+}
+
+.theme-mainstage .dash-tile::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent 0px,
+    transparent 3px,
+    rgba(0, 0, 0, 0.04) 3px,
+    rgba(0, 0, 0, 0.04) 4px
+  );
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+.theme-mainstage .dash-tile-count {
+  color: #e0e8ff !important;
+  text-shadow: 0 0 12px rgba(200, 220, 255, 0.6);
+  font-weight: 900 !important;
+}
+
+/* ══════════════════════════════════════════════
    REDUCED MOTION
 ══════════════════════════════════════════════ */
 
@@ -348,6 +498,14 @@
   }
 
   .theme-max_defqon .theme-bg {
+    animation: none;
+  }
+
+  .mainstage-haze,
+  .mainstage-particles span,
+  .mainstage-beam-a,
+  .mainstage-beam-b,
+  .mainstage-beam-c {
     animation: none;
   }
 }

@@ -137,6 +137,66 @@
 					<span style="--i:{i}"></span>
 				{/each}
 			</div>
+		{:else if themeStore.current === 'mainstage'}
+			<!-- Stage truss SVG + light cones -->
+			<div class="mainstage-beams">
+				<svg viewBox="0 0 1200 420" preserveAspectRatio="xMidYMin slice" xmlns="http://www.w3.org/2000/svg">
+					<defs>
+						<linearGradient id="beam-white" x1="0" y1="0" x2="0" y2="1">
+							<stop offset="0%" stop-color="rgba(255,255,255,0.18)"/>
+							<stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+						</linearGradient>
+						<linearGradient id="beam-red" x1="0" y1="0" x2="0" y2="1">
+							<stop offset="0%" stop-color="rgba(220,38,38,0.2)"/>
+							<stop offset="100%" stop-color="rgba(220,38,38,0)"/>
+						</linearGradient>
+						<linearGradient id="beam-blue" x1="0" y1="0" x2="0" y2="1">
+							<stop offset="0%" stop-color="rgba(59,130,246,0.2)"/>
+							<stop offset="100%" stop-color="rgba(59,130,246,0)"/>
+						</linearGradient>
+					</defs>
+					<!-- Light cones -->
+					<polygon class="mainstage-beam-a" points="180,72 160,400 200,400" fill="url(#beam-white)" style="mix-blend-mode:screen"/>
+					<polygon class="mainstage-beam-b" points="360,72 310,420 410,420" fill="url(#beam-red)" style="mix-blend-mode:screen"/>
+					<polygon class="mainstage-beam-a" points="600,72 530,420 670,420" fill="url(#beam-white)" style="mix-blend-mode:screen"/>
+					<polygon class="mainstage-beam-c" points="840,72 790,420 890,420" fill="url(#beam-blue)" style="mix-blend-mode:screen"/>
+					<polygon class="mainstage-beam-b" points="1020,72 1000,400 1040,400" fill="url(#beam-white)" style="mix-blend-mode:screen"/>
+					<!-- Top truss horizontal beam -->
+					<rect x="60" y="56" width="1080" height="18" fill="#2a2a2a" rx="2"/>
+					<rect x="60" y="68" width="1080" height="4" fill="#1a1a1a"/>
+					<!-- X-bracing on truss -->
+					{#each Array.from({ length: 18 }, (_, i) => i) as i}
+						<line x1={60 + i * 60} y1="56" x2={60 + (i + 1) * 60} y2="74" stroke="#3a3a3a" stroke-width="1.5"/>
+						<line x1={60 + i * 60} y1="74" x2={60 + (i + 1) * 60} y2="56" stroke="#3a3a3a" stroke-width="1.5"/>
+					{/each}
+					<!-- Hanging light fixtures -->
+					{#each [180, 360, 600, 840, 1020] as x}
+						<rect x={x - 5} y="74" width="10" height="20" fill="#2a2a2a"/>
+						<ellipse cx={x} cy="100" rx="12" ry="8" fill="#1e1e1e" stroke="#3a3a3a" stroke-width="1"/>
+						<ellipse cx={x} cy="100" rx="5" ry="3" fill="#dc2626" opacity="0.7"/>
+					{/each}
+					<!-- Left side tower -->
+					<rect x="60" y="56" width="10" height="320" fill="#2a2a2a" rx="2"/>
+					{#each Array.from({ length: 10 }, (_, i) => i) as i}
+						<line x1="60" y1={56 + i * 32} x2="70" y2={56 + (i + 1) * 32} stroke="#3a3a3a" stroke-width="1.5"/>
+						<line x1="70" y1={56 + i * 32} x2="60" y2={56 + (i + 1) * 32} stroke="#3a3a3a" stroke-width="1.5"/>
+					{/each}
+					<!-- Right side tower -->
+					<rect x="1130" y="56" width="10" height="320" fill="#2a2a2a" rx="2"/>
+					{#each Array.from({ length: 10 }, (_, i) => i) as i}
+						<line x1="1130" y1={56 + i * 32} x2="1140" y2={56 + (i + 1) * 32} stroke="#3a3a3a" stroke-width="1.5"/>
+						<line x1="1140" y1={56 + i * 32} x2="1130" y2={56 + (i + 1) * 32} stroke="#3a3a3a" stroke-width="1.5"/>
+					{/each}
+				</svg>
+			</div>
+			<!-- Smoke/haze -->
+			<div class="mainstage-haze"></div>
+			<!-- Ambient particles -->
+			<div class="mainstage-particles">
+				{#each Array.from({ length: 14 }, (_, i) => i) as i}
+					<span style="--i:{i}"></span>
+				{/each}
+			</div>
 		{/if}
 	</div>
 

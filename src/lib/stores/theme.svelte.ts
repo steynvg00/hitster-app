@@ -1,6 +1,6 @@
-export type ThemeName = 'led_stage' | 'sound_reactive' | 'tactical' | 'max_defqon';
+export type ThemeName = 'led_stage' | 'sound_reactive' | 'tactical' | 'max_defqon' | 'mainstage' | 'showtime';
 
-const VALID: readonly ThemeName[] = ['led_stage', 'sound_reactive', 'tactical', 'max_defqon'];
+const VALID: readonly ThemeName[] = ['led_stage', 'sound_reactive', 'tactical', 'max_defqon', 'mainstage', 'showtime'];
 const KEY = 'dashboard_theme';
 
 let _theme = $state<ThemeName>('tactical');

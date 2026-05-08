@@ -38,6 +38,18 @@
 			label: 'Maximum Defqon',
 			description: 'Rotating UV gradient, laser sweep, particles, maximum glow.',
 			preview: 'bg-[#0a0018] border-[rgba(160,60,255,0.6)]'
+		},
+		{
+			name: 'mainstage',
+			label: 'Mainstage',
+			description: 'Festival stage depth — truss, light cones, smoke haze, particles.',
+			preview: 'bg-[#0a0e1a] border-[rgba(60,80,140,0.5)]'
+		},
+		{
+			name: 'showtime',
+			label: 'Showtime',
+			description: 'Illustrated stage backdrop with cycling LED glow, flames, confetti.',
+			preview: 'bg-[#0a0a0a] border-[rgba(220,38,38,0.5)]'
 		}
 	];
 </script>
@@ -53,7 +65,7 @@
 			Applies to the host dashboard only. Other admin pages stay neutral.
 		</p>
 
-		<div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
+		<div class="grid grid-cols-2 gap-4 sm:grid-cols-3">
 			{#each themes as theme}
 				<button
 					type="button"
@@ -96,6 +108,40 @@
 									></div>
 								{/each}
 							</div>
+						{:else if theme.name === 'mainstage'}
+							<svg class="absolute inset-0 h-full w-full" viewBox="0 0 200 128" preserveAspectRatio="xMidYMin slice" xmlns="http://www.w3.org/2000/svg">
+								<defs>
+									<linearGradient id="ms-cone" x1="0" y1="0" x2="0" y2="1">
+										<stop offset="0%" stop-color="rgba(255,255,255,0.2)"/>
+										<stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+									</linearGradient>
+								</defs>
+								<polygon points="60,18 44,100 76,100" fill="url(#ms-cone)"/>
+								<polygon points="100,18 80,110 120,110" fill="url(#ms-cone)" opacity="0.7"/>
+								<polygon points="140,18 124,100 156,100" fill="url(#ms-cone)"/>
+								<rect x="10" y="14" width="180" height="6" fill="#2a2a2a" rx="1"/>
+								<rect x="10" y="14" width="4" height="60" fill="#2a2a2a"/>
+								<rect x="186" y="14" width="4" height="60" fill="#2a2a2a"/>
+								<ellipse cx="60" cy="22" rx="4" ry="3" fill="#1e1e1e" stroke="#3a3a3a" stroke-width="0.5"/>
+								<ellipse cx="100" cy="22" rx="4" ry="3" fill="#1e1e1e" stroke="#3a3a3a" stroke-width="0.5"/>
+								<ellipse cx="140" cy="22" rx="4" ry="3" fill="#1e1e1e" stroke="#3a3a3a" stroke-width="0.5"/>
+								<ellipse cx="60" cy="22" rx="2" ry="1.5" fill="#dc2626" opacity="0.8"/>
+								<ellipse cx="100" cy="22" rx="2" ry="1.5" fill="#dc2626" opacity="0.8"/>
+								<ellipse cx="140" cy="22" rx="2" ry="1.5" fill="#dc2626" opacity="0.8"/>
+							</svg>
+						{:else if theme.name === 'showtime'}
+							<svg class="absolute inset-0 h-full w-full" viewBox="0 0 200 128" preserveAspectRatio="xMidYMin slice" xmlns="http://www.w3.org/2000/svg">
+								<rect x="50" y="20" width="100" height="70" fill="#0a0a0a" rx="2"/>
+								<rect x="50" y="20" width="100" height="70" fill="none" stroke="#dc2626" stroke-width="1.5" rx="2" style="filter:drop-shadow(0 0 4px #dc2626)"/>
+								<rect x="54" y="24" width="92" height="62" fill="rgba(20,4,4,0.8)" rx="1"/>
+								<rect x="30" y="14" width="140" height="5" fill="#2a2a2a" rx="1"/>
+								<rect x="30" y="14" width="4" height="90" fill="#2a2a2a"/>
+								<rect x="166" y="14" width="4" height="90" fill="#2a2a2a"/>
+								<rect x="8" y="40" width="18" height="60" fill="#1a1a1a" rx="2" stroke="#2a2a2a" stroke-width="0.5"/>
+								<rect x="174" y="40" width="18" height="60" fill="#1a1a1a" rx="2" stroke="#2a2a2a" stroke-width="0.5"/>
+								<rect x="70" y="100" width="60" height="20" fill="#111" rx="2"/>
+								<text x="100" y="60" text-anchor="middle" font-size="10" font-weight="bold" fill="#dc2626" opacity="0.8" style="font-family:monospace">MIXUP!</text>
+							</svg>
 						{/if}
 					</div>
 
