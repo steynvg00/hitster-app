@@ -115,7 +115,7 @@ export const actions: Actions = {
 		return { success: true, revealedIndex: newIndex - 1 };
 	},
 
-	// End the set: set inactive, mark ended, signal players to go to thanks
+	// End the set: set inactive, clear all game state so dashboard returns to "No game running"
 	endAndReset: async ({ params }) => {
 		const db = createAdminClient();
 
@@ -123,8 +123,10 @@ export const actions: Actions = {
 			db.from('players').update({ set_id: null, team_id: null }).eq('set_id', params.id),
 			db.from('game_sets').update({
 				status: 'inactive',
-				recap_state: 'complete',
-				ended_at: new Date().toISOString(),
+				play_state: 'joining',
+				started_at: null,
+				ended_at: null,
+				recap_state: null as never,
 				recap_ranking: null as never,
 				recap_reveal_index: 0,
 				assignment_slots: [] as never,
