@@ -95,15 +95,40 @@ export const actions: Actions = {
 			db.from('review_requests').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
 			db.from('activity_log').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
 			db.from('challenge_attempts').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
-			db.from('teams').update({ score: 0 }).neq('id', '00000000-0000-0000-0000-000000000000')
+			db.from('teams').update({ score: 0, current_streak: 0 } as never).neq('id', '00000000-0000-0000-0000-000000000000')
 		]);
 
-		// Re-activate any challenges that were auto-completed
-		await db
-			.from('challenges')
-			.update({ status: 'active', is_active: true })
-			.neq('status', 'active');
+		await db.from('challenges').update({ status: 'active', is_active: true }).neq('status', 'active');
 
 		return { success: true, action: 'resetEverything' };
+	},
+
+	uploadPhoto: async ({ request }) => {
+		const db = createAdminClient();
+		const formData = await request.formData();
+		const teamId = formData.get('team_id') as string | null;
+		const file = formData.get('photo') as File | null;
+
+		if (!teamId) return fail(400, { error: 'Missing team_id' });
+		if (!file || file.size === 0) return fail(400, { error: 'No file provided' });
+		if (!file.type.startsWith('image/')) return fail(400, { error: 'File must be an image' });
+		if (file.size > 2 * 1024 * 1024) return fail(400, { error: 'Image must be ≤ 2 MB' });
+
+		const ext = file.name.split('.').pop() ?? 'jpg';
+		const path = `${teamId}.${ext}`;
+
+		const { error: uploadErr } = await db.storage
+			.from('team-photos')
+			.upload(path, file, { contentType: file.type, upsert: true });
+
+		if (uploadErr) return fail(500, { error: `Upload failed: ${uploadErr.message}` });
+
+		const { data: urlData } = db.storage.from('team-photos').getPublicUrl(path);
+		const photo_url = urlData.publicUrl;
+
+		const { error: updateErr } = await db.from('teams').update({ photo_url } as never).eq('id', teamId);
+		if (updateErr) return fail(500, { error: updateErr.message });
+
+		return { success: true };
 	}
 };

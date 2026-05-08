@@ -21,6 +21,7 @@
 	let confirmReset = $state(false);
 	let editingNameTeam = $state<string | null>(null);
 	let editingNameValue = $state('');
+	let uploadingTeam = $state<string | null>(null);
 
 	$effect(() => {
 		if (form?.success) {
@@ -30,6 +31,7 @@
 			confirmReset = false;
 			editingNameTeam = null;
 			editingNameValue = '';
+			uploadingTeam = null;
 		}
 	});
 
@@ -86,11 +88,20 @@
 		{#each data.teams as team (team.id)}
 			<div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
 				<div class="flex items-center gap-4">
-					<!-- Color swatch -->
-					<div
-						class="w-3 h-10 rounded-full shrink-0"
-						style="background-color: {teamColorHex[team.color] ?? '#666'}"
-					></div>
+					<!-- Team avatar (photo or color swatch) -->
+					<div class="relative shrink-0">
+						{#if (team as unknown as { photo_url?: string | null }).photo_url}
+							<img src={(team as unknown as { photo_url?: string | null }).photo_url!}
+								alt={team.display_name}
+								class="h-10 w-10 rounded-full object-cover border-2"
+								style="border-color: {teamColorHex[team.color] ?? '#666'};" />
+						{:else}
+							<div class="h-10 w-10 rounded-full flex items-center justify-center text-sm font-bold text-white border-2"
+								style="background-color: {teamColorHex[team.color] ?? '#666'}33; border-color: {teamColorHex[team.color] ?? '#666'}66;">
+								{team.display_name[0]?.toUpperCase() ?? '?'}
+							</div>
+						{/if}
+					</div>
 
 					<div class="flex-1">
 						{#if editingNameTeam === team.id}
@@ -115,12 +126,18 @@
 
 					<div class="text-3xl font-black text-white tabular-nums">{team.score}</div>
 
-					<div class="flex gap-2">
+					<div class="flex gap-2 flex-wrap">
 						<button
 							onclick={() => startEditName(team)}
 							class="text-sm border border-zinc-700 text-zinc-300 hover:border-zinc-400 px-3 py-1.5 rounded-lg transition-colors"
 						>
 							Name
+						</button>
+						<button
+							onclick={() => uploadingTeam = uploadingTeam === team.id ? null : team.id}
+							class="text-sm border border-zinc-700 text-zinc-300 hover:border-amber-400 hover:text-amber-400 px-3 py-1.5 rounded-lg transition-colors"
+						>
+							Photo
 						</button>
 						<button
 							onclick={() => startAdjust(team)}
@@ -141,6 +158,32 @@
 						</form>
 					</div>
 				</div>
+
+				<!-- Photo upload panel -->
+				{#if uploadingTeam === team.id}
+					<div class="mt-3 pt-3 border-t border-zinc-800">
+						<form
+							method="POST"
+							action="?/uploadPhoto"
+							enctype="multipart/form-data"
+							use:enhance={() => async ({ update }) => { uploadingTeam = null; await update(); }}
+						>
+							<input type="hidden" name="team_id" value={team.id} />
+							<div class="flex gap-2 items-center flex-wrap">
+								<input
+									name="photo"
+									type="file"
+									accept="image/*"
+									required
+									class="flex-1 text-sm text-zinc-300 file:mr-3 file:rounded-lg file:border-0 file:bg-zinc-700 file:px-3 file:py-1.5 file:text-xs file:text-zinc-200 file:cursor-pointer min-w-0"
+								/>
+								<button type="submit" class="btn-primary text-xs whitespace-nowrap">Upload</button>
+								<button type="button" onclick={() => uploadingTeam = null} class="btn-ghost text-xs">Cancel</button>
+							</div>
+							<p class="mt-1 text-xs text-zinc-600">Max 2 MB, any image format. Stored in team-photos bucket.</p>
+						</form>
+					</div>
+				{/if}
 
 				<!-- Adjust score panel -->
 				{#if adjustingTeam === team.id}
