@@ -1,58 +1,126 @@
 import { fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
+import { TEAM_COLOR_ORDER } from '$lib/server/randomize';
 
-export const load: PageServerLoad = async () => {
+export const load: PageServerLoad = async ({ url }) => {
 	const db = createAdminClient();
 
-	const [teamsResult, challengesResult, subsResult, activityResult] = await Promise.all([
-		db.from('teams').select('*').order('score', { ascending: false }),
-		db.from('challenges').select('*').eq('status', 'active'),
-		db.from('submissions').select('team_id, challenge_id, score, status').order('submitted_at', { ascending: false }),
-		db.from('activity_log').select('*').order('created_at', { ascending: false }).limit(30)
+	// Find active sets that have at least one player joined
+	const { data: activeSets } = await db
+		.from('game_sets')
+		.select('id, name, team_count, play_state, total_timer_seconds, started_at')
+		.eq('status', 'active');
+
+	const setsWithPlayers: Array<{
+		id: string;
+		name: string;
+		team_count: number;
+		play_state: 'joining' | 'playing' | 'recap';
+		total_timer_seconds: number | null;
+		started_at: string | null;
+		player_count: number;
+	}> = [];
+
+	await Promise.all(
+		(activeSets ?? []).map(async (set) => {
+			const { count } = await db
+				.from('players')
+				.select('*', { count: 'exact', head: true })
+				.eq('set_id', set.id);
+			if ((count ?? 0) > 0) {
+				setsWithPlayers.push({
+					...set,
+					play_state: (set.play_state ?? 'joining') as 'joining' | 'playing' | 'recap',
+					player_count: count!
+				});
+			}
+		})
+	);
+
+	if (setsWithPlayers.length === 0) {
+		return {
+			activeSets: setsWithPlayers,
+			selectedSetId: null,
+			selectedSet: null,
+			teams: [],
+			players: [],
+			challenges: [],
+			attempts: [],
+			submissions: [],
+			activity: []
+		};
+	}
+
+	// Determine selected set from URL param (fall back to first)
+	const paramSetId = url.searchParams.get('set');
+	const validSet = setsWithPlayers.find((s) => s.id === paramSetId);
+	const selectedSetId = validSet ? paramSetId! : setsWithPlayers[0].id;
+	const selectedSet = validSet ?? setsWithPlayers[0];
+
+	// Load teams scoped to this set's team_count
+	const scopedColors = TEAM_COLOR_ORDER.slice(0, selectedSet.team_count);
+
+	const [{ data: teamRows }, { data: playerRows }, { data: setChallengeRows }] = await Promise.all([
+		db.from('teams').select('id, color, display_name, score').in('color', scopedColors),
+		db.from('players').select('id, display_name, photo_url, team_id').eq('set_id', selectedSetId),
+		db
+			.from('set_challenges')
+			.select('id, challenge_id, position')
+			.eq('set_id', selectedSetId)
+			.order('position')
 	]);
 
-	const teams = teamsResult.data ?? [];
-	const activeChallenges = challengesResult.data ?? [];
-	const subs = subsResult.data ?? [];
-	const activity = activityResult.data ?? [];
+	const teams = (teamRows ?? []).sort(
+		(a, b) =>
+			TEAM_COLOR_ORDER.indexOf(a.color as (typeof TEAM_COLOR_ORDER)[number]) -
+			TEAM_COLOR_ORDER.indexOf(b.color as (typeof TEAM_COLOR_ORDER)[number])
+	);
 
-	const activeChallengeIds = activeChallenges.map((c) => c.id);
+	const challengeIds = (setChallengeRows ?? []).map((sc) => sc.challenge_id);
+	const positionMap = new Map((setChallengeRows ?? []).map((sc) => [sc.challenge_id, sc.position]));
 
-	// Load all attempts for active challenges
-	const attemptsResult = activeChallengeIds.length
-		? await db
-				.from('challenge_attempts')
-				.select('*')
-				.in('challenge_id', activeChallengeIds)
-		: { data: [] as never[] };
-	const attempts = attemptsResult.data ?? [];
+	const [challengeResult, attemptsResult, subsResult, activityResult] = await Promise.all([
+		challengeIds.length
+			? db
+					.from('challenges')
+					.select('id, title, variant, timer_seconds, stage_label, status')
+					.in('id', challengeIds)
+			: { data: [] as never[] },
+		challengeIds.length
+			? db.from('challenge_attempts').select('*').in('challenge_id', challengeIds)
+			: { data: [] as never[] },
+		challengeIds.length
+			? db
+					.from('submissions')
+					.select('team_id, challenge_id, score, status, is_final')
+					.in('challenge_id', challengeIds)
+			: { data: [] as never[] },
+		teams.length
+			? db
+					.from('activity_log')
+					.select('*')
+					.in('team_id', teams.map((t) => t.id))
+					.order('created_at', { ascending: false })
+					.limit(30)
+			: { data: [] as never[] }
+	]);
 
-	// Which teams submitted to which active challenge
-	const activeChallengeIdSet = new Set(activeChallengeIds);
-	const activeSubs = subs.filter((s) => activeChallengeIdSet.has(s.challenge_id));
-
-	const submittedMap: Record<string, Set<string>> = {};
-	for (const s of activeSubs) {
-		if (!submittedMap[s.challenge_id]) submittedMap[s.challenge_id] = new Set();
-		submittedMap[s.challenge_id].add(s.team_id);
-	}
-
-	// Group attempts by challenge
-	const attemptsByChallenge: Record<string, typeof attempts> = {};
-	for (const a of attempts) {
-		if (!attemptsByChallenge[a.challenge_id]) attemptsByChallenge[a.challenge_id] = [];
-		attemptsByChallenge[a.challenge_id].push(a);
-	}
+	// Sort challenges by their position in the set
+	const challenges = (challengeResult.data ?? []).sort(
+		(a, b) => (positionMap.get(a.id) ?? 0) - (positionMap.get(b.id) ?? 0)
+	);
 
 	return {
+		activeSets: setsWithPlayers,
+		selectedSetId,
+		selectedSet,
 		teams,
-		activeChallenges: activeChallenges.map((c) => ({
-			...c,
-			submittedTeamIds: [...(submittedMap[c.id] ?? [])],
-			attempts: attemptsByChallenge[c.id] ?? []
-		})),
-		recentActivity: activity
+		players: playerRows ?? [],
+		challenges,
+		attempts: attemptsResult.data ?? [],
+		submissions: subsResult.data ?? [],
+		activity: activityResult.data ?? []
 	};
 };
 
@@ -65,7 +133,6 @@ export const actions: Actions = {
 
 		if (!challengeId || !teamId) return fail(400, { error: 'Missing challenge_id or team_id' });
 
-		// Get submission score so we can deduct it from team total
 		const { data: sub } = await db
 			.from('submissions')
 			.select('score')
@@ -91,28 +158,6 @@ export const actions: Actions = {
 			team_id: teamId,
 			challenge_id: challengeId,
 			payload: { score_deducted: sub?.score ?? 0, reset_by: 'host' }
-		});
-
-		return { success: true };
-	},
-
-	closeChallenge: async ({ request }) => {
-		const db = createAdminClient();
-		const data = await request.formData();
-		const id = data.get('id') as string;
-		if (!id) return fail(400, { error: 'Missing challenge id' });
-
-		const { error } = await db.from('challenges').update({
-			status: 'completed',
-			is_active: false
-		}).eq('id', id);
-
-		if (error) return fail(500, { error: error.message });
-
-		await db.from('activity_log').insert({
-			event_type: 'challenge_closed',
-			challenge_id: id,
-			payload: { closed_by: 'host' }
 		});
 
 		return { success: true };
