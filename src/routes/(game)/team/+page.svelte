@@ -7,7 +7,6 @@
 
 	let liveScore = $state(data.team.score);
 	let livePosition = $state(data.position);
-	let setStatus = $state(data.activeSet?.status ?? null);
 
 	onMount(() => {
 		const teamChannel = supabaseBrowser
@@ -29,29 +28,8 @@
 			})
 			.subscribe();
 
-		// Subscribe to this player's set status changes
-		let setChannel: ReturnType<typeof supabaseBrowser.channel> | null = null;
-		if (data.activeSet) {
-			setChannel = supabaseBrowser
-				.channel(`set-status-team-${data.activeSet.id}`)
-				.on('postgres_changes', {
-					event: 'UPDATE',
-					schema: 'public',
-					table: 'game_sets',
-					filter: `id=eq.${data.activeSet.id}`
-				}, (payload) => {
-					const updated = payload.new as { status: string; recap_state: string };
-					setStatus = updated.status;
-					if (updated.status === 'completed') {
-						window.location.href = `/play/waiting?set_id=${data.activeSet!.id}`;
-					}
-				})
-				.subscribe();
-		}
-
 		return () => {
 			supabaseBrowser.removeChannel(teamChannel);
-			if (setChannel) supabaseBrowser.removeChannel(setChannel);
 		};
 	});
 
@@ -181,12 +159,3 @@
 
 </div>
 
-{#if setStatus === 'completed'}
-	<div class="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/96 backdrop-blur-sm">
-		<div class="text-center px-8 py-12 max-w-sm">
-			<div class="mb-6 text-5xl animate-pulse">⏳</div>
-			<h1 class="text-3xl font-black text-white mb-3">Results incoming…</h1>
-			<p class="text-lg text-zinc-400">The host is tallying the scores.<br/>Stand by for the big reveal!</p>
-		</div>
-	</div>
-{/if}
