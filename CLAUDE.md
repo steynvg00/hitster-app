@@ -184,6 +184,7 @@ src/
 | 2026-05-02 | Session 8c: game sets + randomizer — game_sets/set_challenges tables (migration 0018), /admin/sets CRUD + challenge picker + NFC card management, /admin/sets/[id]/lobby realtime grid with move-player modal, /play/teams/sets picker, /play/teams/randomizing animation, NFC randomizer tag routing, assignTeam snake-order util |
 | 2026-05-08 | Session A: Supabase Auth (email magic link + Google OAuth), dev test-login bypass, ownership migration (0024, created_by on 8 tables), minimal host dashboard (/admin), host login UI moved to main page (HostAuthForm component), NFC Tags added to sidebar, active/inactive toggle in sets list, Session C polish (collapsible sidebar with localStorage, icons on dashboard tiles, removed stats line) |
 | 2026-05-08 | Session B: play_state lifecycle (joining/playing/recap) on game_sets (migration 0025), "Start the game" button on set page + dashboard with realtime, NFC randomizer split by play_state, /nfc/game-in-progress and /nfc/game-over placeholder pages, 4-state admin dashboard status panel |
+| 2026-05-08 | Mega Session: bonus mechanics (migrations 0026–0028), difficulty stars + round multiplier + comeback/streak/speed bonuses, ScoreBreakdown persisted in answers, BonusTracker component, animated score count-up, leaderboard card redesign with photos + streak badge + rank deltas, team photo uploads (team-photos bucket), collab artist multi-slot combobox, waiting room carousel, NFC hint scan flow |
 
 ## Technical notes
 
@@ -202,6 +203,8 @@ Combobox pool data is fetched server-side (admin client) in the challenge load f
 ### submissions.answers format
 New format (migration 0012): array of `AnswerArrayEntry` objects `[{ track_id, field_values: {field: value}, scored: {field: score}, total }]`. Old submissions migrated to single-element arrays. Any code reading `answers` must handle both array (new) and plain object (pre-migration).
 
+`answers[0]` also carries an optional `breakdown: ScoreBreakdown` with keys `base, difficulty_multiplier, round_multiplier, comeback_multiplier, streak_bonus, speed_bonus, final` — present on all scored submissions since the Mega Session.
+
 ### Multi-track draft state
 Player draft stored in `localStorage` keyed `hitster_draft_${teamId}_${challengeId}` as `{trackId: {field: value}}`. Injected as `answers_json` hidden input before form submit. The `{#key activeTrackIndex}` directive forces Combobox to remount on tab switch so saved values display correctly.
 
@@ -214,6 +217,23 @@ Hosts can reset an individual team's attempt from `/admin/live` (deletes attempt
 
 ### is_final flag
 `submissions.is_final = true` means no further changes. Set on all submissions (both player-submitted and auto-submitted). Server rejects duplicate submissions with 409.
+
+### Bonus scoring formula (migrations 0026–0028)
+`final = round(base × difficulty_multiplier × round_multiplier × comeback_multiplier) + streak_bonus + speed_bonus`
+
+- `difficulty_multiplier = challenge.difficulty_rating / 3` — neutral at 3 (1.0×), max at 5 (1.67×), min at 1 (0.33×)
+- `round_multiplier = set_challenges.challenge_multiplier` (1–5×, default 1)
+- `comeback_multiplier = 1.5` if `team_score < 0.5 × leader_score` (and base > 0)
+- `streak_bonus` — flat pts from highest met threshold in `variant_defaults.streak_config.thresholds` array
+- `speed_bonus = 5` if `elapsed_seconds <= challenge.speed_threshold_seconds` (and base > 0)
+
+`computeBreakdown(base, bonusParams)` in `src/lib/server/scoring.ts` returns a `ScoreBreakdown` interface. The breakdown is persisted in `submissions.answers[0].breakdown` and surfaced to the player via the `BonusTracker` component. All bonus params are fetched at submit time in `+page.server.ts` submit action.
+
+### NFC hint scan flow (migration 0028)
+`challenge_hints_used(challenge_id, team_id, used_at)` — unique on (challenge_id, team_id). NFC tags with `purpose = 'hint'` route through `/nfc/hint/[challenge_id]` which upserts a hint-used row then redirects to `/challenge/[id]?hint=1`. The challenge page opens a bottom-sheet modal showing `challenge.hint_text` on `?hint=1` arrival. Teams that have scanned see a persistent 💡 Hint button to re-open the modal.
+
+### Team photos
+`teams.photo_url` (migration 0027) stores a public URL. Admins upload via `/admin/teams` — uploaded to the `team-photos` Supabase Storage bucket as `{teamId}.{ext}` (max 2 MB, upsert). Photos are shown in the admin teams list, both leaderboard views, and the waiting-room reveal card.
 
 ### play_state lifecycle (migration 0025)
 `game_sets.play_state` is a text column with CHECK constraint: `joining | playing | recap`. It tracks the sub-phase of an active set independently of `status`:
@@ -248,8 +268,8 @@ DELETE FROM challenge_attempts;
 DELETE FROM submissions;
 DELETE FROM review_requests;
 DELETE FROM activity_log;
--- Reset team scores
-UPDATE teams SET score = 0;
+-- Reset team scores and streaks
+UPDATE teams SET score = 0, current_streak = 0;
 -- Return sets to inactive so they can be activated again
 UPDATE game_sets
 SET status = 'inactive',
@@ -272,7 +292,7 @@ DELETE FROM challenge_attempts;
 DELETE FROM submissions;
 DELETE FROM review_requests;
 DELETE FROM activity_log;
-UPDATE teams SET score = 0;
+UPDATE teams SET score = 0, current_streak = 0;
 -- Then wipe sets (cascades to set_challenges)
 DELETE FROM game_sets;
 -- Remove randomizer NFC cards (challenge/team cards are permanent)

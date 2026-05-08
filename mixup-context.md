@@ -20,7 +20,7 @@ This document is the full context for continuing development of MixUp! in a new 
 
 - **Frontend / SSR**: SvelteKit (TypeScript, Svelte 5 runes mode forced project-wide)
 - **Hosting**: Vercel (free tier, auto-deploys from GitHub `main`)
-- **Backend**: Supabase (Postgres + Storage + Realtime + Auth — Auth not yet adopted, planned for Session A)
+- **Backend**: Supabase (Postgres + Storage + Realtime + Auth — Auth active for host login since Session A)
 - **Styling**: Tailwind CSS (with `typography` and `forms` plugins)
 - **Audio**:
   - WaveSurfer.js v7 — waveform display (tracks page + challenge play page)
@@ -45,16 +45,15 @@ This document is the full context for continuing development of MixUp! in a new 
 
 The admin client lives in `src/lib/server/` which SvelteKit guarantees server-only.
 
-### Auth model — currently HMAC-signed cookies
+### Auth model
 
-Three cookies, all HMAC-SHA256 signed with `COOKIE_SECRET` env var:
+Host auth uses **Supabase Auth** (email magic link + Google OAuth). The admin layout guard (`/admin/+layout.server.ts`) checks `locals.user` (set by `hooks.server.ts`) and redirects to `/admin/login` if absent. A dev test-login bypass is wired for local development.
+
+Player/team identity still uses HMAC-SHA256 signed cookies (COOKIE_SECRET env var):
 - `hitster_team` — team identity (legacy NFC team-card flow, still functional)
-- `hitster_admin` — admin auth, 24h expiry, gated by `HOST_PASSWORD` shared password
 - `hitster_player` — player session, 12h expiry, contains `session_token`
 
-Decoded into `locals.teamId`, `locals.isAdmin`, `locals.playerId` in `hooks.server.ts`.
-
-**Planned change (Session A)**: replace `HOST_PASSWORD` with Supabase Auth (Google OAuth + email). Player and team cookies stay as-is.
+Decoded into `locals.teamId`, `locals.user`, `locals.playerId` in `hooks.server.ts`.
 
 ### Per-team challenge attempts (the `started_at`-on-challenges replacement)
 
@@ -71,7 +70,11 @@ Decoded into `locals.teamId`, `locals.isAdmin`, `locals.playerId` in `hooks.serv
     "track_id": "uuid",
     "field_values": { "artist": "...", "title": "...", "year": 2009 },
     "scored": { "artist": 5, "title": 0, "year": 10 },
-    "total": 15
+    "total": 15,
+    "breakdown": {                        // present on answers[0] only
+      "base": 15, "difficulty_multiplier": 1.33, "round_multiplier": 2,
+      "comeback_multiplier": 1.0, "streak_bonus": 3, "speed_bonus": 5, "final": 48
+    }
   }
 ]
 ```
@@ -137,6 +140,9 @@ All migrations run **manually via Supabase SQL Editor** — no CLI runner. Files
 | 0023 | fix_status_default | `game_sets.status` default changed from `draft` to `inactive` |
 | 0024 | ownership | `created_by uuid` added to 8 tables (game_sets, challenges, tracks, clips, answer_options, nfc_tags, set_challenges, challenge_tracks) |
 | 0025 | play_state | `game_sets.play_state text NOT NULL DEFAULT 'joining' CHECK IN (joining, playing, recap)`; backfills active→playing |
+| 0026 | bonus_mechanics | `challenges.difficulty_rating int DEFAULT 3 CHECK 1–5`, `challenges.speed_threshold_seconds int`, `challenges.hint_text text`; `set_challenges.challenge_multiplier int DEFAULT 1`; `game_sets.scores_hidden bool DEFAULT false`; `variant_defaults.streak_config jsonb`; `teams.current_streak int DEFAULT 0` |
+| 0027 | team_photos | `teams.photo_url text` |
+| 0028 | challenge_hints_used | New table: `(id, challenge_id, team_id, used_at)`; unique on `(challenge_id, team_id)`; RLS (anon read/insert); added to realtime publication |
 
 ---
 
@@ -144,8 +150,10 @@ All migrations run **manually via Supabase SQL Editor** — no CLI runner. Files
 
 ### Teams
 - 6 default rows seeded: blue, yellow, green, red, indigo, black
-- `display_name` editable per team (e.g. "Red: Mainstage")
-- `score_total` aggregate of all submissions
+- `display_name` editable per team
+- `score` aggregate of all submissions
+- `current_streak int` — consecutive correct submissions; incremented on each base>0 result, reset to 0 on wrong
+- `photo_url text` — uploaded to `team-photos` bucket by admin; shown in leaderboard, waiting-room reveal card, admin teams list
 
 ### Players
 - Cookie-identified via `hitster_player`
@@ -159,6 +167,7 @@ All migrations run **manually via Supabase SQL Editor** — no CLI runner. Files
 - `team_count` (2–10), `expected_player_count` (nullable)
 - `total_timer_seconds` (DB stored as seconds, admin UI displays/accepts minutes)
 - `status`: `active | inactive` (only — draft and completed removed in 0021)
+- `scores_hidden bool` — when true, score bars are hidden on the player leaderboard (suspense mode); toggled by host from `/admin/live`
 - `play_state`: `joining | playing | recap` — sub-phase within an active set (migration 0025)
   - `joining`: set is active, NFC randomizer assigns teams, game not started
   - `playing`: host clicked "Start the game", no new NFC joins
@@ -170,22 +179,26 @@ All migrations run **manually via Supabase SQL Editor** — no CLI runner. Files
 
 ### Challenges
 - `variant`: `normal | label | anthem | vocal | fragments | kick | mashup | battle`
-- `timer_seconds`, `points_config` (jsonb, currently raw editor — Session 7b will replace with form)
+- `timer_seconds`, `points_config` (jsonb — field_modes, field_points)
+- `difficulty_rating int 1–5` (default 3) — scales final score via `rating/3` multiplier
+- `speed_threshold_seconds int` — team earns +5 speed bonus if they submit within this time
+- `hint_text text` — shown in a modal when team scans the hint NFC card
 - `status`, `is_active`
 - Multi-track via `challenge_tracks(challenge_id, track_id, position)`
-- Per-(challenge_track, field) input mode in `answer_options.input_mode`: `multiple_choice | combobox | open_text | typeable_number | slider`
+- Per-challenge input mode overrides in `challenge.points_config.field_modes`
 
 ### Submissions
 - One row per (challenge_id, team_id), unique
-- `answers` JSONB array (see §3)
+- `answers` JSONB array (see §3); `answers[0].breakdown` carries bonus multiplier details
 - `is_final` boolean — locks against resubmission
 - `status`: `auto_correct | auto_wrong | review_requested | review_approved | review_rejected`
 
 ### NFC tags
 - `slug` unique
-- `type`: `team_identity | challenge_station | randomizer`
-- Bound to `set_id` (for randomizers), `challenge_id` (for challenge stations), or `team_id` (legacy team-identity cards)
+- `purpose`: `team_identity | team_entry | challenge | randomizer | hint`
+- Bound to `set_id` (for randomizers), `challenge_id` (for challenge stations and hints), or `team_color` (team-identity cards)
 - Randomizer tap behaviour depends on `game_sets.play_state`: joining → assign team; playing → /nfc/game-in-progress; recap → /nfc/game-over
+- Hint tap → `/nfc/hint/[challenge_id]` → records usage in `challenge_hints_used` → redirects to `/challenge/[id]?hint=1`
 
 ---
 
@@ -429,4 +442,46 @@ User decisions for the next phase:
 
 ---
 
-## Pick up here — Session C kickoff
+## Mega Session complete ✓
+
+Migrations 0026–0028 (run manually in Supabase SQL Editor before using new features).
+
+**Bonus scoring**
+- `difficulty_rating` (1–5 stars) on challenges; admin UI in `/admin/challenges/[id]`
+- `challenge_multiplier` (1–5×) per challenge in a set; set via dropdown in `/admin/sets/[id]`
+- Comeback multiplier (1.5×) when team score < 50% of leader
+- Streak bonus from `variant_defaults.streak_config.thresholds` (configure in `/admin/variant-defaults/[variant]`)
+- Speed bonus (+5 pts) when team submits within `challenge.speed_threshold_seconds`
+- `computeBreakdown()` in `src/lib/server/scoring.ts`; breakdown stored in `submissions.answers[0].breakdown`
+- `BonusTracker` component shows active pills on challenge page
+
+**Leaderboard redesign**
+- Both `/play/leaderboard` and `/leaderboard` (TV) show team avatar (photo or initials), streak badge (🔥N when ≥2), score bar, rank-change arrows (▲/▼N, bounce animation)
+- `scores_hidden` on game_sets: when toggled by host from `/admin/live`, score bars disappear from player leaderboard (realtime, no reload)
+- Animated score count-up on challenge results (ease-out cubic via RAF)
+
+**Team photos**
+- Upload in `/admin/teams` → `team-photos` Supabase Storage bucket
+- Shown in admin teams list, both leaderboard views, waiting-room reveal card
+
+**Collab artist input**
+- When artist field is in combobox mode, "＋ Add artist" button lets teams stack up to 3 Combobox slots
+- Artists joined with " & " before submission — compatible with existing fuzzy scoring
+
+**Waiting room carousel**
+- Recap waiting screen shows a "While you wait…" section cycling through all set challenges
+- 6s auto-advance, prev/next buttons, dot indicators
+
+**NFC hint scan flow**
+- Hint NFC tag (`purpose = 'hint'`) → `/nfc/hint/[challenge_id]` → records `challenge_hints_used` row → redirect to `/challenge/[id]?hint=1`
+- Challenge page shows bottom-sheet modal with `hint_text` on first scan
+- Re-openable via 💡 Hint button for teams that have already scanned
+
+---
+
+## Pick up here
+
+Pending from the bug pile (§9 above) — none addressed yet. Suggested next steps:
+- **Bug 1**: End-and-reset deletes the game_sets row — high priority, breaks re-use
+- **Bug 2**: NFC randomizer `?next=` param dropping — blocks the core onboarding flow
+- **Session C**: drag-to-reorder tiles, `/admin/nfc-tags` full list, dashboard aesthetics
