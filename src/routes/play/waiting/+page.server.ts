@@ -59,11 +59,23 @@ export const load: PageServerLoad = async ({ locals, cookies, url }) => {
 	const playerSetScore = teamSetScores.get(locals.teamId) ?? 0;
 
 	// Load players in the player's team for the reveal card
-	const { data: teammates } = await admin
-		.from('players')
-		.select('id, display_name, photo_url')
-		.eq('set_id', setId)
-		.eq('team_id', locals.teamId);
+	// Also load challenges for the waiting-room carousel
+	const [{ data: teammates }, { data: challengeRows }] = await Promise.all([
+		admin.from('players').select('id, display_name, photo_url').eq('set_id', setId).eq('team_id', locals.teamId),
+		challengeIds.length
+			? admin.from('challenges').select('id, title, variant').in('id', challengeIds)
+			: Promise.resolve({ data: [] as { id: string; title: string; variant: string }[] })
+	]);
+
+	// Sort challenges by set position
+	const posMap = new Map((setChallenges ?? []).map((sc, i) => [sc.challenge_id, i]));
+	const carouselChallenges = (challengeRows ?? [])
+		.sort((a, b) => (posMap.get(a.id) ?? 0) - (posMap.get(b.id) ?? 0))
+		.map((c) => ({
+			title: c.title,
+			variant: c.variant,
+			score: teamSetScores.get(locals.teamId ?? '') ?? 0
+		}));
 
 	return {
 		setId,
@@ -76,6 +88,7 @@ export const load: PageServerLoad = async ({ locals, cookies, url }) => {
 		playerPosition,
 		playerSetScore,
 		teammates: teammates ?? [],
-		totalTeams
+		totalTeams,
+		carouselChallenges
 	};
 };

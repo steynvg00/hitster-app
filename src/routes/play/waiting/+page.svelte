@@ -46,6 +46,14 @@
 		if (shouldShowReveal) showRevealCard = true;
 	});
 
+	let carouselIdx = $state(0);
+	const carouselLen = data.carouselChallenges.length;
+
+	const variantLabel: Record<string, string> = {
+		normal: 'Normal', label: 'Label', anthem: 'Anthem', vocal: 'Vocal',
+		fragments: 'Fragments', kick: 'Kick', mashup: 'Mashup', battle: 'Battle'
+	};
+
 	onMount(() => {
 		const channel = supabaseBrowser
 			.channel(`waiting-set-${data.setId}`)
@@ -71,7 +79,17 @@
 			})
 			.subscribe();
 
-		return () => supabaseBrowser.removeChannel(channel);
+		let timer: ReturnType<typeof setInterval> | undefined;
+		if (carouselLen > 1) {
+			timer = setInterval(() => {
+				carouselIdx = (carouselIdx + 1) % carouselLen;
+			}, 6000);
+		}
+
+		return () => {
+			supabaseBrowser.removeChannel(channel);
+			if (timer !== undefined) clearInterval(timer);
+		};
 	});
 </script>
 
@@ -140,6 +158,45 @@
 			The host is tallying the scores.<br />
 			Stand by for the big reveal!
 		</p>
+
+		{#if carouselLen > 0}
+			<div class="mt-10">
+				<p class="text-xs font-semibold uppercase tracking-widest text-zinc-600 mb-4">While you wait…</p>
+				<div class="relative overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 px-6 py-5 text-left min-h-[80px]">
+					{#if data.carouselChallenges[carouselIdx]}
+						<div class="flex items-start gap-3">
+							<span class="text-xl mt-0.5">🎵</span>
+							<div class="flex-1 min-w-0">
+								<div class="text-sm font-bold text-white leading-snug truncate">{data.carouselChallenges[carouselIdx].title}</div>
+								<div class="mt-1">
+									<span class="rounded-full px-2 py-0.5 text-xs font-semibold"
+										style="background-color: {c.bg}22; color: {c.bg}; border: 1px solid {c.bg}44;">
+										{variantLabel[data.carouselChallenges[carouselIdx].variant] ?? data.carouselChallenges[carouselIdx].variant}
+									</span>
+								</div>
+							</div>
+						</div>
+					{/if}
+				</div>
+
+				{#if carouselLen > 1}
+					<div class="mt-3 flex items-center justify-center gap-2">
+						<button
+							onclick={() => carouselIdx = (carouselIdx - 1 + carouselLen) % carouselLen}
+							class="text-zinc-600 hover:text-zinc-400 transition-colors px-1">‹</button>
+						{#each data.carouselChallenges as _, i}
+							<button
+								onclick={() => carouselIdx = i}
+								class="h-1.5 rounded-full transition-all duration-300 {i === carouselIdx ? 'w-4 bg-amber-400' : 'w-1.5 bg-zinc-700 hover:bg-zinc-500'}">
+							</button>
+						{/each}
+						<button
+							onclick={() => carouselIdx = (carouselIdx + 1) % carouselLen}
+							class="text-zinc-600 hover:text-zinc-400 transition-colors px-1">›</button>
+					</div>
+				{/if}
+			</div>
+		{/if}
 
 		<div class="mt-10 flex items-center justify-center gap-2 text-xs text-zinc-600">
 			<span class="inline-block h-2 w-2 animate-pulse rounded-full bg-amber-500"></span>
