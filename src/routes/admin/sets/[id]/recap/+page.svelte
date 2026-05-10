@@ -126,6 +126,15 @@
 				class="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-400 hover:text-white transition-colors">
 				TV Podium ↗
 			</a>
+
+			<!-- Reset game (always visible in recap) -->
+			<form method="POST" action="?/resetGame" use:enhance
+				onsubmit={(e) => { if (!confirm('Reset this game? Player sessions, scores, and submissions will be cleared. Last results will be preserved.')) e.preventDefault(); }}>
+				<button type="submit"
+					class="rounded-lg border border-red-800/60 px-4 py-2 text-sm font-semibold text-red-400 hover:border-red-700 hover:text-red-300 transition-colors">
+					Reset game
+				</button>
+			</form>
 		</div>
 	</div>
 
