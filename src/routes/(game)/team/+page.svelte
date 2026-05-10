@@ -1,37 +1,20 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { supabaseBrowser } from '$lib/supabase-browser';
+	import TutorialOverlay from '$lib/components/game/TutorialOverlay.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
 
 	let liveScore = $state(data.team.score);
 	let livePosition = $state(data.position);
+	let livePlayState = $state(data.activeSet?.play_state ?? 'playing');
 
-	onMount(() => {
-		const teamChannel = supabaseBrowser
-			.channel(`team-home-${data.team.id}`)
-			.on('postgres_changes', {
-				event: 'UPDATE',
-				schema: 'public',
-				table: 'teams',
-				filter: `id=eq.${data.team.id}`
-			}, async (payload) => {
-				liveScore = (payload.new as { score: number }).score;
-				const { data: allTeams } = await supabaseBrowser
-					.from('teams')
-					.select('id, score')
-					.order('score', { ascending: false });
-				if (allTeams) {
-					livePosition = (allTeams.findIndex((t) => t.id === data.team.id) + 1) || 1;
-				}
-			})
-			.subscribe();
+	// Lobby realtime: players joining teams
+	type LobbyPlayer = { id: string; display_name: string; photo_url: string | null; team_id: string | null };
+	let lobbyTeams = $state(data.lobbyTeams.map((t) => ({ ...t, players: [...t.players] })));
 
-		return () => {
-			supabaseBrowser.removeChannel(teamChannel);
-		};
-	});
+	let showTutorials = $state(false);
 
 	const teamColors: Record<string, { bg: string; border: string; text: string }> = {
 		blue: { bg: '#3b82f6', border: '#2563eb', text: '#fff' },
@@ -60,102 +43,259 @@
 		}
 		return event_type.replace(/_/g, ' ');
 	}
+
+	const isLocked = (challengeId: string) =>
+		(data.activeSet?.nfc_lock_enabled ?? false) && !data.challengeUnlocks.includes(challengeId);
+
+	onMount(() => {
+		// Score + position realtime
+		const teamChannel = supabaseBrowser
+			.channel(`team-home-${data.team.id}`)
+			.on('postgres_changes', {
+				event: 'UPDATE', schema: 'public', table: 'teams', filter: `id=eq.${data.team.id}`
+			}, async (payload) => {
+				liveScore = (payload.new as { score: number }).score;
+				const { data: allTeams } = await supabaseBrowser
+					.from('teams').select('id, score').order('score', { ascending: false });
+				if (allTeams) {
+					livePosition = (allTeams.findIndex((t) => t.id === data.team.id) + 1) || 1;
+				}
+			})
+			.subscribe();
+
+		// Game set state realtime (transitions joining → playing → recap)
+		let setChannel: ReturnType<typeof supabaseBrowser.channel> | undefined;
+		if (data.activeSet?.id) {
+			setChannel = supabaseBrowser
+				.channel(`team-set-state-${data.activeSet.id}`)
+				.on('postgres_changes', {
+					event: 'UPDATE', schema: 'public', table: 'game_sets', filter: `id=eq.${data.activeSet.id}`
+				}, (payload) => {
+					const newState = (payload.new as { play_state?: string; recap_state?: string }).play_state;
+					const recapState = (payload.new as { recap_state?: string }).recap_state;
+					if (newState) livePlayState = newState;
+					if (newState === 'recap' && data.activeSet) {
+						window.location.href = `/play/waiting?set_id=${data.activeSet.id}`;
+					}
+					if (recapState === 'complete' && data.activeSet) {
+						window.location.href = `/play/thanks?set_id=${data.activeSet.id}`;
+					}
+				})
+				.subscribe();
+
+			// Lobby: players joining realtime
+			if (data.activeSet.play_state === 'joining') {
+				supabaseBrowser
+					.channel(`team-lobby-players-${data.activeSet.id}`)
+					.on('postgres_changes', {
+						event: '*', schema: 'public', table: 'players', filter: `set_id=eq.${data.activeSet.id}`
+					}, (payload) => {
+						if (payload.eventType === 'DELETE') return;
+						const p = payload.new as LobbyPlayer;
+						// Remove player from all teams, then add to new team
+						lobbyTeams = lobbyTeams.map((t) => ({
+							...t,
+							players: [
+								...t.players.filter((pl) => pl.id !== p.id),
+								...(p.team_id === t.id ? [{ id: p.id, display_name: p.display_name, photo_url: p.photo_url }] : [])
+							]
+						}));
+					})
+					.subscribe();
+			}
+		}
+
+		return () => {
+			supabaseBrowser.removeChannel(teamChannel);
+			if (setChannel) supabaseBrowser.removeChannel(setChannel);
+		};
+	});
 </script>
 
-<!-- Team banner -->
-<div
-	class="px-6 py-8"
-	style="background-color: {c.bg}; border-bottom: 3px solid {c.border};"
->
-	<div class="mx-auto max-w-lg">
-		<div class="text-sm font-bold uppercase tracking-widest" style="color: {c.text}; opacity: 0.7;">
-			You are
-		</div>
-		<h1 class="mt-1 text-4xl font-black" style="color: {c.text};">
-			{data.team.display_name}
-		</h1>
-	</div>
-</div>
+{#if showTutorials && data.setTutorials.length > 0}
+	<TutorialOverlay tutorials={data.setTutorials} onclose={() => (showTutorials = false)} />
+{/if}
 
-<div class="mx-auto max-w-lg p-6 space-y-6">
-
-	<!-- Score + position -->
-	<div class="grid grid-cols-2 gap-4">
-		<div class="rounded-2xl bg-zinc-900 p-5 text-center">
-			<div class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Score</div>
-			<div class="tabular-nums mt-1 text-5xl font-black text-white">{liveScore}</div>
-			<div class="mt-1 text-xs text-zinc-600">points</div>
-		</div>
-		<div class="rounded-2xl bg-zinc-900 p-5 text-center">
-			<div class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Position</div>
-			<div class="tabular-nums mt-1 text-5xl font-black" style="color: {c.bg};">
-				{ordinal(livePosition)}
+<!-- ── LOBBY VIEW (play_state = joining) ──────────────────────────────────── -->
+{#if livePlayState === 'joining' && data.activeSet}
+	<!-- Team banner -->
+	<div class="px-6 py-6" style="background-color: {c.bg}; border-bottom: 3px solid {c.border};">
+		<div class="mx-auto max-w-lg flex items-center justify-between">
+			<div>
+				<div class="text-sm font-bold uppercase tracking-widest" style="color: {c.text}; opacity: 0.7;">You are</div>
+				<h1 class="mt-0.5 text-3xl font-black" style="color: {c.text};">{data.team.display_name}</h1>
 			</div>
-			<div class="mt-1 text-xs text-zinc-600">of {data.totalTeams} teams</div>
+			{#if data.setTutorials.length > 0}
+				<button
+					type="button"
+					onclick={() => (showTutorials = true)}
+					class="rounded-xl border-2 px-4 py-2 text-sm font-bold transition-opacity hover:opacity-80"
+					style="border-color: rgba(255,255,255,0.5); color: {c.text};"
+				>
+					Tutorials
+				</button>
+			{/if}
 		</div>
 	</div>
 
-	<!-- Challenges -->
-	<div>
-		<h2 class="mb-3 text-xs font-bold uppercase tracking-widest text-zinc-500">Challenges</h2>
-		{#if data.challenges.length === 0}
-			<p class="text-sm text-zinc-600">No active challenges yet — check back soon.</p>
-		{:else}
+	<div class="mx-auto max-w-lg p-5 space-y-5">
+		<!-- Set name -->
+		<div class="text-center">
+			<div class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Game set</div>
+			<div class="mt-0.5 text-lg font-black text-white">{data.activeSet.name}</div>
+		</div>
+
+		<!-- Teams + joined players -->
+		<div>
+			<h2 class="mb-3 text-xs font-bold uppercase tracking-widest text-zinc-500">Teams</h2>
 			<div class="space-y-2">
-				{#each data.challenges as ch}
-					<div class="flex items-center justify-between rounded-xl bg-zinc-900 px-4 py-3">
-						<div>
-							<div class="font-semibold text-zinc-100">{ch.title}</div>
-							<div class="text-xs text-zinc-500 capitalize">{ch.variant}</div>
+				{#each lobbyTeams as t}
+					{@const tc = teamColors[t.color] ?? { bg: '#6b7280', border: '#4b5563', text: '#fff' }}
+					<div class="rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3">
+						<div class="flex items-center gap-2 mb-2">
+							<div class="h-3 w-3 rounded-full" style="background-color: {tc.bg};"></div>
+							<span class="text-sm font-semibold text-white">{t.display_name}</span>
+							<span class="ml-auto text-xs text-zinc-600">{t.players.length} joined</span>
 						</div>
-						{#if ch.status === 'completed'}
-							<div class="text-right">
-								<div class="text-xs font-bold text-green-400 uppercase tracking-wide">Done</div>
-								<div class="text-sm font-black text-white">+{ch.earnedScore ?? 0} pts</div>
+						{#if t.players.length > 0}
+							<div class="flex flex-wrap gap-2">
+								{#each t.players as p}
+									<div class="flex items-center gap-1.5">
+										{#if p.photo_url}
+											<img src={p.photo_url} alt={p.display_name}
+												class="h-6 w-6 rounded-full object-cover" />
+										{:else}
+											<div class="flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold"
+												style="background-color: {tc.bg}33; color: {tc.bg};">
+												{p.display_name.charAt(0)}
+											</div>
+										{/if}
+										<span class="text-xs text-zinc-400">{p.display_name}</span>
+									</div>
+								{/each}
 							</div>
-						{:else}
-							<a
-								href="/challenge/{ch.id}"
-								class="rounded-lg px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-white transition-opacity hover:opacity-80"
-								style="background-color: {c.bg};"
-							>
-								Play
-							</a>
 						{/if}
 					</div>
 				{/each}
 			</div>
-		{/if}
+		</div>
+
+		<div class="flex items-center gap-2 py-2 text-sm text-zinc-600">
+			<span class="inline-block h-2 w-2 animate-pulse rounded-full bg-amber-500"></span>
+			Waiting for the host to start the game…
+		</div>
 	</div>
 
-	<!-- Recent activity -->
-	{#if data.recentActivity.length > 0}
-		<div>
-			<h2 class="mb-3 text-xs font-bold uppercase tracking-widest text-zinc-500">Recent activity</h2>
-			<div class="space-y-1.5">
-				{#each data.recentActivity as entry}
-					<div class="flex items-center gap-2 rounded-lg bg-zinc-900/60 px-3 py-2 text-sm">
-						<div class="h-1.5 w-1.5 shrink-0 rounded-full" style="background-color: {c.bg};"></div>
-						<span class="text-zinc-300">
-							{formatActivity(entry.event_type, entry.payload)}
-						</span>
-						<span class="ml-auto text-xs text-zinc-600 tabular-nums">
-							{new Date(entry.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-						</span>
-					</div>
-				{/each}
+<!-- ── TEAM CONSOLE (play_state = playing) ──────────────────────────────── -->
+{:else}
+	<!-- Team banner -->
+	<div class="px-6 py-8" style="background-color: {c.bg}; border-bottom: 3px solid {c.border};">
+		<div class="mx-auto max-w-lg">
+			<div class="text-sm font-bold uppercase tracking-widest" style="color: {c.text}; opacity: 0.7;">You are</div>
+			<h1 class="mt-1 text-4xl font-black" style="color: {c.text};">{data.team.display_name}</h1>
+		</div>
+	</div>
+
+	<div class="mx-auto max-w-lg p-6 space-y-6">
+		<!-- Score + position -->
+		<div class="grid grid-cols-2 gap-4">
+			<div class="rounded-2xl bg-zinc-900 p-5 text-center">
+				<div class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Score</div>
+				<div class="tabular-nums mt-1 text-5xl font-black text-white">{liveScore}</div>
+				<div class="mt-1 text-xs text-zinc-600">points</div>
+			</div>
+			<div class="rounded-2xl bg-zinc-900 p-5 text-center">
+				<div class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Position</div>
+				<div class="tabular-nums mt-1 text-5xl font-black" style="color: {c.bg};">
+					{ordinal(livePosition)}
+				</div>
+				<div class="mt-1 text-xs text-zinc-600">of {data.totalTeams} teams</div>
 			</div>
 		</div>
-	{/if}
 
-	<!-- Nav -->
-	<div class="flex gap-3 pt-2 text-sm">
-		{#if data.activeSet?.status === 'active'}
-			<a href="/play/leaderboard" class="text-zinc-400 underline underline-offset-2">Leaderboard</a>
-		{:else}
-			<a href="/leaderboard" class="text-zinc-400 underline underline-offset-2">Leaderboard</a>
+		<!-- Stats + action row -->
+		<div class="flex items-center justify-between">
+			{#if data.activeSet}
+				<div class="text-sm text-zinc-400">
+					<span class="font-bold text-white">{data.setCompletedCount}</span>
+					<span> / {data.setTotalCount} challenges done</span>
+				</div>
+			{/if}
+			<div class="flex gap-3">
+				{#if data.activeSet?.status === 'active'}
+					<a href="/play/leaderboard" class="text-sm text-zinc-400 underline underline-offset-2">Leaderboard</a>
+				{:else}
+					<a href="/leaderboard" class="text-sm text-zinc-400 underline underline-offset-2">Leaderboard</a>
+				{/if}
+				{#if data.setTutorials.length > 0}
+					<button
+						type="button"
+						onclick={() => (showTutorials = true)}
+						class="text-sm text-amber-400 underline underline-offset-2"
+					>
+						Tutorials
+					</button>
+				{/if}
+			</div>
+		</div>
+
+		<!-- Challenges -->
+		<div>
+			<h2 class="mb-3 text-xs font-bold uppercase tracking-widest text-zinc-500">Challenges</h2>
+			{#if data.challenges.length === 0}
+				<p class="text-sm text-zinc-600">No active challenges yet — check back soon.</p>
+			{:else}
+				<div class="space-y-2">
+					{#each data.challenges as ch}
+						{@const locked = isLocked(ch.id)}
+						<div class="flex items-center justify-between rounded-xl px-4 py-3
+							{locked ? 'bg-zinc-900/50 opacity-60' : 'bg-zinc-900'}">
+							<div>
+								<div class="font-semibold {locked ? 'text-zinc-500' : 'text-zinc-100'}">{ch.title}</div>
+								<div class="text-xs text-zinc-500 capitalize">{ch.variant}</div>
+							</div>
+							{#if locked}
+								<div class="text-right">
+									<div class="text-xs text-zinc-600">🔒 Scan tag to unlock</div>
+								</div>
+							{:else if ch.status === 'completed'}
+								<div class="text-right">
+									<div class="text-xs font-bold text-green-400 uppercase tracking-wide">Done</div>
+									<div class="text-sm font-black text-white">+{ch.earnedScore ?? 0} pts</div>
+								</div>
+							{:else}
+								<a
+									href="/challenge/{ch.id}"
+									class="rounded-lg px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-white transition-opacity hover:opacity-80"
+									style="background-color: {c.bg};"
+								>
+									Play
+								</a>
+							{/if}
+						</div>
+					{/each}
+				</div>
+			{/if}
+		</div>
+
+		<!-- Recent activity -->
+		{#if data.recentActivity.length > 0}
+			<div>
+				<h2 class="mb-3 text-xs font-bold uppercase tracking-widest text-zinc-500">Recent activity</h2>
+				<div class="space-y-1.5">
+					{#each data.recentActivity as entry}
+						<div class="flex items-center gap-2 rounded-lg bg-zinc-900/60 px-3 py-2 text-sm">
+							<div class="h-1.5 w-1.5 shrink-0 rounded-full" style="background-color: {c.bg};"></div>
+							<span class="text-zinc-300">
+								{formatActivity(entry.event_type, entry.payload)}
+							</span>
+							<span class="ml-auto text-xs text-zinc-600 tabular-nums">
+								{new Date(entry.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+							</span>
+						</div>
+					{/each}
+				</div>
+			</div>
 		{/if}
 	</div>
-
-</div>
-
+{/if}

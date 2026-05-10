@@ -8,7 +8,7 @@ type TeamColor = 'blue' | 'yellow' | 'green' | 'red' | 'indigo' | 'black';
 type ClipType = 'snippet' | 'fragment' | 'kick' | 'vocal' | 'mashup';
 type ChallengeVariant = 'normal' | 'label' | 'anthem' | 'vocal' | 'fragments' | 'kick' | 'mashup' | 'battle';
 type AnswerField = 'artist' | 'title' | 'year' | 'label' | 'festival' | 'vocal_source';
-type NfcTagPurpose = 'team_identity' | 'team_entry' | 'challenge' | 'randomizer' | 'hint';
+type NfcTagPurpose = 'team_identity' | 'team_entry' | 'challenge' | 'randomizer' | 'hint' | 'challenge_unlock';
 type SubmissionStatus = 'auto_correct' | 'auto_wrong' | 'review_requested' | 'review_approved' | 'review_rejected';
 
 export type Database = {
@@ -323,6 +323,9 @@ export type Database = {
 					recap_ranking: string[];
 					recap_reveal_index: number;
 					scores_hidden: boolean;
+					nfc_lock_enabled: boolean;
+					randomizer_enabled: boolean;
+					last_results: Json | null;
 					created_by: string | null;
 					created_at: string;
 				};
@@ -343,6 +346,9 @@ export type Database = {
 					recap_ranking?: string[];
 					recap_reveal_index?: number;
 					scores_hidden?: boolean;
+					nfc_lock_enabled?: boolean;
+					randomizer_enabled?: boolean;
+					last_results?: Json | null;
 					created_by?: string | null;
 					created_at?: string;
 				};
@@ -363,6 +369,9 @@ export type Database = {
 					recap_ranking?: string[];
 					recap_reveal_index?: number;
 					scores_hidden?: boolean;
+					nfc_lock_enabled?: boolean;
+					randomizer_enabled?: boolean;
+					last_results?: Json | null;
 					created_by?: string | null;
 					created_at?: string;
 				};
@@ -496,16 +505,43 @@ export type Database = {
 					variant: string;
 					points_config: Json;
 					streak_config: Json | null;
+					tutorial_text: string | null;
 				};
 				Insert: {
 					variant: string;
 					points_config?: Json;
 					streak_config?: Json | null;
+					tutorial_text?: string | null;
 				};
 				Update: {
 					variant?: string;
 					points_config?: Json;
 					streak_config?: Json | null;
+					tutorial_text?: string | null;
+				};
+				Relationships: [];
+			};
+			challenge_unlocks: {
+				Row: {
+					id: string;
+					challenge_id: string;
+					team_id: string;
+					set_id: string;
+					unlocked_at: string;
+				};
+				Insert: {
+					id?: string;
+					challenge_id: string;
+					team_id: string;
+					set_id: string;
+					unlocked_at?: string;
+				};
+				Update: {
+					id?: string;
+					challenge_id?: string;
+					team_id?: string;
+					set_id?: string;
+					unlocked_at?: string;
 				};
 				Relationships: [];
 			};
@@ -605,6 +641,7 @@ export type ActivityLogRow = Database['public']['Tables']['activity_log']['Row']
 export type ReviewRequestRow = Database['public']['Tables']['review_requests']['Row'];
 export type VariantDefaultRow = Database['public']['Tables']['variant_defaults']['Row'];
 export type ChallengeHintUsedRow = Database['public']['Tables']['challenge_hints_used']['Row'];
+export type ChallengeUnlockRow = Database['public']['Tables']['challenge_unlocks']['Row'];
 export type AnswerPoolArtistRow = Database['public']['Tables']['answer_pool_artists']['Row'];
 export type AnswerPoolLabelRow = Database['public']['Tables']['answer_pool_labels']['Row'];
 export type AnswerPoolFestivalRow = Database['public']['Tables']['answer_pool_festivals']['Row'];
