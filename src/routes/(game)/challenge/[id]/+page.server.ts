@@ -201,7 +201,7 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		hintUsed = !!hintRow;
 	}
 
-	// Check if player is in a set with an active recap (for redirect)
+	// Check if player is in a set with an active recap (for redirect), and NFC lock guard
 	let activeSetId: string | null = null;
 	let activeSetRecapState: string | null = null;
 	if (locals.playerId) {
@@ -213,12 +213,26 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		if (playerRow?.set_id) {
 			const { data: gs } = await admin
 				.from('game_sets')
-				.select('id, recap_state')
+				.select('id, recap_state, nfc_lock_enabled')
 				.eq('id', playerRow.set_id)
 				.maybeSingle();
 			if (gs) {
 				activeSetId = gs.id;
 				activeSetRecapState = gs.recap_state ?? null;
+
+				// NFC lock guard: if lock is enabled and team hasn't scanned, redirect to /team
+				if (gs.nfc_lock_enabled && locals.teamId) {
+					const { data: unlockRow } = await admin
+						.from('challenge_unlocks')
+						.select('id')
+						.eq('challenge_id', params.id)
+						.eq('team_id', locals.teamId)
+						.eq('set_id', gs.id)
+						.maybeSingle();
+					if (!unlockRow) {
+						redirect(302, '/team');
+					}
+				}
 			}
 		}
 	}
