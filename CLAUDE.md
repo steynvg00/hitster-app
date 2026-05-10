@@ -185,6 +185,7 @@ src/
 | 2026-05-08 | Session A: Supabase Auth (email magic link + Google OAuth), dev test-login bypass, ownership migration (0024, created_by on 8 tables), minimal host dashboard (/admin), host login UI moved to main page (HostAuthForm component), NFC Tags added to sidebar, active/inactive toggle in sets list, Session C polish (collapsible sidebar with localStorage, icons on dashboard tiles, removed stats line) |
 | 2026-05-08 | Session B: play_state lifecycle (joining/playing/recap) on game_sets (migration 0025), "Start the game" button on set page + dashboard with realtime, NFC randomizer split by play_state, /nfc/game-in-progress and /nfc/game-over placeholder pages, 4-state admin dashboard status panel |
 | 2026-05-08 | Mega Session: bonus mechanics (migrations 0026–0028), difficulty stars + round multiplier + comeback/streak/speed bonuses, ScoreBreakdown persisted in answers, BonusTracker component, animated score count-up, leaderboard card redesign with photos + streak badge + rank deltas, team photo uploads (team-photos bucket), collab artist multi-slot combobox, waiting room carousel, NFC hint scan flow |
+| 2026-05-11 | Session 9: migration 0029 (tutorial_text, nfc_lock_enabled, randomizer_enabled, last_results, challenge_unlocks), player state machine (/team lobby vs console), TutorialOverlay component, per-variant tutorial admin edit, tutorial ⓘ on challenge page, NFC unlock route + challenge guard, Gameset Console set page redesign, resetGame action + last results panel, Reset game on recap page |
 
 ## Technical notes
 
@@ -265,20 +266,23 @@ Two distinct resets — run manually in Supabase SQL Editor.
 UPDATE players SET set_id = NULL, team_id = NULL WHERE set_id IS NOT NULL;
 -- Clear game state
 DELETE FROM challenge_attempts;
+DELETE FROM challenge_hints_used;
+DELETE FROM challenge_unlocks;
 DELETE FROM submissions;
 DELETE FROM review_requests;
 DELETE FROM activity_log;
 -- Reset team scores and streaks
 UPDATE teams SET score = 0, current_streak = 0;
--- Return sets to inactive so they can be activated again
+-- Return sets to joining state (recap_state must use 'pending', not NULL — NULL violates the CHECK)
 UPDATE game_sets
 SET status = 'inactive',
     play_state = 'joining',
     started_at = NULL,
     ended_at = NULL,
-    recap_ranking = NULL,
+    recap_ranking = '[]'::jsonb,
     recap_reveal_index = 0,
-    recap_state = NULL,
+    recap_state = 'pending',
+    scores_hidden = false,
     assignment_slots = '[]'::jsonb,
     assignment_index = 0;
 ```
@@ -289,14 +293,16 @@ SET status = 'inactive',
 -- Soft reset steps first (player sessions, attempts, submissions, scores)
 UPDATE players SET set_id = NULL, team_id = NULL WHERE set_id IS NOT NULL;
 DELETE FROM challenge_attempts;
+DELETE FROM challenge_hints_used;
+DELETE FROM challenge_unlocks;
 DELETE FROM submissions;
 DELETE FROM review_requests;
 DELETE FROM activity_log;
 UPDATE teams SET score = 0, current_streak = 0;
 -- Then wipe sets (cascades to set_challenges)
 DELETE FROM game_sets;
--- Remove randomizer NFC cards (challenge/team cards are permanent)
-DELETE FROM nfc_tags WHERE purpose = 'randomizer';
+-- Remove randomizer and challenge_unlock NFC cards (challenge/team cards are permanent)
+DELETE FROM nfc_tags WHERE purpose IN ('randomizer', 'challenge_unlock');
 -- Optionally wipe all player records
 DELETE FROM players;
 ```
