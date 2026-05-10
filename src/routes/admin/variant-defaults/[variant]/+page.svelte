@@ -7,6 +7,7 @@
 	const f = $derived(form as any);
 
 	let streakConfigJson = $state(data.streakConfigJson);
+	let tutorialText = $state(data.tutorialText);
 </script>
 
 <div class="p-6 max-w-lg">
@@ -51,6 +52,22 @@
 					</div>
 				{/each}
 			</div>
+		</div>
+
+		<div class="rounded-xl border border-zinc-800 bg-zinc-900 px-5 py-4">
+			<h2 class="mb-1 text-xs font-bold uppercase tracking-widest text-zinc-500">Tutorial text</h2>
+			<p class="mb-3 text-xs text-zinc-600">
+				Shown to players before they start this variant. 2–3 sentences recommended (≤300 chars ideal).
+			</p>
+			<textarea
+				name="tutorial_text"
+				bind:value={tutorialText}
+				rows="4"
+				maxlength="500"
+				placeholder="Explain the rules of this variant in 2–3 sentences…"
+				class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 resize-none"
+			></textarea>
+			<div class="mt-1 text-right text-xs text-zinc-600">{tutorialText.length} / 500</div>
 		</div>
 
 		<div class="rounded-xl border border-zinc-800 bg-zinc-900 px-5 py-4">

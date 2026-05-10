@@ -8,7 +8,7 @@ export const load: PageServerLoad = async ({ params }) => {
 	if (!VARIANT_FIELDS[variant]) redirect(302, '/admin/variant-defaults');
 
 	const db = createAdminClient();
-	const { data: row } = await db.from('variant_defaults').select('points_config, streak_config').eq('variant', variant).maybeSingle();
+	const { data: row } = await db.from('variant_defaults').select('points_config, streak_config, tutorial_text').eq('variant', variant).maybeSingle();
 
 	const saved = (row?.points_config as Record<string, unknown> | null) ?? {};
 	const savedPoints = (saved.field_points ?? {}) as Record<string, number>;
@@ -22,7 +22,9 @@ export const load: PageServerLoad = async ({ params }) => {
 		? JSON.stringify(row.streak_config, null, 2)
 		: JSON.stringify({ thresholds: [{ streak: 3, bonus: 5 }, { streak: 5, bonus: 10 }] }, null, 2);
 
-	return { variant, fields, streakConfigJson };
+	const tutorialText = row?.tutorial_text ?? '';
+
+	return { variant, fields, streakConfigJson, tutorialText };
 };
 
 export const actions: Actions = {
@@ -49,10 +51,13 @@ export const actions: Actions = {
 			}
 		}
 
+		const tutorialText = (data.get('tutorial_text') as string | null)?.trim() || null;
+
 		const { error: upsertErr } = await db.from('variant_defaults').upsert({
 			variant,
 			points_config: { field_points },
-			streak_config: streak_config as never
+			streak_config: streak_config as never,
+			tutorial_text: tutorialText
 		});
 
 		if (upsertErr) return fail(500, { error: upsertErr.message });

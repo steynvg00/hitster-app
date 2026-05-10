@@ -82,10 +82,12 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 
 	// Three-tier field points: challenge override > variant_defaults > hardcoded
 	let variantDefaultPoints: Record<string, number> = {};
-	const { data: vd } = await admin.from('variant_defaults').select('points_config').eq('variant', variant).maybeSingle();
+	let tutorialText: string | null = null;
+	const { data: vd } = await admin.from('variant_defaults').select('points_config, tutorial_text').eq('variant', variant).maybeSingle();
 	if (vd) {
 		const vdConfig = vd.points_config as Record<string, unknown>;
 		variantDefaultPoints = (vdConfig.field_points ?? {}) as Record<string, number>;
+		tutorialText = (vd as { tutorial_text?: string | null }).tutorial_text ?? null;
 	}
 
 	const challengeFieldPoints = (pcRaw.field_points ?? {}) as Record<string, number>;
@@ -236,7 +238,8 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		activeSetId,
 		activeSetRecapState,
 		showHint,
-		hintUsed
+		hintUsed,
+		tutorialText
 	};
 };
 

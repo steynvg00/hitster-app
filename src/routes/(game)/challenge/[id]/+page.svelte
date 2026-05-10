@@ -11,6 +11,7 @@
 	import { supabaseBrowser } from '$lib/supabase-browser';
 	import Waveform from '$lib/components/ui/Waveform.svelte';
 	import BonusTracker from '$lib/components/game/BonusTracker.svelte';
+	import TutorialOverlay from '$lib/components/game/TutorialOverlay.svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -247,6 +248,25 @@
 	// ── Hint modal ────────────────────────────────────────────────────────────
 	let showHintModal = $state(data.showHint && !!data.challenge.hint_text);
 
+	// ── Tutorial overlay ──────────────────────────────────────────────────────
+	let showTutorial = $state(false);
+	const tutorialEntry = $derived(
+		data.tutorialText
+			? [{ variant: data.challenge.variant, tutorial_text: data.tutorialText }]
+			: []
+	);
+
+	onMount(() => {
+		// Auto-show tutorial once per variant per team session (localStorage)
+		if (data.tutorialText && data.team?.id) {
+			const key = `tutorial_seen_${data.team.id}_${data.challenge.variant}`;
+			if (!localStorage.getItem(key)) {
+				showTutorial = true;
+				localStorage.setItem(key, '1');
+			}
+		}
+	});
+
 	// ── Field label display ───────────────────────────────────────────────────
 	const FIELD_LABELS: Record<AnswerField, string> = {
 		artist: 'Artist', title: 'Title', year: 'Year',
@@ -313,6 +333,14 @@
 		return () => cancelAnimationFrame(rafId);
 	});
 </script>
+
+{#if showTutorial && tutorialEntry.length > 0}
+	<TutorialOverlay
+		tutorials={tutorialEntry}
+		onclose={() => (showTutorial = false)}
+		primaryLabel="Start"
+	/>
+{/if}
 
 {#if showHintModal && data.challenge.hint_text}
 	<!-- ── Hint modal ──────────────────────────────────────────────────────── -->
@@ -511,14 +539,24 @@
 
 		<div class="mb-4 flex items-start justify-between gap-3">
 			<h1 class="text-2xl font-black">{data.challenge.title}</h1>
-			{#if data.challenge.hint_text && data.hintUsed}
-				<button
-					onclick={() => (showHintModal = true)}
-					class="shrink-0 rounded-full px-3 py-1 text-xs font-semibold transition-colors"
-					style="background-color: {teamHex}22; color: {teamHex}; border: 1px solid {teamHex}44;">
-					💡 Hint
-				</button>
-			{/if}
+			<div class="flex shrink-0 gap-2">
+				{#if tutorialEntry.length > 0}
+					<button
+						onclick={() => (showTutorial = true)}
+						class="rounded-full px-3 py-1 text-xs font-semibold transition-colors"
+						style="background-color: {teamHex}22; color: {teamHex}; border: 1px solid {teamHex}44;">
+						ⓘ
+					</button>
+				{/if}
+				{#if data.challenge.hint_text && data.hintUsed}
+					<button
+						onclick={() => (showHintModal = true)}
+						class="rounded-full px-3 py-1 text-xs font-semibold transition-colors"
+						style="background-color: {teamHex}22; color: {teamHex}; border: 1px solid {teamHex}44;">
+						💡 Hint
+					</button>
+				{/if}
+			</div>
 		</div>
 
 		<!-- Track tabs (multi-track only) -->
