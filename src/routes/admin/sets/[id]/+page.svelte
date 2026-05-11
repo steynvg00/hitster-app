@@ -250,7 +250,8 @@
 			<h2 class="text-sm font-bold uppercase tracking-widest text-zinc-400">Gameset Console</h2>
 			{#if isActive}
 				<form method="POST" action="?/toggle" use:enhance={() => async ({ update }) => update({ reset: false })}>
-					<button type="submit" class="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
+					<button type="submit"
+						class="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-semibold text-zinc-400 hover:border-zinc-500 hover:text-zinc-200 transition-colors">
 						Deactivate set
 					</button>
 				</form>
@@ -426,7 +427,10 @@
 									<span class="font-mono text-sm text-zinc-300">{card.id}</span>
 									<form method="POST" action="?/removeCard" use:enhance>
 										<input type="hidden" name="slug" value={card.id} />
-										<button type="submit" class="text-xs text-zinc-500 hover:text-red-400 transition-colors">Remove</button>
+										<button type="submit"
+										class="rounded px-2 py-0.5 text-xs font-semibold text-zinc-500 hover:bg-red-900/40 hover:text-red-400 transition-colors">
+										Remove
+									</button>
 									</form>
 								</div>
 							{/each}
