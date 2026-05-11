@@ -9,7 +9,7 @@
 	const gs = $derived(data.gameSet);
 	const isActive = $derived(gs.status === 'active');
 
-	// Live play_state + per-team progress via realtime
+	// Live state — updated via realtime
 	let livePlayState = $state<'joining' | 'playing' | 'recap'>(data.gameSet.play_state ?? 'joining');
 	let liveRecapState = $state<string>(data.gameSet.recap_state ?? 'pending');
 	let livePlayerCount = $state(data.playerCount ?? 0);
@@ -17,30 +17,47 @@
 	let liveTeamProgress = $state<Array<{ name: string; done: number; total: number }>>(data.teamProgress ?? []);
 
 	onMount(() => {
+		// game_sets UPDATE: track all console-relevant fields
 		const channel = supabaseBrowser
 			.channel(`set-console-${data.gameSet.id}`)
 			.on('postgres_changes', {
 				event: 'UPDATE', schema: 'public', table: 'game_sets', filter: `id=eq.${data.gameSet.id}`
 			}, (payload) => {
-				const p = payload.new as { play_state?: string; recap_state?: string };
+				type GSUpdate = {
+					play_state?: string; recap_state?: string;
+					nfc_lock_enabled?: boolean; randomizer_enabled?: boolean;
+					status?: string;
+				};
+				const p = payload.new as GSUpdate;
 				if (p.play_state) livePlayState = p.play_state as typeof livePlayState;
 				if (p.recap_state) liveRecapState = p.recap_state;
+				// Sync toggle state so both fields update after form actions
+				if (p.nfc_lock_enabled !== undefined) nfcLockEnabled = p.nfc_lock_enabled;
+				if (p.randomizer_enabled !== undefined) randomizerEnabled = p.randomizer_enabled;
 			})
 			.subscribe();
 
-		// Track player count updates
+		// players: track count and recent joiners
 		const playerChannel = supabaseBrowser
 			.channel(`set-console-players-${data.gameSet.id}`)
 			.on('postgres_changes', {
-				event: '*', schema: 'public', table: 'players', filter: `set_id=eq.${data.gameSet.id}`
+				event: 'INSERT', schema: 'public', table: 'players', filter: `set_id=eq.${data.gameSet.id}`
 			}, (payload) => {
-				if (payload.eventType === 'INSERT') {
-					livePlayerCount += 1;
-					const name = (payload.new as { display_name?: string }).display_name;
-					if (name) liveRecentPlayers = [name, ...liveRecentPlayers].slice(0, 5);
-				} else if (payload.eventType === 'DELETE') {
-					livePlayerCount = Math.max(0, livePlayerCount - 1);
-				}
+				livePlayerCount += 1;
+				const name = (payload.new as { display_name?: string }).display_name;
+				if (name) liveRecentPlayers = [name, ...liveRecentPlayers].slice(0, 5);
+			})
+			.on('postgres_changes', {
+				event: 'UPDATE', schema: 'public', table: 'players', filter: `set_id=eq.${data.gameSet.id}`
+			}, (payload) => {
+				// Player moved away from this set (set_id cleared)
+				const p = payload.new as { set_id?: string | null };
+				if (!p.set_id) livePlayerCount = Math.max(0, livePlayerCount - 1);
+			})
+			.on('postgres_changes', {
+				event: 'DELETE', schema: 'public', table: 'players'
+			}, () => {
+				livePlayerCount = Math.max(0, livePlayerCount - 1);
 			})
 			.subscribe();
 
