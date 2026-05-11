@@ -479,6 +479,19 @@ Migrations 0026–0028 (run manually in Supabase SQL Editor before using new fea
 
 ---
 
+## Session 10 complete ✓
+
+**Timer expiry stall fix**: The set page now polls `/api/auto-submit` every 10 seconds via a `$effect` while `play_state = 'playing'`. The endpoint already had the game-set-level timer flip (`play_state = 'recap'`). The `$effect` cleanup cancels the interval when the state changes.
+
+**First-player-join realtime fix**: Players are inserted without `set_id`; it's set via UPDATE when they join. The old INSERT filter (`set_id=eq.{id}`) never fired. Fixed by:
+- Returning `playerIds` from the server load
+- Seeding `knownPlayerIds = new Set(data.playerIds)` client-side
+- The UPDATE handler (which fires because Supabase filters on NEW row values) now increments `livePlayerCount` when a NEW player ID is seen for this set
+
+**Polish shipped**: "Time's up! / Ending game…" copy, End Game confirm text, saved ✓ flash 1.5s, NFC unlock helper text, Reset game scope note.
+
+---
+
 ## Pick up here
 
 Pending from the bug pile (§9 above) — none addressed yet. Suggested next steps:
