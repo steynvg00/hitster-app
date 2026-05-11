@@ -187,12 +187,14 @@ src/
 | 2026-05-02 | Session 8b: landing page + player identity — three-mode landing (Host/Solo/Teams), player onboarding with name + optional photo, hitster_player cookie, lobby stub, leave/sweep endpoints (migration 0017) |
 | 2026-05-02 | Session 8c: game sets + randomizer — game_sets/set_challenges tables (migration 0018), /admin/sets CRUD + challenge picker + NFC card management, /admin/sets/[id]/lobby realtime grid with move-player modal, /play/teams/sets picker, /play/teams/randomizing animation, NFC randomizer tag routing, assignTeam snake-order util |
 | 2026-05-08 | Session A: Supabase Auth (email magic link + Google OAuth), dev test-login bypass, ownership migration (0024, created_by on 8 tables), minimal host dashboard (/admin), host login UI moved to main page (HostAuthForm component), NFC Tags added to sidebar, active/inactive toggle in sets list, Session C polish (collapsible sidebar with localStorage, icons on dashboard tiles, removed stats line) |
-| 2026-05-08 | Session B: play_state lifecycle (joining/playing/recap) on game_sets (migration 0025), "Start the game" button on set page + dashboard with realtime, NFC randomizer split by play_state, /nfc/game-in-progress and /nfc/game-over placeholder pages, 4-state admin dashboard status panel |
-| 2026-05-08 | Mega Session: bonus mechanics (migrations 0026–0028), difficulty stars + round multiplier + comeback/streak/speed bonuses, ScoreBreakdown persisted in answers, BonusTracker component, animated score count-up, leaderboard card redesign with photos + streak badge + rank deltas, team photo uploads (team-photos bucket), collab artist multi-slot combobox, waiting room carousel, NFC hint scan flow |
-| 2026-05-11 | Session 9: migration 0029 (tutorial_text, nfc_lock_enabled, randomizer_enabled, last_results, challenge_unlocks), player state machine (/team lobby vs console), TutorialOverlay component, per-variant tutorial admin edit, tutorial ⓘ on challenge page, NFC unlock route + challenge guard, Gameset Console set page redesign, resetGame action + last results panel, Reset game on recap page |
-| 2026-05-11 | Session 9 polish: migration 0030 (fix nfc_tags purpose CHECK to allow 'challenge_unlock'), team page challenge list scoped to player's set, set console inline-editable fields (name/desc/team-count/expected/timer blur-to-save), realtime sync for nfc_lock + randomizer toggles, bordered button style pass, Copy link buttons on all NFC slug inputs, single-shot auto-submit call on timer tick-to-zero |
-| 2026-05-11 | Session 10: timer expiry stall fix ($effect polling /api/auto-submit every 10s while playing), first-player-join realtime fix (INSERT filter is dead — players insert without set_id; now increments on UPDATE via knownPlayerIds Set), polish (Time's up! copy, End Game confirm text, saved flash 1.5s, NFC unlock tooltip, Reset game scope note) |
-| 2026-05-11 | Session 10b: fix auto-submit early-return bug (game-set timer flip was unreachable when no challenge timers existed), NFC lock toggle moved to always-visible section with own ?/toggleNfcLock action (no longer bundled with setChallenges) |
+| 2026-05-09 | Session B (Game lifecycle): play_state field (joining/playing/recap), Start the game action, status panel 4 states, NFC randomizer split, migration 0025 |
+| 2026-05-09 | Session B Bug Fixes: panel reactivity (Bug A), end-and-reset clears play_state (Bug B), reactivate set resets scores+attempts (Bug C), tab UI jitter (Bug D), challenges panel compress |
+| 2026-05-10 | Theme system: 4 themes (tactical, led_stage, sound_reactive, max_defqon) + 2 stage themes (mainstage, showtime) + classic = 7 total, switchable via /admin/settings |
+| 2026-05-10 | Bug pile pass: Classic theme, mobile sidebar drawer (Bug 7), NFC ?next= preservation (Bug 2), inactive-set NFC page (Bug 10), player redirect on game end (Bug 3), TV podium new tab (Bug 4) |
+| 2026-05-10 | Mechanics mega-session: migration 0026 (difficulty_rating, speed_threshold_seconds, hint_text, current_streak, scores_hidden, streak_config, challenge_multiplier), 0027 (team_photos), 0028 (challenge_hints_used). Scoring cascade rewrite. Live bonus tracker, results breakdown animation, leaderboard redesign with photos + streak badge + rank deltas. Team photo upload, collab artist input, waiting room carousel, NFC hint scan flow |
+| 2026-05-11 | Set page rebuild: migration 0029 (tutorial_text, nfc_lock_enabled, randomizer_enabled, last_results, challenge_unlocks table). Player state machine (Lobby/Team Console). Tutorial system. NFC lock per challenge. Gameset Console with state-adaptive UI. Reset Game action + Last Results panel. Inline-editable name/description, blur-to-save fields |
+| 2026-05-11 | Set page polish: migration 0030 (NFC purpose constraint), Team Console set-scoping, button styling, timer expiry transition, realtime gaps, merged details into console, copy buttons for NFC tag URLs |
+| 2026-05-11 | Timer expiry final fix: /api/auto-submit early-return guard removed, NFC lock toggle always-visible with own action, $effect 10s polling while playing |
 
 ## Technical notes
 
@@ -307,10 +309,10 @@ SET status = 'inactive',
     assignment_index = 0;
 ```
 
-**Hard reset** — everything above, plus wipes all game set configuration. Use for a clean slate.
+**Hard reset** — same as soft reset, but also removes randomizer + challenge_unlock NFC cards and all player records. Use when tearing down after an event. Does NOT delete game_sets or set_challenges — configuration is preserved.
 
 ```sql
--- Soft reset steps first (player sessions, attempts, submissions, scores)
+-- Same as soft reset
 UPDATE players SET set_id = NULL, team_id = NULL WHERE set_id IS NOT NULL;
 DELETE FROM challenge_attempts;
 DELETE FROM challenge_hints_used;
@@ -319,11 +321,20 @@ DELETE FROM submissions;
 DELETE FROM review_requests;
 DELETE FROM activity_log;
 UPDATE teams SET score = 0, current_streak = 0;
--- Then wipe sets (cascades to set_challenges)
-DELETE FROM game_sets;
--- Remove randomizer and challenge_unlock NFC cards (challenge/team cards are permanent)
+UPDATE game_sets
+SET status = 'inactive',
+    play_state = 'joining',
+    started_at = NULL,
+    ended_at = NULL,
+    recap_ranking = '[]'::jsonb,
+    recap_reveal_index = 0,
+    recap_state = 'pending',
+    scores_hidden = false,
+    assignment_slots = '[]'::jsonb,
+    assignment_index = 0;
+-- Additionally: remove randomizer and challenge_unlock NFC cards (challenge/team cards are permanent)
 DELETE FROM nfc_tags WHERE purpose IN ('randomizer', 'challenge_unlock');
--- Optionally wipe all player records
+-- Remove all player records
 DELETE FROM players;
 ```
 

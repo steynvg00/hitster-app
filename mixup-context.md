@@ -178,6 +178,9 @@ All migrations run **manually via Supabase SQL Editor** — no CLI runner. Files
 - `recap_ranking`, `recap_reveal_index` for podium reveal sequence
 - `assignment_slots` (jsonb pre-shuffled team_id list), `assignment_index` (cursor)
 - `started_at` (when set activated), `ended_at` timestamps
+- `nfc_lock_enabled bool` — when true, each challenge requires the team to scan its NFC unlock tag before playing; toggled from the set console (migration 0029)
+- `randomizer_enabled bool` — enables the randomizer flow for this set (migration 0029)
+- `last_results jsonb` — snapshot of team rankings captured before a Reset Game action, shown as "Last results" in the console (migration 0029)
 
 ### Challenges
 - `variant`: `normal | label | anthem | vocal | fragments | kick | mashup | battle`
@@ -265,22 +268,27 @@ All migrations run **manually via Supabase SQL Editor** — no CLI runner. Files
 
 ---
 
-## 9. Currently broken — bug pile
+## 9. Bug pile
 
-Pending bugs not yet addressed. Several are regressions; track each carefully.
+### Fixed bugs
+
+| # | Bug | How fixed |
+|---|---|---|
+| 1 | **End-and-reset deletes set** | Reset Game action keeps `game_sets` row, transitions to `inactive/joining`; recap page uses separate resetGame action |
+| 2 | **NFC randomizer flow regressed** | `?next=` param preserved through onboarding redirect chain |
+| 3 | **Players don't redirect to thanks page** | Game end triggers redirect to `/play/thanks` via realtime `play_state` subscription |
+| 4 | **TV podium in new tab redirects home** | Podium page accessible without admin auth cookie |
+| 7 | **Mobile layout broken** | Admin sidebar collapses to a drawer on mobile portrait; toggle in header |
+| 10 | **Inactive-set NFC tap silent** | Randomizer tap for inactive set redirects to "no game running" page |
+
+### Open bugs
 
 | # | Bug | Symptom |
 |---|---|---|
-| 1 | **End-and-reset deletes set** | After recap "End and reset", `game_sets` row disappears entirely. Should toggle status to `inactive`, not delete. Confirmed: SQL count drops by 1 |
-| 2 | **NFC randomizer flow regressed** | Tap → onboarding → continues to `/play/teams/sets` (manual team picker), should go to `/nfc/randomize/[set_id]` for animation. The `?next=` parameter is dropping somewhere |
-| 3 | **Players don't redirect to thanks page** | Host clicks End and reset → players stay on results page or wherever they were, no redirect to `/play/thanks` |
-| 4 | **TV podium in new tab redirects home** | Right-click → open in new tab → lands on `/` instead of podium. May be auth gate (incognito has no cookie) or realtime channel issue |
 | 5 | **Audio effects not applying** | Pitch/tempo sliders save successfully and show amber badge, but playback doesn't sound different. Tone.js audio chain likely not initialized correctly |
 | 6 | **ffmpeg trim save fails** | `failed to import ffmpeg-core.js`. Likely CORS / unpkg cross-origin |
-| 7 | **Mobile layout broken** | Admin sidebar overlaps content on phone. Confirmed in screenshot. Horizontal mode displays correctly. Only portrait mobile is broken |
 | 8 | **Duplicate slug error link wrong** | "View existing tag →" goes to `/admin/sets` index instead of the specific set the existing tag is bound to. Partially fixed but still off |
 | 9 | **MP4/MOV screen recordings rejected** | Upload accepts only audio MIME types; screen recordings include video container. Need audio extraction step |
-| 10 | **Inactive-set NFC tap silent** | Tap randomizer for inactive/no-active set → redirects to `/` silently. Should show "no game running here" page |
 
 ---
 
@@ -331,6 +339,77 @@ In order. Three sessions for the dashboard arc, then bug pile, then variants, th
   - Optional NFC-required-to-start on a per-challenge basis (some rooms require physical scan, others don't)
   - Multi-host accounts with sharing via link
 
+### Roadmap additions from creative session (May 2026)
+
+These items came out of a wide-ranging creative direction chat. They are NOT ordered by implementation priority. When picking any of these up, discuss with planning chat first — many need details, some may be scrapped or merged.
+
+#### Legal hardening (BLOCKER for August event — must ship before sharing URL widely)
+- **Host whitelist + closed access**: New `host_whitelist (email)` table. Sign-up blocked for unlisted emails (strict mode). Bootstrap super-admin from .env. New `/admin/whitelist` management page. Add `noindex/nofollow` to all routes + permissive `robots.txt`. Players still join anonymously via NFC — they're guests of an event, not public users.
+
+#### Audio mechanics
+- **Frequency isolation per clip**: Add `frequency_low` and `frequency_high` to `clips.effects` JSONB. Apply via Web Audio API `BiquadFilterNode` chain at playback time. Powers a new "Frequency Hunt" variant where the audible band narrows or widens as difficulty modifier. Likely requires fixing Bug 5 (Tone.js chain) first OR using native Web Audio independently of Tone.js.
+- **Spotify/SoundCloud background music**: Optional ambient playlist during challenges (separate from challenge audio, doesn't reveal songs). DO NOT use Spotify Web Playback SDK (policy violation for games). Use Spotify Embed (`open.spotify.com/embed/playlist/...`) or SoundCloud Widget API. Host curates a public playlist; app embeds it. User settings: on/off toggle, hide metadata toggle, volume.
+
+#### New game modes (15 modes beyond existing 8 variants)
+
+Existing variants (normal, label, anthem, vocal, fragments, kick, mashup, battle) are scoring shapes — what fields you guess. The modes below are flow/structure changes — how the game is played.
+
+**Tier 1 — Core competitive:**
+- **Imposter Mode**: One secret team is the "mole". Other teams identify them. +50pts correct ID, -20pts incorrect accusation. Mole's answers are always wrong (or right — configurable). Adds `challenge_attempts.is_imposter` BOOLEAN, optional accusation voting phase per round.
+- **Battle Mode (tournament)**: 1v1 head-to-head bracket. Best score advances. Tiebreaker: speed.
+- **Relay Race**: One player per challenge, rotating. No team conferencing. Individual spotlight.
+
+**Tier 2 — Strategic:**
+- **Blind Auction**: Teams bid 1–50pts before hearing the song. Confidence multiplier. See all bids before deciding.
+- **King of the Hill**: Top team gets 2× multiplier next round but harder challenges. Others get slight hint advantage.
+- **Sabotage Draft**: Teams draft challenges for opponents before the game.
+- **Prophecy Mode**: Predict the next song before playback. +20pts for correct prediction. See others' predictions (psychology layer).
+
+**Tier 3 — Chaos:**
+- **Reverse Mode**: 5-second mid-song snippet, no intro. 10-second answer window.
+- **Mashup Gauntlet**: 2–3 songs simultaneously or chopped/remixed per challenge.
+- **Hot Potato**: Difficulty escalates with each pass; later teams get compensation bonus.
+- **Time Crunch**: Time limit shrinks each round (30s → 5s). Speed bonus scales inversely.
+- **Conspiracy Mode**: Multiple-choice with wildly absurd wrong answers (host reads them in funny voices).
+- **Swap Mode**: Mid-game, one player per team swaps teams. Surprise reshuffling.
+
+**Tier 4 — Role-based/asymmetrical:**
+- **DJ Booth**: One team plays DJ (selects songs for others). DJs earn points based on others' accuracy.
+- **Saboteur**: One team can veto one answer per round. Others identify them by voting patterns.
+- **Mentor**: One team answers first; others see and decide whether to follow. Mentors gain/lose based on whether others follow correctly.
+
+**Tier 5 — Long-form:**
+- **Survivor Elimination**: 3 lives per team. Wrong = lose life. 0 = eliminated. Speed bonuses restore lives.
+- **Gauntlet**: Best-of-7 or 10. Rank-based scoring per round (10/5/2pts).
+- **Campaign Mode**: 3–4 games in a row in different modes. Cumulative score for ultimate winner.
+
+**Tier 6 — Accessibility/chill:**
+- **Collaborative Mode**: All teams vs. the difficulty. Cooperative play.
+- **Spectrum Mode**: Slider answers (BPM, year, era). Degrees of rightness, no hard wrong.
+- **Remix Voting**: Teams vote on challenge variant before playback (original/acoustic/remix/cover/live).
+
+#### Visual identity (deferred to dedicated session)
+- **Logo direction**: "Shattered Explosion" wordmark as hero graphic for high-energy contexts (posters, recap, podium). Clean typography fallback (text-only) for app icon, favicon, small layouts.
+- **Festival brand palette**: Primary magenta `#FF2DAA`, secondary cyan `#00E5FF`, accent acid yellow `#FFE600`, violet bridge `#7C4DFF`, pyro orange `#FF7F11`, near-black indigo background `#0B0B1F`, ice white text `#E5F2FF`. (Replaces/supplements current Defqon-derived palette; can coexist with team colors.)
+- **Dashboard glassmorphic composition**: Deep night-sky base + star particles, laser beam overlays, stage silhouette at lower third, halo behind central UI, glassmorphic cards (`rgba(21,23,46,0.7)` + `backdrop-filter: blur(20px)` + 1px magenta border-glow), arcade headline typography. May replace/extend existing Mainstage theme.
+
+#### Spotify/legal architecture (reference, not implementation)
+
+When/if Spotify integration ships for challenge audio (currently we use uploaded clips):
+- Use Hitster pattern: QR codes that deep-link to `open.spotify.com/track/...` (opens user's own Spotify app)
+- DO NOT use Spotify Web Playback SDK — Developer Policy §III.2 prohibits games
+- Background music via embeds/widget is OK (user's app plays, not your app)
+
+#### Open questions (resolve before implementing)
+
+1. Imposter variant: mole's answers always wrong, always right, or configurable per game?
+2. Background music: skip for now, or build minimal embed?
+3. Bonus cascade tuning: exact speed bonus value, streak thresholds (currently 3=+1, 5=+3)?
+4. Leaderboard reveal: hide scores starting which challenge (last 2? configurable)?
+5. Game mode priority: which 3 modes to build first beyond Standard?
+6. Frequency isolation: clip-level effect for variety, or new "Frequency Hunt" variant?
+7. Whitelist strictness: block sign-up entirely for unlisted, or allow account creation with "pending approval" state?
+
 ---
 
 ## 11. Visual identity
@@ -374,10 +453,10 @@ Each non-homepage surface gets its OWN treatment in future sessions, not the hom
 ## 12. Conventions / habits
 
 ### SQL reset (in CLAUDE.md)
-- **Soft reset** — preserves game_sets, set_challenges, challenges, tracks, NFC cards. Clears: submissions, review_requests, activity_log, challenge_attempts, team scores. Sets challenges back to `is_active = true`.
-- **Hard reset** — soft reset PLUS wipes game_sets, set_challenges. Use when tearing down for fresh testing.
+- **Soft reset** — preserves game_sets, set_challenges, challenges, tracks, NFC cards. Clears: submissions, review_requests, activity_log, challenge_attempts, challenge_hints_used, challenge_unlocks, team scores. Resets game_sets to `inactive/joining`.
+- **Hard reset** — same as soft reset, but also removes randomizer + challenge_unlock NFC cards and all player records. Does NOT delete game_sets or set_challenges — configuration is preserved.
 
-Bug previously: soft reset block tried to set `status = 'draft'` which silently violates the new CHECK constraint, causing the UPDATE to no-op. Fixed in commit (Bug B fix).
+Note: `recap_state` must be set to `'pending'` (not NULL) and `recap_ranking` to `'[]'::jsonb` in reset SQL — NULL/missing values violate CHECK constraints.
 
 ### Testing rules
 - **Player flows**: incognito browser windows. Multiple incognitos for multi-team tests.
@@ -388,7 +467,7 @@ Bug previously: soft reset block tried to set `status = 'draft'` which silently 
 
 ### Migrations
 - Manually pasted into Supabase SQL Editor (no CLI runner)
-- Sequential numbering (0001 → 0023)
+- Sequential numbering (0001 → 0030)
 - Idempotent where possible (`if not exists`)
 - After running, sanity-check via `information_schema.columns` queries
 
@@ -402,135 +481,34 @@ Bug previously: soft reset block tried to set `status = 'draft'` which silently 
 
 ---
 
-## 13. Where we left off
+## 13. Where we left off (May 11, 2026)
 
-Just completed:
-- **Homepage redesign** — MixUp! wordmark + tagline + Host login button + 6 randomized animated background variants. Old blurry variants commented out for now.
+**Recently shipped (verified):**
+- Supabase Auth + ownership migration + minimal dashboard (Session A)
+- Game lifecycle state machine (joining/playing/recap)
+- Set page rebuild: Gameset Console with inline editing, state-adaptive UI, NFC lock toggle, randomizer toggle, copy buttons
+- Tutorial system (per-variant text, lobby + in-challenge access)
+- Player state machine (Lobby → Team Console → Results → Thanks)
+- Reset Game action + Last Results panel
+- Theme system: 7 themes including Mainstage, Showtime, Classic
+- 6 of 10 original bugs from §9 fixed
 
-Still pending:
-- The full bug pile (§9) — none addressed since the homepage redesign
+**Pushed but partially unverified (need full walk):**
+- Mechanics commits: bonus tracker, results breakdown animation, leaderboard redesign, team photos, collab artists, waiting carousel, NFC hint scan flow (Tier 1 verified, Tier 2 + 3 pending)
+- Latest timer expiry fix
 
-User decisions for the next phase:
-- **Auth providers**: email + Google (no Apple for now)
-- **Dashboard scope**: minimal — status panel + quick action tiles, defer recent activity feed and waveform header
-- **Existing data ownership**: assign all existing test data to first registered account on login
-- **Session split**: 3 sessions (A: auth + minimal dashboard, B: game lifecycle redesign, C: tile customization + NFC tag manager + aesthetics)
-- **Mobile layout fix**: deferred until after dashboard arc
+**Open from §9 bug pile:**
+- Bug 5: Audio pitch/tempo effects not applying (Tone.js chain)
+- Bug 6: ffmpeg trim CORS error
+- Bug 8: Duplicate slug error link goes to wrong location
+- Bug 9: MP4/MOV screen recordings rejected on upload
 
----
-
-## Session A complete ✓
-
-- Supabase Auth setup (email magic link working; Google OAuth pending cloud propagation)
-- Test login button for local dev
-- Ownership migration 0024_ownership (created_by on 8 tables)
-- Minimal host dashboard (stats, status panel, 6 quick tiles)
-- Quick fixes: NFC Tags in sidebar, active/inactive toggle in set list
-- Session C polish: collapsible sidebar, icons on tiles, removed stats line
-
----
-
-## Session B complete ✓
-
-- Migration 0025: `play_state` column on `game_sets` (`joining | playing | recap`, default `joining`)
-- "Start the game →" button on `/admin/sets/[id]` (only in joining phase); disappears once playing; realtime update via `supabaseBrowser` subscription
-- Same button inline on admin dashboard (`/admin`) with 4-state status panel (no game / joining / playing / recap), each with appropriate action button and colour scheme; realtime subscription keeps panel live without reload
-- NFC randomizer (`/nfc/randomize/[set_id]`) now checks `play_state` **before** player auth:
-  - `joining` → assign team as before
-  - `playing` → redirect to `/nfc/game-in-progress/[set_id]` ("Game already in progress")
-  - `recap` → redirect to `/nfc/game-over/[set_id]` ("Game over, view leaderboard")
-- `toggle` deactivation now resets `play_state = 'joining'` so next activation starts fresh
-- `startRecap` action now sets `play_state = 'recap'` alongside `recap_state = 'pending'`
+**Highest-priority next moves:**
+1. Walk Tier 2+3 verification for the mechanics work (catch anything broken before piling on)
+2. Host whitelist / closed access (BLOCKER for August event)
+3. Address open §9 bugs OR start game mode rollout
+4. Visual identity pass (logo, palette, glassmorphic dashboard) — dedicated session
 
 ---
 
-## Mega Session complete ✓
-
-Migrations 0026–0028 (run manually in Supabase SQL Editor before using new features).
-
-**Bonus scoring**
-- `difficulty_rating` (1–5 stars) on challenges; admin UI in `/admin/challenges/[id]`
-- `challenge_multiplier` (1–5×) per challenge in a set; set via dropdown in `/admin/sets/[id]`
-- Comeback multiplier (1.5×) when team score < 50% of leader
-- Streak bonus from `variant_defaults.streak_config.thresholds` (configure in `/admin/variant-defaults/[variant]`)
-- Speed bonus (+5 pts) when team submits within `challenge.speed_threshold_seconds`
-- `computeBreakdown()` in `src/lib/server/scoring.ts`; breakdown stored in `submissions.answers[0].breakdown`
-- `BonusTracker` component shows active pills on challenge page
-
-**Leaderboard redesign**
-- Both `/play/leaderboard` and `/leaderboard` (TV) show team avatar (photo or initials), streak badge (🔥N when ≥2), score bar, rank-change arrows (▲/▼N, bounce animation)
-- `scores_hidden` on game_sets: when toggled by host from `/admin/live`, score bars disappear from player leaderboard (realtime, no reload)
-- Animated score count-up on challenge results (ease-out cubic via RAF)
-
-**Team photos**
-- Upload in `/admin/teams` → `team-photos` Supabase Storage bucket
-- Shown in admin teams list, both leaderboard views, waiting-room reveal card
-
-**Collab artist input**
-- When artist field is in combobox mode, "＋ Add artist" button lets teams stack up to 3 Combobox slots
-- Artists joined with " & " before submission — compatible with existing fuzzy scoring
-
-**Waiting room carousel**
-- Recap waiting screen shows a "While you wait…" section cycling through all set challenges
-- 6s auto-advance, prev/next buttons, dot indicators
-
-**NFC hint scan flow**
-- Hint NFC tag (`purpose = 'hint'`) → `/nfc/hint/[challenge_id]` → records `challenge_hints_used` row → redirect to `/challenge/[id]?hint=1`
-- Challenge page shows bottom-sheet modal with `hint_text` on first scan
-- Re-openable via 💡 Hint button for teams that have already scanned
-
----
-
-## Session 9 polish complete ✓
-
-Done in the same sitting as Session 9, after the main session doc was written:
-
-- **Migration 0030**: fixed `nfc_tags.purpose` CHECK constraint to allow `'challenge_unlock'` (0029 introduced the type but the constraint was wrong)
-- **Team page challenge list**: now scoped to `set_challenges` for the player's current set, ordered by `position`; falls back to all active challenges when player has no set
-- **Set console inline editing**: name, description, team count, expected player count, and timer (minutes) are now editable in-place with blur-to-save; shows "saved ✓" flash
-- **Realtime toggle sync**: `nfc_lock_enabled` and `randomizer_enabled` propagate into local state via the `game_sets` realtime subscription so toggles stay accurate without reload
-- **NFC URL copy buttons**: all three slug locations on `/admin/sets/[id]` (per-challenge unlock inputs, randomizer card rows, add-card input) have a Copy button that writes `{origin}/nfc/{slug}` to clipboard with 1.5s "Copied ✓" flash
-- **Button style pass**: "Deactivate set" and "Remove card" converted to proper bordered buttons matching the admin UI style
-- **Timer single-shot**: countdown tick calls `/api/auto-submit` once when it hits 0:00 (was later supplemented by the $effect 10s poll in Session 10)
-
----
-
-## Session 10 complete ✓
-
-**Timer expiry stall fix**: The set page now polls `/api/auto-submit` every 10 seconds via a `$effect` while `play_state = 'playing'`. The endpoint already had the game-set-level timer flip (`play_state = 'recap'`). The `$effect` cleanup cancels the interval when the state changes.
-
-**First-player-join realtime fix**: Players are inserted without `set_id`; it's set via UPDATE when they join. The old INSERT filter (`set_id=eq.{id}`) never fired. Fixed by:
-- Returning `playerIds` from the server load
-- Seeding `knownPlayerIds = new Set(data.playerIds)` client-side
-- The UPDATE handler (which fires because Supabase filters on NEW row values) now increments `livePlayerCount` when a NEW player ID is seen for this set
-
-**Polish shipped**: "Time's up! / Ending game…" copy, End Game confirm text, saved ✓ flash 1.5s, NFC unlock helper text, Reset game scope note.
-
----
-
-## Session 10b complete ✓
-
-**auto-submit early-return bug**: The endpoint had `if (!challenges?.length) return json({ created: 0 })` which meant the game-set-level timer flip never ran when a set had no per-challenge timers. Fixed by converting the early return to a guarded `if` block, so the game-set check always executes.
-
-**NFC lock toggle**: Moved out of the collapsible challenges body into an always-visible row at the top of the challenges section. Now has its own `?/toggleNfcLock` action (same pattern as randomizer toggle). Removed from `setChallenges` action and form. Per-challenge slug inputs still live inside the challenges form (saved via Save Challenge Order).
-
----
-
-## Pick up here
-
-**What's solid now (as of Session 10b)**:
-- Game timer → auto-end → recap transition works end-to-end (auto-submit polling + game-set flip)
-- Set console inline editing, realtime toggles, NFC URL copy buttons all working
-- NFC lock toggle is always visible and saves independently
-- First-player-join correctly triggers "Start the game" button via realtime UPDATE
-
-**Pending from the bug pile (§9 above)** — none addressed yet:
-- **Bug 1**: End-and-reset deletes the game_sets row — high priority, breaks re-use
-- **Bug 2**: NFC randomizer `?next=` param dropping — blocks the core onboarding flow
-- **Bug 3**: Players don't redirect to thanks page on game end
-- **Bug 7**: Mobile layout broken (admin sidebar overlaps on portrait phone)
-
-**Next session options**:
-- Bug 1 (end-and-reset) — highest impact, breaks re-use of sets
-- Session C — drag-to-reorder dashboard tiles, `/admin/nfc-tags` full list, dashboard aesthetics
-- Bug 2 (NFC randomizer `?next=` drop) — blocks core onboarding flow for new players
+## Pick up here — Verification walk + planning next direction
