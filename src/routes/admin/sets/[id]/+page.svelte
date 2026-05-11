@@ -551,6 +551,21 @@
 			<span class="text-zinc-600 text-sm">{challengesExpanded ? '▲' : '▼'}</span>
 		</button>
 
+		<!-- NFC lock toggle: always visible, independent of collapsible state and set status -->
+		<div class="border-b border-zinc-800 px-5 py-3 flex items-center justify-between">
+			<div>
+				<span class="text-sm font-semibold text-zinc-300">NFC unlock required</span>
+				<p class="text-xs text-zinc-600 mt-0.5">When enabled, each challenge requires the team to scan its NFC tag before playing.</p>
+			</div>
+			<form method="POST" action="?/toggleNfcLock" use:enhance={() => async ({ update }) => update({ reset: false })}>
+				<button type="submit"
+					class="rounded-full px-3 py-1 text-xs font-semibold transition-colors
+						{nfcLockEnabled ? 'bg-green-800/60 text-green-400 hover:bg-green-800' : 'bg-zinc-800 text-zinc-500 hover:text-zinc-300'}">
+					{nfcLockEnabled ? 'ON' : 'OFF'}
+				</button>
+			</form>
+		</div>
+
 		{#if challengesExpanded}
 			<div class="p-5">
 				{#if isActive}
@@ -565,7 +580,6 @@
 					<input type="hidden" name="challenge_ids" value={selected.join(',')} />
 					<input type="hidden" name="multipliers_json" value={JSON.stringify(multipliers)} />
 					<input type="hidden" name="nfc_slugs_json" value={JSON.stringify(nfcSlugs)} />
-					<input type="hidden" name="nfc_lock_enabled" value={String(nfcLockEnabled)} />
 
 					{#if selected.length > 0}
 						<div class="mb-4 space-y-1">
@@ -650,20 +664,6 @@
 							{/each}
 						</div>
 					{/if}
-
-					<!-- NFC lock toggle -->
-					<div class="mb-4 flex items-center justify-between rounded-lg border border-zinc-700 bg-zinc-800/40 px-4 py-3">
-						<div>
-							<span class="text-sm font-semibold text-zinc-300">NFC unlock required</span>
-							<p class="text-xs text-zinc-600 mt-0.5">When enabled, each challenge requires the team to scan its NFC tag before playing.</p>
-						</div>
-						<button type="button"
-							onclick={() => (nfcLockEnabled = !nfcLockEnabled)}
-							class="rounded-full px-3 py-1 text-xs font-semibold transition-colors
-								{nfcLockEnabled ? 'bg-green-800/60 text-green-400 hover:bg-green-800' : 'bg-zinc-800 text-zinc-500 hover:text-zinc-300'}">
-							{nfcLockEnabled ? 'ON' : 'OFF'}
-						</button>
-					</div>
 
 					<button type="submit" disabled={savingChallenges}
 						class="rounded-lg bg-amber-400 px-4 py-2 text-sm font-bold text-zinc-950 hover:bg-amber-300 disabled:opacity-50">

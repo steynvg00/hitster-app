@@ -103,11 +103,6 @@ export const actions: Actions = {
 		let nfcSlugsMap: Record<string, string> = {};
 		try { nfcSlugsMap = JSON.parse((formData.get('nfc_slugs_json') as string | null) ?? '{}'); } catch { /* ok */ }
 
-		const nfcLockEnabled = (formData.get('nfc_lock_enabled') as string | null) === 'true';
-
-		// Update nfc_lock_enabled on the set
-		await db.from('game_sets').update({ nfc_lock_enabled: nfcLockEnabled }).eq('id', params.id);
-
 		// Rebuild set_challenges
 		await db.from('set_challenges').delete().eq('set_id', params.id);
 		if (challengeIds.length > 0) {
@@ -181,6 +176,14 @@ export const actions: Actions = {
 			if (error) return fail(500, { error: 'Could not activate set' });
 			redirect(303, `/admin/sets/${params.id}/lobby`);
 		}
+	},
+
+	toggleNfcLock: async ({ params }) => {
+		const db = createAdminClient();
+		const { data: gs } = await db.from('game_sets').select('nfc_lock_enabled').eq('id', params.id).maybeSingle();
+		if (!gs) return fail(404, { error: 'Set not found' });
+		await db.from('game_sets').update({ nfc_lock_enabled: !gs.nfc_lock_enabled }).eq('id', params.id);
+		return { success: true };
 	},
 
 	toggleRandomizer: async ({ params }) => {
