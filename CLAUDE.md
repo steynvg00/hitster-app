@@ -187,6 +187,7 @@ src/
 | 2026-05-08 | Mega Session: bonus mechanics (migrations 0026–0028), difficulty stars + round multiplier + comeback/streak/speed bonuses, ScoreBreakdown persisted in answers, BonusTracker component, animated score count-up, leaderboard card redesign with photos + streak badge + rank deltas, team photo uploads (team-photos bucket), collab artist multi-slot combobox, waiting room carousel, NFC hint scan flow |
 | 2026-05-11 | Session 9: migration 0029 (tutorial_text, nfc_lock_enabled, randomizer_enabled, last_results, challenge_unlocks), player state machine (/team lobby vs console), TutorialOverlay component, per-variant tutorial admin edit, tutorial ⓘ on challenge page, NFC unlock route + challenge guard, Gameset Console set page redesign, resetGame action + last results panel, Reset game on recap page |
 | 2026-05-11 | Session 10: timer expiry stall fix ($effect polling /api/auto-submit every 10s while playing), first-player-join realtime fix (INSERT filter is dead — players insert without set_id; now increments on UPDATE via knownPlayerIds Set), polish (Time's up! copy, End Game confirm text, saved flash 1.5s, NFC unlock tooltip, Reset game scope note) |
+| 2026-05-11 | Session 10b: fix auto-submit early-return bug (game-set timer flip was unreachable when no challenge timers existed), NFC lock toggle moved to always-visible section with own ?/toggleNfcLock action (no longer bundled with setChallenges) |
 
 ## Technical notes
 
@@ -195,6 +196,16 @@ Stored in `challenge.points_config.field_modes`, not in `answer_options.input_mo
 
 ### Scoring module
 All scoring logic is in `src/lib/server/scoring.ts`. Key exports: `VARIANT_FIELDS`, `DEFAULT_INPUT_MODES`, `FIELD_POOL_TABLE`, `DEFAULT_FIELD_MAX`, `scoreField`, `buildFieldResults`, `scoreSubmission`. Three-tier point override priority: `challenge.points_config.field_points` > `variant_defaults.points_config.field_points` > `DEFAULT_FIELD_MAX`.
+
+### /api/auto-submit structure
+Two independent sections — NEVER let one gate the other:
+1. Per-team challenge auto-close (guarded by `if (challenges?.length)`, NOT an early return)
+2. Game-set-level timer flip (`play_state → 'recap'`) — always runs unconditionally
+
+The old early return `if (!challenges?.length) return` was the bug: it prevented the game-set check from running when a set had no per-challenge timers.
+
+### NFC lock toggle
+Saved via its own `?/toggleNfcLock` action (same pattern as `toggleRandomizer`). NOT part of `setChallenges`. The toggle lives outside the collapsible challenges body so it's always visible regardless of section state or set status. Per-challenge slug inputs (shown when toggle is ON) remain inside the challenges form — they're challenge-level data saved via `setChallenges`.
 
 ### Players realtime subscription pattern (set console)
 Players are **inserted** without `set_id` (set during `/play/[mode]` onboarding), then **updated** when they join a set. The INSERT subscription filter `set_id=eq.{id}` therefore never fires for new joiners. The correct approach: subscribe to UPDATE with the same filter (Supabase realtime filters on NEW row values, so this fires when `set_id` is assigned). In the UPDATE handler, check the player ID against a `knownPlayerIds` Set (seeded from server-loaded player IDs) to avoid double-counting profile-update events.

@@ -492,6 +492,14 @@ Migrations 0026–0028 (run manually in Supabase SQL Editor before using new fea
 
 ---
 
+## Session 10b complete ✓
+
+**auto-submit early-return bug**: The endpoint had `if (!challenges?.length) return json({ created: 0 })` which meant the game-set-level timer flip never ran when a set had no per-challenge timers. Fixed by converting the early return to a guarded `if` block, so the game-set check always executes.
+
+**NFC lock toggle**: Moved out of the collapsible challenges body into an always-visible row at the top of the challenges section. Now has its own `?/toggleNfcLock` action (same pattern as randomizer toggle). Removed from `setChallenges` action and form. Per-challenge slug inputs still live inside the challenges form (saved via Save Challenge Order).
+
+---
+
 ## Pick up here
 
 Pending from the bug pile (§9 above) — none addressed yet. Suggested next steps:
