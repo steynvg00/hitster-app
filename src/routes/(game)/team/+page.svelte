@@ -214,29 +214,35 @@
 		</div>
 
 		<!-- Stats + action row -->
-		<div class="flex items-center justify-between">
-			{#if data.activeSet}
-				<div class="text-sm text-zinc-400">
-					<span class="font-bold text-white">{data.setCompletedCount}</span>
-					<span> / {data.setTotalCount} challenges done</span>
-				</div>
-			{/if}
-			<div class="flex gap-3">
-				{#if data.activeSet?.status === 'active'}
-					<a href="/play/leaderboard" class="text-sm text-zinc-400 underline underline-offset-2">Leaderboard</a>
-				{:else}
-					<a href="/leaderboard" class="text-sm text-zinc-400 underline underline-offset-2">Leaderboard</a>
-				{/if}
-				{#if data.setTutorials.length > 0}
-					<button
-						type="button"
-						onclick={() => (showTutorials = true)}
-						class="text-sm text-amber-400 underline underline-offset-2"
-					>
-						Tutorials
-					</button>
-				{/if}
+		{#if data.activeSet}
+			<div class="text-sm text-zinc-500">
+				<span class="font-bold text-white">{data.setCompletedCount}</span>
+				/ {data.setTotalCount} challenges done
 			</div>
+		{/if}
+
+		<!-- Action buttons row -->
+		<div class="grid grid-cols-2 gap-3 {data.setTutorials.length > 0 ? 'sm:grid-cols-3' : ''}">
+			{#if data.activeSet?.status === 'active'}
+				<a href="/play/leaderboard"
+					class="flex items-center justify-center rounded-xl border border-zinc-700 px-4 py-3 text-sm font-semibold text-zinc-300 hover:border-zinc-500 hover:text-white transition-colors">
+					Leaderboard
+				</a>
+			{:else}
+				<a href="/leaderboard"
+					class="flex items-center justify-center rounded-xl border border-zinc-700 px-4 py-3 text-sm font-semibold text-zinc-300 hover:border-zinc-500 hover:text-white transition-colors">
+					Leaderboard
+				</a>
+			{/if}
+			{#if data.setTutorials.length > 0}
+				<button
+					type="button"
+					onclick={() => (showTutorials = true)}
+					class="rounded-xl border px-4 py-3 text-sm font-semibold transition-colors"
+					style="border-color: {c.bg}44; color: {c.bg}; background-color: {c.bg}11;">
+					Tutorials
+				</button>
+			{/if}
 		</div>
 
 		<!-- Challenges -->

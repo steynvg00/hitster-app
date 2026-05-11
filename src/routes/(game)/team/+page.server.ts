@@ -26,11 +26,42 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 	const position = ((allTeams ?? []).findIndex((t) => t.id === locals.teamId) + 1) || 1;
 	const totalTeams = (allTeams ?? []).length;
 
-	// Active challenges + this team's submission status
-	const { data: challenges } = await supabase
-		.from('challenges')
-		.select('id, title, variant, timer_seconds')
-		.eq('is_active', true);
+	// Determine active set_id for challenge filtering (resolved below with player lookup)
+	let playerSetId: string | null = null;
+	if (locals.playerId) {
+		const { data: playerRow } = await admin
+			.from('players')
+			.select('set_id')
+			.eq('id', locals.playerId)
+			.maybeSingle();
+		playerSetId = playerRow?.set_id ?? null;
+	}
+
+	// Challenges: scoped to player's set when in one, otherwise all active
+	let challenges: Array<{ id: string; title: string; variant: string; timer_seconds: number }> = [];
+	if (playerSetId) {
+		const { data: scRows } = await admin
+			.from('set_challenges')
+			.select('challenge_id, position')
+			.eq('set_id', playerSetId)
+			.order('position');
+		const setChallengeIds = (scRows ?? []).map((sc) => sc.challenge_id);
+		if (setChallengeIds.length > 0) {
+			const { data: chs } = await supabase
+				.from('challenges')
+				.select('id, title, variant, timer_seconds')
+				.in('id', setChallengeIds);
+			// Preserve set order
+			const posMap = new Map((scRows ?? []).map((sc) => [sc.challenge_id, sc.position]));
+			challenges = (chs ?? []).sort((a, b) => (posMap.get(a.id) ?? 0) - (posMap.get(b.id) ?? 0));
+		}
+	} else {
+		const { data: chs } = await supabase
+			.from('challenges')
+			.select('id, title, variant, timer_seconds')
+			.eq('is_active', true);
+		challenges = chs ?? [];
+	}
 
 	const { data: submissions } = await supabase
 		.from('submissions')
@@ -39,7 +70,7 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 
 	const submittedMap = new Map((submissions ?? []).map((s) => [s.challenge_id, s.score]));
 
-	const challengeList = (challenges ?? []).map((c) => ({
+	const challengeList = challenges.map((c) => ({
 		...c,
 		status: submittedMap.has(c.id) ? ('completed' as const) : ('available' as const),
 		earnedScore: submittedMap.get(c.id) ?? null
@@ -75,18 +106,12 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 	let setTotalCount = 0;
 	let challengeUnlocks: string[] = [];
 
-	if (locals.playerId) {
-		const { data: player } = await admin
-			.from('players')
-			.select('set_id')
-			.eq('id', locals.playerId)
-			.maybeSingle();
-
-		if (player?.set_id) {
+	if (playerSetId) {
+		{
 			const { data: gs } = await admin
 				.from('game_sets')
 				.select('id, status, play_state, name, recap_state, team_count, nfc_lock_enabled')
-				.eq('id', player.set_id)
+				.eq('id', playerSetId)
 				.maybeSingle();
 
 			if (gs) {
