@@ -110,15 +110,27 @@
 
 	// ── Timer display ─────────────────────────────────────────────────────────
 	let timerDisplay = $state('');
+	let timerExpired = $state(false);
+
 	onMount(() => {
-		if (!gs.total_timer_seconds || !gs.started_at || livePlayState !== 'playing') return;
+		if (!gs.total_timer_seconds || !gs.started_at) return;
+
 		const endTime = new Date(gs.started_at).getTime() + gs.total_timer_seconds * 1000;
+
 		const tick = () => {
+			if (livePlayState !== 'playing') return;
 			const remaining = Math.max(0, endTime - Date.now());
 			const m = Math.floor(remaining / 60000);
 			const s = Math.floor((remaining % 60000) / 1000);
 			timerDisplay = `${m}:${s.toString().padStart(2, '0')}`;
+
+			if (remaining === 0 && !timerExpired) {
+				timerExpired = true;
+				// Trigger server-side auto-end (same endpoint /admin/live polls)
+				fetch('/api/auto-submit', { method: 'POST' }).catch(() => {});
+			}
 		};
+
 		tick();
 		const iv = setInterval(tick, 1000);
 		return () => clearInterval(iv);
@@ -245,8 +257,13 @@
 				<!-- Playing state -->
 				{#if timerDisplay}
 					<div class="mb-4 text-center">
-						<div class="font-mono text-4xl font-black text-amber-400">{timerDisplay}</div>
-						<div class="text-xs text-zinc-600 mt-0.5">remaining</div>
+						{#if timerExpired}
+							<div class="font-mono text-2xl font-black text-red-400">Time's up</div>
+							<div class="text-xs text-zinc-500 mt-0.5">Closing game…</div>
+						{:else}
+							<div class="font-mono text-4xl font-black text-amber-400">{timerDisplay}</div>
+							<div class="text-xs text-zinc-600 mt-0.5">remaining</div>
+						{/if}
 					</div>
 				{/if}
 
@@ -263,9 +280,9 @@
 
 				<form method="POST" action="?/startRecap" use:enhance
 					onsubmit={(e) => { if (!confirm('End game and start recap? Players will be redirected to the waiting screen.')) e.preventDefault(); }}>
-					<button type="submit"
-						class="w-full rounded-xl bg-red-700 py-3 text-sm font-bold text-white hover:bg-red-600 transition-colors">
-						{timerDisplay ? `End game (${timerDisplay} left)` : 'End game'}
+					<button type="submit" disabled={timerExpired}
+						class="w-full rounded-xl bg-red-700 py-3 text-sm font-bold text-white hover:bg-red-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+						End game
 					</button>
 				</form>
 
