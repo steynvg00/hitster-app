@@ -177,6 +177,19 @@
 	function triggerAutoSave() {
 		autoSaveForm?.requestSubmit();
 	}
+
+	// ── NFC URL copy ──────────────────────────────────────────────────────────
+	let copiedSlug = $state<string | null>(null);
+	let copyTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function copyNfcUrl(slug: string) {
+		if (!slug) return;
+		navigator.clipboard.writeText(`${window.location.origin}/nfc/${slug}`).then(() => {
+			copiedSlug = slug;
+			if (copyTimer) clearTimeout(copyTimer);
+			copyTimer = setTimeout(() => { copiedSlug = null; }, 1500);
+		});
+	}
 </script>
 
 <svelte:head>
@@ -425,13 +438,22 @@
 							{#each data.cards as card}
 								<div class="flex items-center justify-between rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2">
 									<span class="font-mono text-sm text-zinc-300">{card.id}</span>
-									<form method="POST" action="?/removeCard" use:enhance>
-										<input type="hidden" name="slug" value={card.id} />
-										<button type="submit"
-										class="rounded px-2 py-0.5 text-xs font-semibold text-zinc-500 hover:bg-red-900/40 hover:text-red-400 transition-colors">
-										Remove
-									</button>
-									</form>
+									<div class="flex items-center gap-2">
+										<button
+											type="button"
+											onclick={() => copyNfcUrl(card.id)}
+											class="rounded px-2 py-0.5 text-xs font-semibold transition-colors
+												{copiedSlug === card.id ? 'text-green-400' : 'text-zinc-500 hover:text-zinc-300'}">
+											{copiedSlug === card.id ? 'Copied ✓' : 'Copy'}
+										</button>
+										<form method="POST" action="?/removeCard" use:enhance>
+											<input type="hidden" name="slug" value={card.id} />
+											<button type="submit"
+												class="rounded px-2 py-0.5 text-xs font-semibold text-zinc-500 hover:bg-red-900/40 hover:text-red-400 transition-colors">
+												Remove
+											</button>
+										</form>
+									</div>
 								</div>
 							{/each}
 						</div>
@@ -442,6 +464,14 @@
 						}} class="flex gap-2">
 							<input name="slug" bind:value={newSlug}
 								class="admin-input flex-1" placeholder="NFC tag slug, e.g. random-stage-1" required />
+							<button
+								type="button"
+								disabled={!newSlug}
+								onclick={() => copyNfcUrl(newSlug)}
+								class="rounded-lg border border-zinc-700 px-3 py-2 text-sm font-semibold transition-colors
+									{copiedSlug === newSlug && newSlug ? 'text-green-400 border-green-800' : 'text-zinc-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed'}">
+								{copiedSlug === newSlug && newSlug ? 'Copied ✓' : 'Copy'}
+							</button>
 							<button type="submit"
 								class="rounded-lg bg-zinc-700 px-3 py-2 text-sm font-semibold text-white hover:bg-zinc-600 transition-colors">
 								Add
@@ -569,6 +599,14 @@
 												oninput={(e) => { nfcSlugs = { ...nfcSlugs, [id]: (e.target as HTMLInputElement).value }; }}
 												class="flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-xs text-zinc-200 focus:outline-none focus:border-amber-500"
 											/>
+											<button
+												type="button"
+												disabled={!nfcSlugs[id]}
+												onclick={() => copyNfcUrl(nfcSlugs[id] ?? '')}
+												class="shrink-0 rounded px-2 py-0.5 text-xs font-semibold transition-colors
+													{copiedSlug === nfcSlugs[id] && nfcSlugs[id] ? 'text-green-400' : 'text-zinc-500 hover:text-zinc-300 disabled:opacity-30 disabled:cursor-not-allowed'}">
+												{copiedSlug === nfcSlugs[id] && nfcSlugs[id] ? 'Copied ✓' : 'Copy'}
+											</button>
 										</div>
 									{/if}
 								</div>
