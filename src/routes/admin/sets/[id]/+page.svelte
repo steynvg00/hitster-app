@@ -163,6 +163,20 @@
 	const podiumOrder = $derived(
 		[lastResultsTop3[1], lastResultsTop3[0], lastResultsTop3[2]].filter((x): x is LastResultEntry => !!x)
 	);
+
+	// ── Inline edit (auto-save on blur) ───────────────────────────────────────
+	let editName = $state(data.gameSet.name);
+	let editDesc = $state(data.gameSet.description ?? '');
+	let editTeamCount = $state(data.gameSet.team_count);
+	let editExpected = $state<number | ''>(data.gameSet.expected_player_count ?? '');
+	let editTimer = $state<number | ''>(data.gameSet.total_timer_seconds ? Math.round(data.gameSet.total_timer_seconds / 60) : '');
+	let savedFlash = $state(false);
+	let flashTimer: ReturnType<typeof setTimeout> | null = null;
+	let autoSaveForm: HTMLFormElement | undefined;
+
+	function triggerAutoSave() {
+		autoSaveForm?.requestSubmit();
+	}
 </script>
 
 <svelte:head>
@@ -175,16 +189,30 @@
 	<div>
 		<a href="/admin/sets" class="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">← Sets</a>
 		<div class="mt-2 flex items-start gap-4 justify-between">
-			<div class="flex-1">
-				<h1 class="text-2xl font-black text-white">{gs.name}</h1>
-				{#if gs.description}
-					<p class="mt-0.5 text-sm text-zinc-500">{gs.description}</p>
-				{/if}
+			<div class="flex-1 min-w-0">
+				<input
+					bind:value={editName}
+					onblur={triggerAutoSave}
+					aria-label="Set name"
+					class="w-full bg-transparent text-2xl font-black text-white focus:outline-none border-b border-transparent focus:border-amber-500 transition-colors"
+				/>
+				<input
+					bind:value={editDesc}
+					onblur={triggerAutoSave}
+					placeholder="Add a description…"
+					aria-label="Set description"
+					class="mt-1 w-full bg-transparent text-sm text-zinc-500 placeholder:text-zinc-700 focus:outline-none border-b border-transparent focus:border-zinc-700 transition-colors"
+				/>
 			</div>
-			<span class="shrink-0 mt-1 rounded-full px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide
-				{isActive ? 'bg-green-900/60 text-green-400' : 'bg-zinc-700 text-zinc-400'}">
-				{gs.status}
-			</span>
+			<div class="flex items-center gap-3 shrink-0 mt-1">
+				{#if savedFlash}
+					<span class="text-xs font-semibold text-green-400">saved ✓</span>
+				{/if}
+				<span class="rounded-full px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide
+					{isActive ? 'bg-green-900/60 text-green-400' : 'bg-zinc-700 text-zinc-400'}">
+					{gs.status}
+				</span>
+			</div>
 		</div>
 	</div>
 
@@ -201,6 +229,21 @@
 		<div class="rounded-lg border border-green-800 bg-green-950/40 px-4 py-3 text-sm text-green-400">Saved.</div>
 	{/if}
 
+	<!-- Hidden auto-save form (blur-to-save for name, description, and console config fields) -->
+	<form bind:this={autoSaveForm} method="POST" action="?/update" class="sr-only"
+		use:enhance={() => async ({ update }) => {
+			await update({ reset: false });
+			savedFlash = true;
+			if (flashTimer) clearTimeout(flashTimer);
+			flashTimer = setTimeout(() => { savedFlash = false; }, 2000);
+		}}>
+		<input type="hidden" name="name" value={editName} />
+		<input type="hidden" name="description" value={editDesc} />
+		<input type="hidden" name="team_count" value={editTeamCount} />
+		<input type="hidden" name="expected_player_count" value={editExpected} />
+		<input type="hidden" name="total_timer_minutes" value={editTimer} />
+	</form>
+
 	<!-- ── Gameset Console ───────────────────────────────────────────────────── -->
 	<section class="rounded-xl border border-zinc-800 bg-zinc-900">
 		<div class="px-5 py-4 border-b border-zinc-800 flex items-center justify-between">
@@ -212,6 +255,33 @@
 					</button>
 				</form>
 			{/if}
+		</div>
+
+		<!-- Config row: editable fields that blur-to-save -->
+		<div class="grid grid-cols-3 divide-x divide-zinc-800 border-b border-zinc-800">
+			<div class="px-5 py-3">
+				<div class="text-xs uppercase tracking-wide text-zinc-600 mb-1">Teams</div>
+				<input type="number" min="2" max="6"
+					bind:value={editTeamCount}
+					onblur={triggerAutoSave}
+					class="w-full bg-transparent text-xl font-black text-white focus:outline-none" />
+			</div>
+			<div class="px-5 py-3">
+				<div class="text-xs uppercase tracking-wide text-zinc-600 mb-1">Expected players</div>
+				<input type="number" min="1"
+					bind:value={editExpected}
+					onblur={triggerAutoSave}
+					placeholder="—"
+					class="w-full bg-transparent text-xl font-black text-white placeholder:text-zinc-700 focus:outline-none" />
+			</div>
+			<div class="px-5 py-3">
+				<div class="text-xs uppercase tracking-wide text-zinc-600 mb-1">Timer (min)</div>
+				<input type="number" min="1"
+					bind:value={editTimer}
+					onblur={triggerAutoSave}
+					placeholder="—"
+					class="w-full bg-transparent text-xl font-black text-white placeholder:text-zinc-700 focus:outline-none" />
+			</div>
 		</div>
 
 		<div class="p-5">
@@ -411,43 +481,6 @@
 			{/if}
 		</section>
 	{/if}
-
-	<!-- ── Details form ──────────────────────────────────────────────────────── -->
-	<section class="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
-		<h2 class="mb-4 text-sm font-bold uppercase tracking-widest text-zinc-400">Details</h2>
-		<form method="POST" action="?/update"
-			use:enhance={() => async ({ update }) => update({ reset: false })}
-			class="grid grid-cols-2 gap-4">
-			<div class="col-span-2">
-				<label class="admin-label" for="s-name">Name</label>
-				<input id="s-name" name="name" class="admin-input" value={gs.name} required />
-			</div>
-			<div class="col-span-2">
-				<label class="admin-label" for="s-desc">Description</label>
-				<input id="s-desc" name="description" class="admin-input" value={gs.description ?? ''} />
-			</div>
-			<div>
-				<label class="admin-label" for="s-tc">Teams (2–6)</label>
-				<input id="s-tc" name="team_count" type="number" min="2" max="6" class="admin-input" value={gs.team_count} />
-			</div>
-			<div>
-				<label class="admin-label" for="s-epc">Expected players (optional)</label>
-				<input id="s-epc" name="expected_player_count" type="number" min="1" class="admin-input"
-					value={gs.expected_player_count ?? ''} placeholder="leave blank" />
-			</div>
-			<div>
-				<label class="admin-label" for="s-timer">Total Timer (minutes)</label>
-				<input id="s-timer" name="total_timer_minutes" type="number" min="1" class="admin-input"
-					value={gs.total_timer_seconds ? Math.round(gs.total_timer_seconds / 60) : ''} placeholder="leave blank" />
-			</div>
-			<div class="col-span-2">
-				<button type="submit"
-					class="rounded-lg bg-amber-400 px-4 py-2 text-sm font-bold text-zinc-950 hover:bg-amber-300">
-					Save Details
-				</button>
-			</div>
-		</form>
-	</section>
 
 	<!-- ── Challenge configuration (collapsible) ─────────────────────────────── -->
 	<section class="rounded-xl border border-zinc-800 bg-zinc-900">
