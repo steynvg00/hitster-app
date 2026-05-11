@@ -29,6 +29,7 @@ export const load: PageServerLoad = async ({ params }) => {
 
 	const playerList = players ?? [];
 	const playerCount = playerList.length;
+	const playerIds = playerList.map((p) => p.id);
 	const recentPlayers = playerList.slice(0, 5).map((p) => p.display_name);
 
 	// Team progress (for console playing state)
@@ -59,6 +60,7 @@ export const load: PageServerLoad = async ({ params }) => {
 		allChallenges: allChallenges ?? [],
 		cards: cards ?? [],
 		playerCount,
+		playerIds,
 		recentPlayers,
 		teamProgress,
 		challengeUnlockTags

@@ -15,6 +15,8 @@
 	let livePlayerCount = $state(data.playerCount ?? 0);
 	let liveRecentPlayers = $state<string[]>(data.recentPlayers ?? []);
 	let liveTeamProgress = $state<Array<{ name: string; done: number; total: number }>>(data.teamProgress ?? []);
+	// Track which player IDs are already counted (prevents double-counting on UPDATE events)
+	const knownPlayerIds = new Set<string>(data.playerIds ?? []);
 
 	onMount(() => {
 		// game_sets UPDATE: track all console-relevant fields
@@ -50,9 +52,14 @@
 			.on('postgres_changes', {
 				event: 'UPDATE', schema: 'public', table: 'players', filter: `set_id=eq.${data.gameSet.id}`
 			}, (payload) => {
-				// Player moved away from this set (set_id cleared)
-				const p = payload.new as { set_id?: string | null };
-				if (!p.set_id) livePlayerCount = Math.max(0, livePlayerCount - 1);
+				// Fires when a player's set_id is SET to this set (join via randomizer or UI flow).
+				// Players are inserted without set_id, so INSERT filter never matches — this catches joins.
+				const p = payload.new as { id?: string; set_id?: string | null; display_name?: string };
+				if (p.set_id === data.gameSet.id && p.id && !knownPlayerIds.has(p.id)) {
+					knownPlayerIds.add(p.id);
+					livePlayerCount += 1;
+					if (p.display_name) liveRecentPlayers = [p.display_name, ...liveRecentPlayers].slice(0, 5);
+				}
 			})
 			.on('postgres_changes', {
 				event: 'DELETE', schema: 'public', table: 'players'
@@ -153,6 +160,17 @@
 		return () => clearInterval(iv);
 	});
 
+	// ── Auto-submit polling (Bug 1 fix) ──────────────────────────────────────
+	// The timer tick fires once at expiry; this polling is a safety net that also
+	// handles the case where the page is opened after the timer has already expired.
+	$effect(() => {
+		if (livePlayState !== 'playing') return;
+		const interval = setInterval(() => {
+			fetch('/api/auto-submit', { method: 'POST' }).catch(() => {});
+		}, 10_000);
+		return () => clearInterval(interval);
+	});
+
 	// ── Last results ──────────────────────────────────────────────────────────
 	type LastResultEntry = { rank: number; team_id: string; team_name: string; score: number; photo_url: string | null };
 	const lastResults = $derived<LastResultEntry[] | null>(
@@ -248,7 +266,7 @@
 			await update({ reset: false });
 			savedFlash = true;
 			if (flashTimer) clearTimeout(flashTimer);
-			flashTimer = setTimeout(() => { savedFlash = false; }, 2000);
+			flashTimer = setTimeout(() => { savedFlash = false; }, 1500);
 		}}>
 		<input type="hidden" name="name" value={editName} />
 		<input type="hidden" name="description" value={editDesc} />
@@ -359,8 +377,8 @@
 				{#if timerDisplay}
 					<div class="mb-4 text-center">
 						{#if timerExpired}
-							<div class="font-mono text-2xl font-black text-red-400">Time's up</div>
-							<div class="text-xs text-zinc-500 mt-0.5">Closing game…</div>
+							<div class="font-mono text-2xl font-black text-red-400">Time's up!</div>
+							<div class="text-xs text-zinc-500 mt-0.5">Ending game…</div>
 						{:else}
 							<div class="font-mono text-4xl font-black text-amber-400">{timerDisplay}</div>
 							<div class="text-xs text-zinc-600 mt-0.5">remaining</div>
@@ -380,7 +398,7 @@
 				{/if}
 
 				<form method="POST" action="?/startRecap" use:enhance
-					onsubmit={(e) => { if (!confirm('End game and start recap? Players will be redirected to the waiting screen.')) e.preventDefault(); }}>
+					onsubmit={(e) => { if (!confirm('End the game now? Players will move to the recap stage.')) e.preventDefault(); }}>
 					<button type="submit" disabled={timerExpired}
 						class="w-full rounded-xl bg-red-700 py-3 text-sm font-bold text-white hover:bg-red-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
 						End game
@@ -413,6 +431,7 @@
 							class="w-full rounded-xl border border-red-800/60 py-2.5 text-sm font-semibold text-red-400 hover:border-red-700 hover:text-red-300 transition-colors">
 							Reset game
 						</button>
+						<p class="mt-1.5 text-center text-xs text-zinc-600">Clears scores, submissions, and player sessions for this set. Last results are preserved.</p>
 					</form>
 				</div>
 			{/if}
@@ -636,7 +655,7 @@
 					<div class="mb-4 flex items-center justify-between rounded-lg border border-zinc-700 bg-zinc-800/40 px-4 py-3">
 						<div>
 							<span class="text-sm font-semibold text-zinc-300">NFC unlock required</span>
-							<p class="text-xs text-zinc-600 mt-0.5">Challenges are locked until team scans the NFC tag</p>
+							<p class="text-xs text-zinc-600 mt-0.5">When enabled, each challenge requires the team to scan its NFC tag before playing.</p>
 						</div>
 						<button type="button"
 							onclick={() => (nfcLockEnabled = !nfcLockEnabled)}
