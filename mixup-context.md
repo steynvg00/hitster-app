@@ -109,7 +109,7 @@ When scoring a field, the resolution chain:
 
 ---
 
-## 4. Migrations applied (0001 → 0023)
+## 4. Migrations applied (0001 → 0030)
 
 All migrations run **manually via Supabase SQL Editor** — no CLI runner. Files in `supabase/migrations/`.
 
@@ -143,6 +143,8 @@ All migrations run **manually via Supabase SQL Editor** — no CLI runner. Files
 | 0026 | bonus_mechanics | `challenges.difficulty_rating int DEFAULT 3 CHECK 1–5`, `challenges.speed_threshold_seconds int`, `challenges.hint_text text`; `set_challenges.challenge_multiplier int DEFAULT 1`; `game_sets.scores_hidden bool DEFAULT false`; `variant_defaults.streak_config jsonb`; `teams.current_streak int DEFAULT 0` |
 | 0027 | team_photos | `teams.photo_url text` |
 | 0028 | challenge_hints_used | New table: `(id, challenge_id, team_id, used_at)`; unique on `(challenge_id, team_id)`; RLS (anon read/insert); added to realtime publication |
+| 0029 | session_9_features | `variant_defaults.tutorial_text text`; `game_sets.nfc_lock_enabled bool DEFAULT false`, `randomizer_enabled bool DEFAULT false`, `last_results jsonb`; `challenge_unlocks(id, challenge_id, team_id, set_id, unlocked_at)` table; `nfc_tags.purpose` CHECK extended to include `'challenge_unlock'` (superseded by 0030) |
+| 0030 | nfc_purpose_constraint | Fixes `nfc_tags.purpose` CHECK constraint to correctly allow `'challenge_unlock'` — aligns DB with `NfcTagPurpose` TypeScript type added in 0029 |
 
 ---
 
@@ -195,7 +197,7 @@ All migrations run **manually via Supabase SQL Editor** — no CLI runner. Files
 
 ### NFC tags
 - `slug` unique
-- `purpose`: `team_identity | team_entry | challenge | randomizer | hint`
+- `purpose`: `team_identity | team_entry | challenge | randomizer | hint | challenge_unlock`
 - Bound to `set_id` (for randomizers), `challenge_id` (for challenge stations and hints), or `team_color` (team-identity cards)
 - Randomizer tap behaviour depends on `game_sets.play_state`: joining → assign team; playing → /nfc/game-in-progress; recap → /nfc/game-over
 - Hint tap → `/nfc/hint/[challenge_id]` → records usage in `challenge_hints_used` → redirects to `/challenge/[id]?hint=1`
@@ -479,6 +481,20 @@ Migrations 0026–0028 (run manually in Supabase SQL Editor before using new fea
 
 ---
 
+## Session 9 polish complete ✓
+
+Done in the same sitting as Session 9, after the main session doc was written:
+
+- **Migration 0030**: fixed `nfc_tags.purpose` CHECK constraint to allow `'challenge_unlock'` (0029 introduced the type but the constraint was wrong)
+- **Team page challenge list**: now scoped to `set_challenges` for the player's current set, ordered by `position`; falls back to all active challenges when player has no set
+- **Set console inline editing**: name, description, team count, expected player count, and timer (minutes) are now editable in-place with blur-to-save; shows "saved ✓" flash
+- **Realtime toggle sync**: `nfc_lock_enabled` and `randomizer_enabled` propagate into local state via the `game_sets` realtime subscription so toggles stay accurate without reload
+- **NFC URL copy buttons**: all three slug locations on `/admin/sets/[id]` (per-challenge unlock inputs, randomizer card rows, add-card input) have a Copy button that writes `{origin}/nfc/{slug}` to clipboard with 1.5s "Copied ✓" flash
+- **Button style pass**: "Deactivate set" and "Remove card" converted to proper bordered buttons matching the admin UI style
+- **Timer single-shot**: countdown tick calls `/api/auto-submit` once when it hits 0:00 (was later supplemented by the $effect 10s poll in Session 10)
+
+---
+
 ## Session 10 complete ✓
 
 **Timer expiry stall fix**: The set page now polls `/api/auto-submit` every 10 seconds via a `$effect` while `play_state = 'playing'`. The endpoint already had the game-set-level timer flip (`play_state = 'recap'`). The `$effect` cleanup cancels the interval when the state changes.
@@ -502,7 +518,19 @@ Migrations 0026–0028 (run manually in Supabase SQL Editor before using new fea
 
 ## Pick up here
 
-Pending from the bug pile (§9 above) — none addressed yet. Suggested next steps:
+**What's solid now (as of Session 10b)**:
+- Game timer → auto-end → recap transition works end-to-end (auto-submit polling + game-set flip)
+- Set console inline editing, realtime toggles, NFC URL copy buttons all working
+- NFC lock toggle is always visible and saves independently
+- First-player-join correctly triggers "Start the game" button via realtime UPDATE
+
+**Pending from the bug pile (§9 above)** — none addressed yet:
 - **Bug 1**: End-and-reset deletes the game_sets row — high priority, breaks re-use
 - **Bug 2**: NFC randomizer `?next=` param dropping — blocks the core onboarding flow
-- **Session C**: drag-to-reorder tiles, `/admin/nfc-tags` full list, dashboard aesthetics
+- **Bug 3**: Players don't redirect to thanks page on game end
+- **Bug 7**: Mobile layout broken (admin sidebar overlaps on portrait phone)
+
+**Next session options**:
+- Bug 1 (end-and-reset) — highest impact, breaks re-use of sets
+- Session C — drag-to-reorder dashboard tiles, `/admin/nfc-tags` full list, dashboard aesthetics
+- Bug 2 (NFC randomizer `?next=` drop) — blocks core onboarding flow for new players

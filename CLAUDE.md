@@ -125,17 +125,21 @@ src/
       join/            ← manual team picker
     admin/             ← host admin (auth-guarded by layout.server.ts)
       sets/            ← game set CRUD (list, create)
-        [id]/          ← edit set details + challenge picker + NFC card management
+        [id]/          ← Gameset Console — inline-editable fields, challenge picker, NFC cards, play-state controls
           lobby/       ← realtime lobby grid (one column per team)
+          recap/       ← host-controlled podium reveal sequence
       challenges/[id]/ ← challenge editor (tracks, answer options, input mode picker)
-      live/            ← realtime game console
+      live/            ← realtime game console (polls /api/auto-submit + /api/player/sweep every 10s)
       review/          ← manual review queue
       pools/           ← combobox answer pool management
-      teams/           ← score adjustments
+      teams/           ← score adjustments + team photo upload
       tracks/          ← track + clip CRUD
+      variant-defaults/[variant]/ ← Tier 1 point defaults + streak config per variant
     leaderboard/       ← TV display (realtime)
     nfc/[tag]/         ← NFC tap handler (server route only)
     nfc/randomize/[set_id]/ ← randomizer entry point: joining→assign team, playing→game-in-progress, recap→game-over
+    nfc/hint/[challenge_id]/ ← records challenge_hints_used row → redirect to /challenge/[id]?hint=1
+    nfc/unlock/[challenge_id]/ ← records challenge_unlocks row (nfc_lock guard) → redirect to /challenge/[id]
     nfc/game-in-progress/[set_id]/ ← placeholder: "game already started" page
     nfc/game-over/[set_id]/ ← placeholder: "game over, view leaderboard" page
     play/[mode]/       ← player onboarding (mode = solo | teams)
@@ -186,6 +190,7 @@ src/
 | 2026-05-08 | Session B: play_state lifecycle (joining/playing/recap) on game_sets (migration 0025), "Start the game" button on set page + dashboard with realtime, NFC randomizer split by play_state, /nfc/game-in-progress and /nfc/game-over placeholder pages, 4-state admin dashboard status panel |
 | 2026-05-08 | Mega Session: bonus mechanics (migrations 0026–0028), difficulty stars + round multiplier + comeback/streak/speed bonuses, ScoreBreakdown persisted in answers, BonusTracker component, animated score count-up, leaderboard card redesign with photos + streak badge + rank deltas, team photo uploads (team-photos bucket), collab artist multi-slot combobox, waiting room carousel, NFC hint scan flow |
 | 2026-05-11 | Session 9: migration 0029 (tutorial_text, nfc_lock_enabled, randomizer_enabled, last_results, challenge_unlocks), player state machine (/team lobby vs console), TutorialOverlay component, per-variant tutorial admin edit, tutorial ⓘ on challenge page, NFC unlock route + challenge guard, Gameset Console set page redesign, resetGame action + last results panel, Reset game on recap page |
+| 2026-05-11 | Session 9 polish: migration 0030 (fix nfc_tags purpose CHECK to allow 'challenge_unlock'), team page challenge list scoped to player's set, set console inline-editable fields (name/desc/team-count/expected/timer blur-to-save), realtime sync for nfc_lock + randomizer toggles, bordered button style pass, Copy link buttons on all NFC slug inputs, single-shot auto-submit call on timer tick-to-zero |
 | 2026-05-11 | Session 10: timer expiry stall fix ($effect polling /api/auto-submit every 10s while playing), first-player-join realtime fix (INSERT filter is dead — players insert without set_id; now increments on UPDATE via knownPlayerIds Set), polish (Time's up! copy, End Game confirm text, saved flash 1.5s, NFC unlock tooltip, Reset game scope note) |
 | 2026-05-11 | Session 10b: fix auto-submit early-return bug (game-set timer flip was unreachable when no challenge timers existed), NFC lock toggle moved to always-visible section with own ?/toggleNfcLock action (no longer bundled with setChallenges) |
 
@@ -326,11 +331,11 @@ DELETE FROM players;
 - **Session 7c**: host visibility of in-progress challenges (per-team current activity panel)
 - **Session 7d**: team device coordination (realtime sync of draft state, last-writer-wins per field)
 - **Session 8b — In-app trim**: upload a longer source (audio/video, screen recording, file or URL), waveform UI to scrub and pick a segment, ffmpeg.wasm to trim client-side, save as clip. Used for: host trimming Spotify recordings, players uploading their own clips for variant 7.
-- **Session 8d — Set lifecycle polish**: set timer wrapper (auto-end set when timer expires), per-set leaderboard, "set starting" countdown, completed-set archive view, host preview mode for testing.
+- **Session 8d — Set lifecycle polish**: per-set leaderboard, "set starting" countdown, completed-set archive view, host preview mode for testing. (auto-end set on timer expiry is now done via /api/auto-submit)
 - **Future — Solo + sets**: allow solo players to also pick a set so their scores group with other solos in the same set.
 - **Session 8d — Solo mode polish**: solo group leaderboard, solo private mode, host preview mode.
 - **Future — Persistent player accounts**: optional registration so regulars can keep stats across visits.
-- **Session 11 — The Recap**: post-game celebration screen — podium animation, fastest answers, team photos
+- **Session 11 — The Recap polish**: `/admin/sets/[id]/recap` exists; needs podium animation improvements, fastest-answer callouts, and player-side celebrations.
 
 ### Game sets — key data relationships (added 8c)
 - `game_sets` — a named round/game with status (draft/active/completed), team_count (2–6), optional total_timer_seconds
