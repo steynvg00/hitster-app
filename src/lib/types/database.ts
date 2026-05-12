@@ -363,6 +363,7 @@ export type Database = {
 					powerups_enabled: boolean;
 					powerup_mode: 'threshold' | 'token_shop';
 					powerup_config: Json;
+					preset_slug: string | null;
 					created_by: string | null;
 					created_at: string;
 				};
@@ -389,6 +390,7 @@ export type Database = {
 					powerups_enabled?: boolean;
 					powerup_mode?: 'threshold' | 'token_shop';
 					powerup_config?: Json;
+					preset_slug?: string | null;
 					created_by?: string | null;
 					created_at?: string;
 				};
@@ -415,6 +417,7 @@ export type Database = {
 					powerups_enabled?: boolean;
 					powerup_mode?: 'threshold' | 'token_shop';
 					powerup_config?: Json;
+					preset_slug?: string | null;
 					created_by?: string | null;
 					created_at?: string;
 				};

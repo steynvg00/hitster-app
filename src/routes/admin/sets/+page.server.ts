@@ -4,12 +4,38 @@ import { createAdminClient } from '$lib/server/supabase';
 import { generateAssignmentSlots, TEAM_COLOR_ORDER } from '$lib/server/randomize';
 import { setPresets } from '$lib/presets/setPresets';
 
-export const load: PageServerLoad = async () => {
+export const load: PageServerLoad = async ({ url }) => {
 	const db = createAdminClient();
+
+	const presetFilter = url.searchParams.get('preset') || null;
+	const statusFilter = url.searchParams.get('status') || null;
+	const sort = url.searchParams.get('sort') || 'newest';
+
+	let setsQuery = db.from('game_sets').select('*');
+
+	if (presetFilter === 'custom') {
+		setsQuery = setsQuery.or('preset_slug.is.null,preset_slug.eq.custom');
+	} else if (presetFilter) {
+		setsQuery = setsQuery.eq('preset_slug', presetFilter);
+	}
+
+	if (statusFilter === 'active' || statusFilter === 'inactive') {
+		setsQuery = setsQuery.eq('status', statusFilter);
+	}
+
+	if (sort === 'oldest') {
+		setsQuery = setsQuery.order('created_at', { ascending: true });
+	} else if (sort === 'name_asc') {
+		setsQuery = setsQuery.order('name', { ascending: true });
+	} else if (sort === 'name_desc') {
+		setsQuery = setsQuery.order('name', { ascending: false });
+	} else {
+		setsQuery = setsQuery.order('created_at', { ascending: false });
+	}
 
 	const [{ data: sets }, { data: scRows }, { data: nfcRows }, { data: playerRows }] =
 		await Promise.all([
-			db.from('game_sets').select('*').order('created_at', { ascending: false }),
+			setsQuery,
 			db.from('set_challenges').select('set_id'),
 			db.from('nfc_tags').select('set_id').eq('purpose', 'randomizer'),
 			db.from('players').select('set_id').not('set_id', 'is', null)
@@ -33,7 +59,10 @@ export const load: PageServerLoad = async () => {
 			challenge_count: challengeCount[s.id] ?? 0,
 			card_count: cardCount[s.id] ?? 0,
 			player_count: playerCount[s.id] ?? 0
-		}))
+		})),
+		presetFilter,
+		statusFilter,
+		sort
 	};
 };
 
@@ -91,6 +120,7 @@ export const actions: Actions = {
 			powerup_config: (preset.defaults?.powerup_config ?? {
 				thresholds_percent: [25, 50, 75]
 			}) as never,
+			preset_slug: preset.slug,
 			created_by: locals.user?.id ?? null
 		};
 
