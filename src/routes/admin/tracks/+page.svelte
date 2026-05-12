@@ -93,9 +93,21 @@
 	}
 
 	async function stageFiles(trackId: string, files: FileList | File[]) {
-		const incoming = Array.from(files).filter(
-			(f) => f.type.startsWith('audio/') || /\.(mp3|wav|ogg|m4a|aac|flac|webm)$/i.test(f.name)
+		const all = Array.from(files);
+
+		const videoFiles = all.filter(
+			(f) => f.type.startsWith('video/') || /\.(mp4|mov|m4v|mkv|avi)$/i.test(f.name)
 		);
+		const incoming = all.filter(
+			(f) =>
+				!videoFiles.includes(f) &&
+				(f.type.startsWith('audio/') || /\.(mp3|wav|ogg|m4a|aac|flac|webm)$/i.test(f.name))
+		);
+
+		for (const vf of videoFiles) {
+			extractAudioFromVideo(trackId, vf);
+		}
+
 		if (!incoming.length) return;
 
 		const existing = stagedFiles[trackId] ?? [];
@@ -155,11 +167,14 @@
 	}
 
 	async function bulkDelete(trackId: string) {
-		const toDelete = [...selectedClips].filter((id) =>
-			clipsFor(trackId).some((c) => c.id === id)
-		);
+		const toDelete = [...selectedClips].filter((id) => clipsFor(trackId).some((c) => c.id === id));
 		if (!toDelete.length) return;
-		if (!confirm(`Delete ${toDelete.length} clip${toDelete.length !== 1 ? 's' : ''}? This cannot be undone.`)) return;
+		if (
+			!confirm(
+				`Delete ${toDelete.length} clip${toDelete.length !== 1 ? 's' : ''}? This cannot be undone.`
+			)
+		)
+			return;
 
 		isDeleting = true;
 		try {
@@ -214,6 +229,95 @@
 		trimModal = null;
 		await invalidateAll();
 	}
+
+	// ── ffmpeg singleton (video extraction) ───────────────────────────────────
+	let ffmpegSingleton: import('@ffmpeg/ffmpeg').FFmpeg | null = null;
+
+	async function getFFmpeg() {
+		if (ffmpegSingleton) return ffmpegSingleton;
+		const { FFmpeg } = await import('@ffmpeg/ffmpeg');
+		const ff = new FFmpeg();
+		await ff.load({ coreURL: '/ffmpeg/ffmpeg-core.js', wasmURL: '/ffmpeg/ffmpeg-core.wasm' });
+		ffmpegSingleton = ff;
+		return ff;
+	}
+
+	// ── video extraction ──────────────────────────────────────────────────────
+	type VideoExtraction = {
+		id: string;
+		name: string;
+		size: number;
+		progress: number;
+		status: 'extracting' | 'done' | 'failed';
+		error?: string;
+	};
+	let videoExtractions = $state<Record<string, VideoExtraction[]>>({});
+
+	async function extractAudioFromVideo(trackId: string, file: File) {
+		const extractionId = crypto.randomUUID();
+		videoExtractions[trackId] = [
+			...(videoExtractions[trackId] ?? []),
+			{ id: extractionId, name: file.name, size: file.size, progress: 0, status: 'extracting' }
+		];
+
+		const getIdx = () => (videoExtractions[trackId] ?? []).findIndex((v) => v.id === extractionId);
+
+		try {
+			const ff = await getFFmpeg();
+			const { fetchFile } = await import('@ffmpeg/util');
+
+			const progressHandler = ({ progress }: { progress: number }) => {
+				const idx = getIdx();
+				if (idx >= 0) videoExtractions[trackId][idx].progress = Math.round(progress * 100);
+			};
+			ff.on('progress', progressHandler);
+
+			const safeId = extractionId.replace(/-/g, '');
+			const ext = file.name.split('.').pop() ?? 'mp4';
+			const inputName = `in_${safeId}.${ext}`;
+			const outputName = `out_${safeId}.mp3`;
+
+			await ff.writeFile(inputName, await fetchFile(file));
+			await ff.exec([
+				'-i',
+				inputName,
+				'-vn',
+				'-ar',
+				'44100',
+				'-ac',
+				'2',
+				'-b:a',
+				'192k',
+				outputName
+			]);
+			ff.off('progress', progressHandler);
+
+			const data = await ff.readFile(outputName);
+			await ff.deleteFile(inputName);
+			await ff.deleteFile(outputName);
+
+			const blob = new Blob([data as Uint8Array<ArrayBuffer>], { type: 'audio/mpeg' });
+			const friendlyName = file.name.replace(/\.[^.]+$/, '.mp3');
+			const mp3File = new File([blob], friendlyName, { type: 'audio/mpeg' });
+
+			const idx = getIdx();
+			if (idx >= 0) videoExtractions[trackId][idx].status = 'done';
+
+			await stageFiles(trackId, [mp3File]);
+
+			setTimeout(() => {
+				videoExtractions[trackId] = (videoExtractions[trackId] ?? []).filter(
+					(v) => v.id !== extractionId
+				);
+			}, 2000);
+		} catch (e) {
+			const idx = getIdx();
+			if (idx >= 0) {
+				videoExtractions[trackId][idx].status = 'failed';
+				videoExtractions[trackId][idx].error = String(e);
+			}
+		}
+	}
 </script>
 
 <div class="p-6">
@@ -240,9 +344,7 @@
 	<!-- Add track form -->
 	{#if showAddForm}
 		<div class="mb-6 rounded-xl border border-amber-400/30 bg-zinc-900 p-5">
-			<h2 class="mb-4 text-sm font-semibold uppercase tracking-widest text-amber-400">
-				New Track
-			</h2>
+			<h2 class="mb-4 text-sm font-semibold tracking-widest text-amber-400 uppercase">New Track</h2>
 			<form
 				method="POST"
 				action="?/createTrack"
@@ -305,7 +407,7 @@
 
 				<!-- Inline clip drop zone -->
 				<div class="col-span-2 mt-1">
-					<div class="mb-1 text-xs font-semibold uppercase tracking-widest text-zinc-500">
+					<div class="mb-1 text-xs font-semibold tracking-widest text-zinc-500 uppercase">
 						Clips (optional)
 					</div>
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -329,7 +431,7 @@
 					>
 						<input
 							type="file"
-							accept="audio/*"
+							accept="audio/*,video/mp4,video/quicktime,video/x-m4v,.mp4,.mov,.m4v"
 							multiple
 							class="absolute inset-0 cursor-pointer opacity-0"
 							onchange={async (e) => {
@@ -339,10 +441,58 @@
 							}}
 						/>
 						<p class="text-sm text-zinc-500">
-							Drop audio clips, or <span class="text-amber-400">click to browse</span>
+							Drop audio or video clips, or <span class="text-amber-400">click to browse</span>
 						</p>
-						<p class="mt-0.5 text-xs text-zinc-600">Uploaded with track on save</p>
+						<p class="mt-0.5 text-xs text-zinc-600">mp3/wav/m4a · mp4/mov → audio extracted</p>
 					</div>
+
+					{#if (videoExtractions['__new__'] ?? []).length > 0}
+						<div class="mt-2 space-y-1.5">
+							{#each videoExtractions['__new__'] as extraction (extraction.id)}
+								<div
+									class="grid items-center gap-x-3 rounded-lg border border-amber-700 bg-amber-950/20 px-3 py-2 text-sm"
+									style="grid-template-columns: 1.25rem 1fr 1.25rem"
+								>
+									<span class="text-center text-xs text-amber-400">⟳</span>
+									<div class="min-w-0">
+										<div class="truncate text-zinc-200">{extraction.name}</div>
+										<div class="text-xs text-zinc-500">
+											{formatSize(extraction.size)} ·
+											{#if extraction.status === 'extracting'}
+												<span class="text-amber-400">Extracting audio… {extraction.progress}%</span>
+											{:else if extraction.status === 'done'}
+												<span class="text-green-400">Done</span>
+											{:else}
+												<span class="text-red-400">{extraction.error}</span>
+											{/if}
+										</div>
+										{#if extraction.status === 'extracting'}
+											<div class="mt-1 h-1 w-full overflow-hidden rounded-full bg-zinc-700">
+												<div
+													class="h-full bg-amber-400 transition-all"
+													style="width: {extraction.progress}%"
+												></div>
+											</div>
+										{/if}
+									</div>
+									{#if extraction.status === 'failed'}
+										<button
+											type="button"
+											onclick={() => {
+												videoExtractions['__new__'] = (videoExtractions['__new__'] ?? []).filter(
+													(v) => v.id !== extraction.id
+												);
+											}}
+											class="text-zinc-600 hover:text-red-400"
+											title="Dismiss">✕</button
+										>
+									{:else}
+										<span></span>
+									{/if}
+								</div>
+							{/each}
+						</div>
+					{/if}
 
 					{#if newTrackStagedFiles.length > 0}
 						<div class="mt-2 space-y-1.5">
@@ -391,8 +541,8 @@
 											type="button"
 											onclick={() => removeStagedFile('__new__', staged.id)}
 											class="text-zinc-600 hover:text-red-400"
-											title="Remove"
-										>✕</button>
+											title="Remove">✕</button
+										>
 									{:else}
 										<span></span>
 									{/if}
@@ -537,7 +687,7 @@
 					<div class="border-t border-zinc-800 bg-zinc-950 px-4 py-3">
 						<!-- Existing clips -->
 						<div class="mb-1 flex items-center justify-between">
-							<div class="text-xs uppercase tracking-widest text-zinc-500">Clips</div>
+							<div class="text-xs tracking-widest text-zinc-500 uppercase">Clips</div>
 							{#if selectedClips.size > 0}
 								<button
 									onclick={() => bulkDelete(track.id)}
@@ -571,7 +721,7 @@
 														selectedClips = new Set(selectedClips);
 													}
 												}}
-												class="accent-amber-400 shrink-0"
+												class="shrink-0 accent-amber-400"
 											/>
 											<span class="w-16 shrink-0 font-mono text-xs text-zinc-500">{clip.type}</span>
 											{#if clip.position != null}
@@ -581,8 +731,12 @@
 												<span class="text-xs text-zinc-600">{formatDuration(clip.duration)}</span>
 											{/if}
 											{#if (clip.effects?.pitch ?? 0) !== 0 || (clip.effects?.tempo ?? 1) !== 1}
-												<span class="rounded bg-amber-400/15 px-1.5 py-0.5 text-xs font-mono text-amber-400">
-													{(clip.effects?.pitch ?? 0) !== 0 ? `${clip.effects!.pitch! > 0 ? '+' : ''}${clip.effects!.pitch}st` : ''}
+												<span
+													class="rounded bg-amber-400/15 px-1.5 py-0.5 font-mono text-xs text-amber-400"
+												>
+													{(clip.effects?.pitch ?? 0) !== 0
+														? `${clip.effects!.pitch! > 0 ? '+' : ''}${clip.effects!.pitch}st`
+														: ''}
 													{(clip.effects?.tempo ?? 1) !== 1 ? `${clip.effects!.tempo}×` : ''}
 												</span>
 											{/if}
@@ -590,7 +744,7 @@
 												<button
 													type="button"
 													onclick={() => waveformRefs[clip.id]?.playPause()}
-													class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-zinc-700 text-xs hover:bg-zinc-600 transition-colors"
+													class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-zinc-700 text-xs transition-colors hover:bg-zinc-600"
 													aria-label={clipPlaying[clip.id] ? 'Pause' : 'Play'}
 												>
 													{clipPlaying[clip.id] ? '⏸' : '▶'}
@@ -630,18 +784,27 @@
 										<!-- Effects panel -->
 										{#if effectsOpen[clip.id]}
 											<div class="border-t border-zinc-800 px-3 py-3">
-												<div class="mb-2 text-xs font-semibold uppercase tracking-widest text-zinc-500">Effects</div>
+												<div
+													class="mb-2 text-xs font-semibold tracking-widest text-zinc-500 uppercase"
+												>
+													Effects
+												</div>
 												<div class="space-y-3">
 													<div>
 														<div class="mb-1 flex items-center justify-between">
 															<label class="text-xs text-zinc-400" for="pitch-{clip.id}">
-																Pitch: {effectsEdit[clip.id]?.pitch ?? 0 > 0 ? '+' : ''}{effectsEdit[clip.id]?.pitch ?? 0} semitones
+																Pitch: {(effectsEdit[clip.id]?.pitch ?? 0 > 0)
+																	? '+'
+																	: ''}{effectsEdit[clip.id]?.pitch ?? 0} semitones
 															</label>
 															<button
 																type="button"
-																onclick={() => { if (effectsEdit[clip.id]) effectsEdit[clip.id].pitch = 0; }}
-																class="text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
-															>Reset</button>
+																onclick={() => {
+																	if (effectsEdit[clip.id]) effectsEdit[clip.id].pitch = 0;
+																}}
+																class="text-xs text-zinc-600 transition-colors hover:text-zinc-400"
+																>Reset</button
+															>
 														</div>
 														<input
 															id="pitch-{clip.id}"
@@ -665,9 +828,12 @@
 															</label>
 															<button
 																type="button"
-																onclick={() => { if (effectsEdit[clip.id]) effectsEdit[clip.id].tempo = 1; }}
-																class="text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
-															>Reset</button>
+																onclick={() => {
+																	if (effectsEdit[clip.id]) effectsEdit[clip.id].tempo = 1;
+																}}
+																class="text-xs text-zinc-600 transition-colors hover:text-zinc-400"
+																>Reset</button
+															>
 														</div>
 														<input
 															id="tempo-{clip.id}"
@@ -684,20 +850,33 @@
 													<button
 														type="button"
 														onclick={() => (effectsOpen[clip.id] = false)}
-														class="rounded px-3 py-1 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+														class="rounded px-3 py-1 text-xs text-zinc-500 transition-colors hover:text-zinc-300"
 													>
 														Cancel
 													</button>
-													<form method="POST" action="?/updateClipEffects" use:enhance={() => async ({ update }) => {
-														await update({ reset: false });
-														effectsOpen[clip.id] = false;
-													}}>
+													<form
+														method="POST"
+														action="?/updateClipEffects"
+														use:enhance={() =>
+															async ({ update }) => {
+																await update({ reset: false });
+																effectsOpen[clip.id] = false;
+															}}
+													>
 														<input type="hidden" name="id" value={clip.id} />
-														<input type="hidden" name="pitch" value={effectsEdit[clip.id]?.pitch ?? 0} />
-														<input type="hidden" name="tempo" value={effectsEdit[clip.id]?.tempo ?? 1} />
+														<input
+															type="hidden"
+															name="pitch"
+															value={effectsEdit[clip.id]?.pitch ?? 0}
+														/>
+														<input
+															type="hidden"
+															name="tempo"
+															value={effectsEdit[clip.id]?.tempo ?? 1}
+														/>
 														<button
 															type="submit"
-															class="rounded bg-amber-400 px-3 py-1 text-xs font-bold text-zinc-950 hover:bg-amber-300 transition-colors"
+															class="rounded bg-amber-400 px-3 py-1 text-xs font-bold text-zinc-950 transition-colors hover:bg-amber-300"
 														>
 															Save Effects
 														</button>
@@ -713,9 +892,11 @@
 						<!-- ── Drop zone ──────────────────────────────────────────────────── -->
 						<div class="mt-4 border-t border-zinc-800 pt-3">
 							<div class="mb-2 flex items-center justify-between">
-								<span class="text-xs uppercase tracking-widest text-zinc-500">Upload clips</span>
+								<span class="text-xs tracking-widest text-zinc-500 uppercase">Upload clips</span>
 								<!-- Trim upload: single file → opens trim modal -->
-								<label class="cursor-pointer rounded-lg border border-zinc-700 px-3 py-1 text-xs font-medium text-zinc-400 hover:border-amber-400/50 hover:text-amber-400 transition-colors">
+								<label
+									class="cursor-pointer rounded-lg border border-zinc-700 px-3 py-1 text-xs font-medium text-zinc-400 transition-colors hover:border-amber-400/50 hover:text-amber-400"
+								>
 									✂ Upload + Trim
 									<input
 										type="file"
@@ -723,7 +904,8 @@
 										class="hidden"
 										onchange={async (e) => {
 											const files = (e.target as HTMLInputElement).files;
-											if (files?.[0]) openTrim(track.id, files[0], (stagedFiles[track.id] ?? []).length + 1);
+											if (files?.[0])
+												openTrim(track.id, files[0], (stagedFiles[track.id] ?? []).length + 1);
 											(e.target as HTMLInputElement).value = '';
 										}}
 									/>
@@ -752,7 +934,7 @@
 							>
 								<input
 									type="file"
-									accept="audio/*"
+									accept="audio/*,video/mp4,video/quicktime,video/x-m4v,.mp4,.mov,.m4v"
 									multiple
 									class="absolute inset-0 cursor-pointer opacity-0"
 									onchange={async (e) => {
@@ -762,10 +944,64 @@
 									}}
 								/>
 								<p class="text-sm text-zinc-500">
-									Quick upload — drag pre-trimmed files, or <span class="text-amber-400">click to browse</span>
+									Quick upload — drag pre-trimmed files, or <span class="text-amber-400"
+										>click to browse</span
+									>
 								</p>
-								<p class="mt-1 text-xs text-zinc-600">mp3 · wav · ogg · m4a · flac · webm · max 10 MB each</p>
+								<p class="mt-1 text-xs text-zinc-600">
+									mp3/wav/ogg/m4a/flac · mp4/mov → audio extracted
+								</p>
 							</div>
+
+							<!-- Video extraction progress -->
+							{#if (videoExtractions[track.id] ?? []).length > 0}
+								<div class="mt-3 space-y-2">
+									{#each videoExtractions[track.id] as extraction (extraction.id)}
+										<div
+											class="grid items-center gap-x-3 rounded-lg border border-amber-700 bg-amber-950/20 px-3 py-2 text-sm"
+											style="grid-template-columns: 1.25rem 1fr 1.25rem"
+										>
+											<span class="text-center text-xs text-amber-400">⟳</span>
+											<div class="min-w-0">
+												<div class="truncate text-zinc-200">{extraction.name}</div>
+												<div class="text-xs text-zinc-500">
+													{formatSize(extraction.size)} ·
+													{#if extraction.status === 'extracting'}
+														<span class="text-amber-400"
+															>Extracting audio… {extraction.progress}%</span
+														>
+													{:else if extraction.status === 'done'}
+														<span class="text-green-400">Done</span>
+													{:else}
+														<span class="text-red-400">{extraction.error}</span>
+													{/if}
+												</div>
+												{#if extraction.status === 'extracting'}
+													<div class="mt-1 h-1 w-full overflow-hidden rounded-full bg-zinc-700">
+														<div
+															class="h-full bg-amber-400 transition-all"
+															style="width: {extraction.progress}%"
+														></div>
+													</div>
+												{/if}
+											</div>
+											{#if extraction.status === 'failed'}
+												<button
+													onclick={() => {
+														videoExtractions[track.id] = (videoExtractions[track.id] ?? []).filter(
+															(v) => v.id !== extraction.id
+														);
+													}}
+													class="text-zinc-600 hover:text-red-400"
+													title="Dismiss">✕</button
+												>
+											{:else}
+												<span></span>
+											{/if}
+										</div>
+									{/each}
+								</div>
+							{/if}
 
 							<!-- Staged file list -->
 							{#if (stagedFiles[track.id] ?? []).length > 0}
@@ -848,7 +1084,12 @@
 										onclick={() => uploadAll(track.id)}
 										class="mt-3 rounded-lg bg-amber-400 px-4 py-2 text-sm font-bold text-zinc-950 transition-colors hover:bg-amber-300"
 									>
-										Upload {(stagedFiles[track.id] ?? []).filter((f) => f.status === 'queued').length} file{(stagedFiles[track.id] ?? []).filter((f) => f.status === 'queued').length !== 1 ? 's' : ''}
+										Upload {(stagedFiles[track.id] ?? []).filter((f) => f.status === 'queued')
+											.length} file{(stagedFiles[track.id] ?? []).filter(
+											(f) => f.status === 'queued'
+										).length !== 1
+											? 's'
+											: ''}
 									</button>
 								{/if}
 							{/if}
@@ -857,7 +1098,7 @@
 						<!-- ── Accepted titles ────────────────────────────────────────────── -->
 						<div class="mt-4 border-t border-zinc-800 pt-3">
 							<div class="mb-2 flex items-center justify-between">
-								<div class="text-xs uppercase tracking-widest text-zinc-500">Accepted Titles</div>
+								<div class="text-xs tracking-widest text-zinc-500 uppercase">Accepted Titles</div>
 								<button
 									onclick={() => (editingTitles = editingTitles === track.id ? null : track.id)}
 									class="text-xs text-zinc-400 transition-colors hover:text-zinc-200"
@@ -866,19 +1107,15 @@
 								</button>
 							</div>
 							{#if editingTitles === track.id}
-								<form
-									method="POST"
-									action="?/saveAcceptedTitles"
-									use:enhance
-									class="flex gap-2"
-								>
+								<form method="POST" action="?/saveAcceptedTitles" use:enhance class="flex gap-2">
 									<input type="hidden" name="id" value={track.id} />
 									<textarea
 										name="accepted_titles"
 										rows="3"
 										placeholder="One title per line"
 										class="input-field flex-1 font-mono text-xs"
-									>{(track.accepted_titles ?? [track.title]).join('\n')}</textarea>
+										>{(track.accepted_titles ?? [track.title]).join('\n')}</textarea
+									>
 									<button type="submit" class="btn-primary self-start text-xs">Save</button>
 								</form>
 								<p class="mt-1 text-xs text-zinc-600">
