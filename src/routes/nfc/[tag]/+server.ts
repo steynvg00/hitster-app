@@ -76,5 +76,10 @@ export const GET: RequestHandler = async ({ params, cookies }) => {
 		redirect(302, `/nfc/hint/${nfcTag.challenge_id}`);
 	}
 
+	// ── Challenge unlock card ──────────────────────────────────────────────────
+	if (nfcTag.purpose === 'challenge_unlock' && nfcTag.set_id && nfcTag.challenge_id) {
+		redirect(302, `/nfc/unlock/${nfcTag.set_id}/${nfcTag.challenge_id}`);
+	}
+
 	redirect(302, '/join');
 };

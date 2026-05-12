@@ -182,6 +182,16 @@
 	let newSlug = $state('');
 	let savingChallenges = $state(false);
 
+	// ── NFC slug blur-to-save ─────────────────────────────────────────────────
+	let challengesForm: HTMLFormElement | undefined;
+	let slugSavingId = $state<string | null>(null);
+	let slugSavedId = $state<string | null>(null);
+
+	function onSlugBlur(challengeId: string) {
+		slugSavingId = challengeId;
+		challengesForm?.requestSubmit();
+	}
+
 	// ── Challenges section expand/collapse ────────────────────────────────────
 	let challengesExpanded = $state(true);
 
@@ -773,13 +783,22 @@
 				{/if}
 
 				<form
+					bind:this={challengesForm}
 					method="POST"
 					action="?/setChallenges"
 					use:enhance={() => {
 						savingChallenges = true;
-						return async ({ update }) => {
+						const blurredId = slugSavingId;
+						slugSavingId = null;
+						return async ({ result, update }) => {
 							savingChallenges = false;
 							await update();
+							if (blurredId && result.type !== 'failure') {
+								slugSavedId = blurredId;
+								setTimeout(() => {
+									slugSavedId = null;
+								}, 2000);
+							}
 						};
 					}}
 				>
@@ -858,19 +877,24 @@
 												oninput={(e) => {
 													nfcSlugs = { ...nfcSlugs, [id]: (e.target as HTMLInputElement).value };
 												}}
+												onblur={() => onSlugBlur(id)}
 												class="flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-xs text-zinc-200 focus:border-amber-500 focus:outline-none"
 											/>
-											<button
-												type="button"
-												disabled={!nfcSlugs[id]}
-												onclick={() => copyNfcUrl(nfcSlugs[id] ?? '')}
-												class="shrink-0 rounded px-2 py-0.5 text-xs font-semibold transition-colors
-													{copiedSlug === nfcSlugs[id] && nfcSlugs[id]
-													? 'text-green-400'
-													: 'text-zinc-500 hover:text-zinc-300 disabled:cursor-not-allowed disabled:opacity-30'}"
-											>
-												{copiedSlug === nfcSlugs[id] && nfcSlugs[id] ? 'Copied ✓' : 'Copy'}
-											</button>
+											{#if slugSavedId === id}
+												<span class="shrink-0 text-xs font-semibold text-green-400">saved ✓</span>
+											{:else}
+												<button
+													type="button"
+													disabled={!nfcSlugs[id]}
+													onclick={() => copyNfcUrl(nfcSlugs[id] ?? '')}
+													class="shrink-0 rounded px-2 py-0.5 text-xs font-semibold transition-colors
+														{copiedSlug === nfcSlugs[id] && nfcSlugs[id]
+														? 'text-green-400'
+														: 'text-zinc-500 hover:text-zinc-300 disabled:cursor-not-allowed disabled:opacity-30'}"
+												>
+													{copiedSlug === nfcSlugs[id] && nfcSlugs[id] ? 'Copied ✓' : 'Copy'}
+												</button>
+											{/if}
 										</div>
 									{/if}
 								</div>
