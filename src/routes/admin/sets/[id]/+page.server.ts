@@ -583,6 +583,48 @@ export const actions: Actions = {
 		return { success: true };
 	},
 
+	togglePowerupCategory: async ({ request, params }) => {
+		const db = createAdminClient();
+		const fd = await request.formData();
+		const category = (fd.get('category') as string | null)?.trim();
+		const enabled = fd.get('enabled') === 'true';
+		if (!category) return fail(400, { error: 'Missing category' });
+
+		const { data: powerups } = await db
+			.from('powerups')
+			.select('id')
+			.eq('category', category as never);
+		if (!powerups?.length) return { success: true };
+
+		const powerupIds = powerups.map((p) => p.id);
+
+		// Load existing set_powerup rows so we can preserve overrides
+		const { data: existing } = await db
+			.from('set_powerups')
+			.select('powerup_id, cost_override, visibility_override, effect_payload_override')
+			.eq('set_id', params.id)
+			.in('powerup_id', powerupIds);
+		const existingMap = new Map((existing ?? []).map((r) => [r.powerup_id, r]));
+
+		const upsertRows = powerupIds.map((powerupId) => {
+			const ex = existingMap.get(powerupId);
+			return {
+				set_id: params.id,
+				powerup_id: powerupId,
+				enabled,
+				cost_override: ex?.cost_override ?? null,
+				visibility_override: ex?.visibility_override ?? null,
+				effect_payload_override: (ex?.effect_payload_override ?? {}) as never
+			};
+		});
+
+		const { error } = await db
+			.from('set_powerups')
+			.upsert(upsertRows, { onConflict: 'set_id,powerup_id' });
+		if (error) return fail(500, { error: error.message });
+		return { success: true };
+	},
+
 	delete: async ({ params }) => {
 		const db = createAdminClient();
 

@@ -11,6 +11,7 @@
 	} from '$lib/types';
 	import { getVariantIcon, getVariantColor } from '$lib/variants';
 	import HelpTooltip from '$lib/components/ui/HelpTooltip.svelte';
+	import { ChevronDown, ChevronRight } from 'lucide-svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -325,6 +326,49 @@
 		social: 'bg-green-900/60 text-green-300',
 		self: 'bg-zinc-700 text-zinc-300'
 	};
+
+	const CATEGORY_ORDER = ['offensive', 'defensive', 'information', 'social', 'self'] as const;
+
+	// Collapsed state per category — persisted in localStorage
+	const COLLAPSE_KEY = 'hitster_powerup_categories_collapsed';
+	function loadCollapsed(): Record<string, boolean> {
+		if (typeof localStorage === 'undefined') return {};
+		try {
+			return JSON.parse(localStorage.getItem(COLLAPSE_KEY) ?? '{}');
+		} catch {
+			return {};
+		}
+	}
+	let collapsedCategories = $state<Record<string, boolean>>(loadCollapsed());
+
+	onMount(() => {
+		collapsedCategories = loadCollapsed();
+	});
+
+	function toggleCategory(cat: string) {
+		collapsedCategories = { ...collapsedCategories, [cat]: !collapsedCategories[cat] };
+		if (typeof localStorage !== 'undefined') {
+			localStorage.setItem(COLLAPSE_KEY, JSON.stringify(collapsedCategories));
+		}
+	}
+
+	// Powerups grouped by category
+	const powerupsByCategory = $derived(
+		CATEGORY_ORDER.map((cat) => ({
+			category: cat,
+			powerups: data.powerupConfigs.filter((p) => p.category === cat)
+		}))
+	);
+
+	// Category master toggle state: 'on' | 'partial' | 'off'
+	function categoryToggleState(cat: string): 'on' | 'partial' | 'off' {
+		const items = data.powerupConfigs.filter((p) => p.category === cat);
+		if (items.length === 0) return 'off';
+		const enabledCount = items.filter((p) => p.effective_enabled).length;
+		if (enabledCount === items.length) return 'on';
+		if (enabledCount === 0) return 'off';
+		return 'partial';
+	}
 
 	// ── NFC URL copy ──────────────────────────────────────────────────────────
 	let copiedSlug = $state<string | null>(null);
@@ -1294,123 +1338,187 @@
 				{/if}
 			</div>
 
-			<!-- Powerup grid -->
-			<div class="mt-4">
-				<h3 class="mb-2 text-xs font-semibold tracking-widest text-zinc-500 uppercase">
+			<!-- Powerup grid — grouped by category -->
+			<div class="mt-4 space-y-3">
+				<h3 class="text-xs font-semibold tracking-widest text-zinc-500 uppercase">
 					Powerup Config
 				</h3>
-				<div class="space-y-2">
-					{#each data.powerupConfigs as p (p.id)}
-						<div
-							class="rounded-lg border px-4 py-3 transition-colors
-								{p.effective_enabled ? 'border-zinc-700 bg-zinc-800/50' : 'border-zinc-800 bg-zinc-900 opacity-60'}"
-						>
-							<div class="flex flex-wrap items-center gap-3">
-								<!-- Name + badge -->
-								<div class="min-w-0 flex-1">
-									<div class="flex items-center gap-2">
-										<span class="text-sm font-semibold text-zinc-200">{p.name}</span>
-										<span
-											class="rounded px-1.5 py-0.5 text-xs font-medium {CATEGORY_COLORS[
-												p.category
-											] ?? 'bg-zinc-700 text-zinc-400'}">{p.category}</span
-										>
-										{#if p.has_override}
-											<span class="text-xs text-amber-400">edited</span>
-										{/if}
-									</div>
-									<p class="mt-0.5 text-xs text-zinc-500">{p.description}</p>
-								</div>
-
-								<!-- Enabled toggle -->
+				{#each powerupsByCategory as { category, powerups: catPowerups }}
+					{@const toggleState = categoryToggleState(category)}
+					{@const collapsed = !!collapsedCategories[category]}
+					<div class="rounded-lg border border-zinc-800">
+						<!-- Category header -->
+						<div class="flex items-center gap-2 px-3 py-2">
+							<button
+								type="button"
+								onclick={() => toggleCategory(category)}
+								class="flex flex-1 items-center gap-2 text-left"
+							>
+								{#if collapsed}
+									<ChevronRight size={14} class="shrink-0 text-zinc-500" />
+								{:else}
+									<ChevronDown size={14} class="shrink-0 text-zinc-500" />
+								{/if}
+								<span class="text-sm font-semibold text-zinc-300 capitalize">{category}</span>
+								<span class="text-xs text-zinc-600">
+									{catPowerups.filter((p) => p.effective_enabled).length}/{catPowerups.length} enabled
+								</span>
+							</button>
+							<!-- Master toggle (tri-state) -->
+							{#if catPowerups.length > 0}
 								<form
 									method="POST"
-									action="?/update_powerup_config"
+									action="?/togglePowerupCategory"
 									use:enhance={() =>
 										async ({ update }) =>
 											update({ reset: false })}
 								>
-									<input type="hidden" name="powerup_id" value={p.id} />
-									<input type="hidden" name="field" value="enabled" />
-									<input type="hidden" name="value" value={String(!p.effective_enabled)} />
+									<input type="hidden" name="category" value={category} />
+									<input
+										type="hidden"
+										name="enabled"
+										value={toggleState === 'off' ? 'true' : 'false'}
+									/>
 									<button
 										type="submit"
-										class="flex items-center gap-1.5 rounded border px-2 py-1 text-xs font-medium transition-colors
-											{p.effective_enabled
-											? 'border-green-800 bg-green-950/40 text-green-400 hover:border-green-700'
-											: 'border-zinc-700 text-zinc-500 hover:border-zinc-500 hover:text-zinc-300'}"
+										title={toggleState === 'off' ? 'Enable all' : 'Disable all'}
+										class="flex h-6 w-10 shrink-0 items-center rounded-full border px-0.5 transition-colors
+											{toggleState === 'on'
+											? 'border-green-700 bg-green-900/60'
+											: toggleState === 'partial'
+												? 'border-amber-700 bg-amber-900/40'
+												: 'border-zinc-700 bg-zinc-800'}"
 									>
-										{p.effective_enabled ? 'On' : 'Off'}
+										<span
+											class="h-4 w-4 rounded-full transition-all
+												{toggleState === 'on'
+												? 'translate-x-4 bg-green-400'
+												: toggleState === 'partial'
+													? 'translate-x-2 bg-amber-400'
+													: 'translate-x-0 bg-zinc-600'}"
+										></span>
 									</button>
 								</form>
-
-								<!-- Cost (token shop only) -->
-								{#if powerupMode === 'token_shop'}
-									<form
-										method="POST"
-										action="?/update_powerup_config"
-										use:enhance={() =>
-											async ({ update }) =>
-												update({ reset: false })}
-									>
-										<input type="hidden" name="powerup_id" value={p.id} />
-										<input type="hidden" name="field" value="cost_override" />
-										<label class="flex items-center gap-1.5">
-											<span class="text-xs text-zinc-500">Cost</span>
-											<input
-												type="number"
-												name="value"
-												min="1"
-												value={p.effective_cost}
-												onblur={(e) => {
-													const f = (e.target as HTMLInputElement).closest(
-														'form'
-													) as HTMLFormElement | null;
-													f?.requestSubmit();
-												}}
-												class="admin-input w-16 py-0.5 text-xs"
-											/>
-										</label>
-									</form>
-								{:else}
-									<span class="text-xs text-zinc-600" title="Cost unused in Score Thresholds mode"
-										>Cost —</span
-									>
-								{/if}
-
-								<!-- Visibility override -->
-								<form
-									method="POST"
-									action="?/update_powerup_config"
-									use:enhance={() =>
-										async ({ update }) =>
-											update({ reset: false })}
-								>
-									<input type="hidden" name="powerup_id" value={p.id} />
-									<input type="hidden" name="field" value="visibility_override" />
-									<label class="flex items-center gap-1.5">
-										<span class="text-xs text-zinc-500">Visibility</span>
-										<select
-											name="value"
-											value={p.effective_visibility}
-											onchange={(e) => {
-												const f = (e.target as HTMLSelectElement).closest(
-													'form'
-												) as HTMLFormElement | null;
-												f?.requestSubmit();
-											}}
-											class="admin-input py-0.5 text-xs"
-										>
-											{#each VISIBILITY_OPTIONS as v}
-												<option value={v}>{v}</option>
-											{/each}
-										</select>
-									</label>
-								</form>
-							</div>
+							{/if}
 						</div>
-					{/each}
-				</div>
+
+						<!-- Powerup rows (collapsible body) -->
+						{#if !collapsed}
+							{#if catPowerups.length === 0}
+								<div class="border-t border-zinc-800 px-4 py-3 text-xs text-zinc-600">
+									No {category} powerups yet.
+								</div>
+							{:else}
+								<div class="border-t border-zinc-800">
+									{#each catPowerups as p (p.id)}
+										<div
+											class="flex flex-wrap items-center gap-3 border-b border-zinc-800/60 px-4 py-3 last:border-0
+												{p.effective_enabled ? '' : 'opacity-50'}"
+										>
+											<!-- Name -->
+											<div class="min-w-0 flex-1">
+												<div class="flex items-center gap-2">
+													<span class="text-sm font-semibold text-zinc-200">{p.name}</span>
+													{#if p.has_override}
+														<span class="text-xs text-amber-400">edited</span>
+													{/if}
+												</div>
+												<p class="mt-0.5 text-xs text-zinc-500">{p.description}</p>
+											</div>
+
+											<!-- Enabled toggle -->
+											<form
+												method="POST"
+												action="?/update_powerup_config"
+												use:enhance={() =>
+													async ({ update }) =>
+														update({ reset: false })}
+											>
+												<input type="hidden" name="powerup_id" value={p.id} />
+												<input type="hidden" name="field" value="enabled" />
+												<input type="hidden" name="value" value={String(!p.effective_enabled)} />
+												<button
+													type="submit"
+													class="flex items-center gap-1.5 rounded border px-2 py-1 text-xs font-medium transition-colors
+														{p.effective_enabled
+														? 'border-green-800 bg-green-950/40 text-green-400 hover:border-green-700'
+														: 'border-zinc-700 text-zinc-500 hover:border-zinc-500 hover:text-zinc-300'}"
+												>
+													{p.effective_enabled ? 'On' : 'Off'}
+												</button>
+											</form>
+
+											<!-- Cost (token shop only) -->
+											{#if powerupMode === 'token_shop'}
+												<form
+													method="POST"
+													action="?/update_powerup_config"
+													use:enhance={() =>
+														async ({ update }) =>
+															update({ reset: false })}
+												>
+													<input type="hidden" name="powerup_id" value={p.id} />
+													<input type="hidden" name="field" value="cost_override" />
+													<label class="flex items-center gap-1.5">
+														<span class="text-xs text-zinc-500">Cost</span>
+														<input
+															type="number"
+															name="value"
+															min="1"
+															value={p.effective_cost}
+															onblur={(e) => {
+																const f = (e.target as HTMLInputElement).closest(
+																	'form'
+																) as HTMLFormElement | null;
+																f?.requestSubmit();
+															}}
+															class="admin-input w-16 py-0.5 text-xs"
+														/>
+													</label>
+												</form>
+											{:else}
+												<span
+													class="text-xs text-zinc-600"
+													title="Cost unused in Score Thresholds mode">Cost —</span
+												>
+											{/if}
+
+											<!-- Visibility override -->
+											<form
+												method="POST"
+												action="?/update_powerup_config"
+												use:enhance={() =>
+													async ({ update }) =>
+														update({ reset: false })}
+											>
+												<input type="hidden" name="powerup_id" value={p.id} />
+												<input type="hidden" name="field" value="visibility_override" />
+												<label class="flex items-center gap-1.5">
+													<span class="text-xs text-zinc-500">Visibility</span>
+													<select
+														name="value"
+														value={p.effective_visibility}
+														onchange={(e) => {
+															const f = (e.target as HTMLSelectElement).closest(
+																'form'
+															) as HTMLFormElement | null;
+															f?.requestSubmit();
+														}}
+														class="admin-input py-0.5 text-xs"
+													>
+														{#each VISIBILITY_OPTIONS as v}
+															<option value={v}>{v}</option>
+														{/each}
+													</select>
+												</label>
+											</form>
+										</div>
+									{/each}
+								</div>
+							{/if}
+						{/if}
+					</div>
+				{/each}
 			</div>
 		{/if}
 	</section>
