@@ -68,15 +68,10 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 	const team = teamResult.data;
 
 	// ── Attempt (per-team timer) ──────────────────────────────────────────────
-	let attempt = attemptResult.data;
-	if (!attempt && challenge.status === 'active') {
-		const { data: newAttempt } = await admin
-			.from('challenge_attempts')
-			.insert({ challenge_id: params.id, team_id: team.id })
-			.select()
-			.single();
-		attempt = newAttempt;
-	}
+	// Attempt is NOT auto-created here; teams must click "Start challenge" explicitly.
+	// This prevents the timer from ticking while the tutorial is being read.
+	const attempt = attemptResult.data ?? null;
+
 	const trackMap = new Map(tracksResult.data.map((t) => [t.id, t]));
 	const clipMap = new Map(clipsResult.data.map((c) => [c.id, c]));
 
@@ -478,6 +473,25 @@ export const actions: Actions = {
 			isFinal: true
 		};
 		return { submitted: true, result };
+	},
+
+	startChallenge: async ({ params, locals }) => {
+		if (!locals.teamId) return fail(401);
+		const supabase = createAdminClient();
+		const { data: challenge } = await supabase
+			.from('challenges')
+			.select('id, status')
+			.eq('id', params.id)
+			.single();
+		if (!challenge || challenge.status !== 'active') return fail(400);
+		const { error } = await supabase
+			.from('challenge_attempts')
+			.insert(
+				{ challenge_id: params.id, team_id: locals.teamId, started_at: new Date().toISOString() },
+				{ onConflict: 'challenge_id,team_id', ignoreDuplicates: true } as never
+			);
+		if (error) return fail(500, { formError: error.message });
+		return { success: true };
 	},
 
 	requestReview: async ({ request, params, cookies }) => {

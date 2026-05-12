@@ -12,12 +12,17 @@
 	import Waveform from '$lib/components/ui/Waveform.svelte';
 	import BonusTracker from '$lib/components/game/BonusTracker.svelte';
 	import TutorialOverlay from '$lib/components/game/TutorialOverlay.svelte';
+	import { getVariantIcon, getVariantColor } from '$lib/variants';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	const teamColors: Record<string, string> = {
-		blue: '#3b82f6', yellow: '#eab308', green: '#22c55e',
-		red: '#ef4444', indigo: '#6366f1', black: '#1e293b'
+		blue: '#3b82f6',
+		yellow: '#eab308',
+		green: '#22c55e',
+		red: '#ef4444',
+		indigo: '#6366f1',
+		black: '#1e293b'
 	};
 	const teamHex = $derived(teamColors[data.team.color] ?? '#ef4444');
 
@@ -27,7 +32,11 @@
 
 	function loadDraft(): Record<string, Record<string, string>> {
 		if (typeof localStorage === 'undefined') return {};
-		try { return JSON.parse(localStorage.getItem(DRAFT_KEY) ?? '{}'); } catch { return {}; }
+		try {
+			return JSON.parse(localStorage.getItem(DRAFT_KEY) ?? '{}');
+		} catch {
+			return {};
+		}
 	}
 
 	const savedDraft = loadDraft();
@@ -80,7 +89,7 @@
 		for (let i = 0; i < data.challengeTracks.length; i++) {
 			const artistValue = hasArtistCombobox
 				? collabArtists[i].filter((a) => a.trim()).join(' & ')
-				: allFieldValues[i]['artist'] ?? '';
+				: (allFieldValues[i]['artist'] ?? '');
 			d[data.challengeTracks[i].trackId] = {
 				...allFieldValues[i],
 				...(hasArtistCombobox ? { artist: artistValue } : {}),
@@ -97,7 +106,7 @@
 		for (let i = 0; i < data.challengeTracks.length; i++) {
 			const artistValue = hasArtistCombobox
 				? collabArtists[i].filter((a) => a.trim()).join(' & ')
-				: allFieldValues[i]['artist'] ?? '';
+				: (allFieldValues[i]['artist'] ?? '');
 			d[data.challengeTracks[i].trackId] = {
 				...allFieldValues[i],
 				...(hasArtistCombobox ? { artist: artistValue } : {}),
@@ -136,6 +145,7 @@
 	// ── Form + auto-submit ────────────────────────────────────────────────────
 	let formEl = $state<HTMLFormElement | undefined>(undefined);
 	let submitting = $state(false);
+	let startingChallenge = $state(false);
 
 	function triggerSubmit() {
 		if (submitting || result) return;
@@ -160,29 +170,41 @@
 		// Detect when this team's attempt ends (auto-submit sets ended_at)
 		const attemptChannel = supabaseBrowser
 			.channel(`attempt-${data.challenge.id}-${data.team.id}`)
-			.on('postgres_changes', {
-				event: 'UPDATE', schema: 'public', table: 'challenge_attempts',
-				filter: `challenge_id=eq.${data.challenge.id}`
-			}, (payload) => {
-				const updated = payload.new as { team_id: string; ended_at: string | null };
-				if (updated.team_id === data.team.id && updated.ended_at && !result) {
-					window.location.reload();
+			.on(
+				'postgres_changes',
+				{
+					event: 'UPDATE',
+					schema: 'public',
+					table: 'challenge_attempts',
+					filter: `challenge_id=eq.${data.challenge.id}`
+				},
+				(payload) => {
+					const updated = payload.new as { team_id: string; ended_at: string | null };
+					if (updated.team_id === data.team.id && updated.ended_at && !result) {
+						window.location.reload();
+					}
 				}
-			})
+			)
 			.subscribe();
 
 		// Backup: also watch for the submission INSERT directly
 		const submissionInsertChannel = supabaseBrowser
 			.channel(`sub-insert-${data.challenge.id}-${data.team.id}`)
-			.on('postgres_changes', {
-				event: 'INSERT', schema: 'public', table: 'submissions',
-				filter: `challenge_id=eq.${data.challenge.id}`
-			}, (payload) => {
-				const newSub = payload.new as { team_id: string; is_final: boolean };
-				if (newSub.team_id === data.team.id && newSub.is_final && !result) {
-					window.location.reload();
+			.on(
+				'postgres_changes',
+				{
+					event: 'INSERT',
+					schema: 'public',
+					table: 'submissions',
+					filter: `challenge_id=eq.${data.challenge.id}`
+				},
+				(payload) => {
+					const newSub = payload.new as { team_id: string; is_final: boolean };
+					if (newSub.team_id === data.team.id && newSub.is_final && !result) {
+						window.location.reload();
+					}
 				}
-			})
+			)
 			.subscribe();
 
 		// Subscribe to set recap changes — redirect to waiting when recap starts
@@ -190,16 +212,20 @@
 		if (data.activeSetId) {
 			setChannel = supabaseBrowser
 				.channel(`challenge-set-${data.activeSetId}`)
-				.on('postgres_changes', {
-					event: 'UPDATE',
-					schema: 'public',
-					table: 'game_sets',
-					filter: `id=eq.${data.activeSetId}`
-				}, (payload) => {
-					if ((payload.new as { recap_state: string | null }).recap_state) {
-						goto(`/play/waiting?set_id=${data.activeSetId}`);
+				.on(
+					'postgres_changes',
+					{
+						event: 'UPDATE',
+						schema: 'public',
+						table: 'game_sets',
+						filter: `id=eq.${data.activeSetId}`
+					},
+					(payload) => {
+						if ((payload.new as { recap_state: string | null }).recap_state) {
+							goto(`/play/waiting?set_id=${data.activeSetId}`);
+						}
 					}
-				})
+				)
 				.subscribe();
 		}
 
@@ -225,14 +251,18 @@
 
 	const canSubmit = $derived(
 		!submitting &&
-		!result &&
-		(timerMs === null || timerMs > 0) &&
-		data.challengeTracks.every((_, i) => {
-			const otherComboFields = comboboxFields.filter((f: AnswerField) => !(f === 'artist' && hasArtistCombobox));
-			const otherOk = otherComboFields.every((f: AnswerField) => (allFieldValues[i]?.[f] ?? '').length > 0);
-			const artistOk = !hasArtistCombobox || collabArtists[i].some((a) => a.trim().length > 0);
-			return otherOk && artistOk;
-		})
+			!result &&
+			(timerMs === null || timerMs > 0) &&
+			data.challengeTracks.every((_, i) => {
+				const otherComboFields = comboboxFields.filter(
+					(f: AnswerField) => !(f === 'artist' && hasArtistCombobox)
+				);
+				const otherOk = otherComboFields.every(
+					(f: AnswerField) => (allFieldValues[i]?.[f] ?? '').length > 0
+				);
+				const artistOk = !hasArtistCombobox || collabArtists[i].some((a) => a.trim().length > 0);
+				return otherOk && artistOk;
+			})
 	);
 	const formError = $derived<string | null>(f?.formError ?? null);
 	const reviewError = $derived<string | null>(f?.reviewError ?? null);
@@ -251,14 +281,13 @@
 	// ── Tutorial overlay ──────────────────────────────────────────────────────
 	let showTutorial = $state(false);
 	const tutorialEntry = $derived(
-		data.tutorialText
-			? [{ variant: data.challenge.variant, tutorial_text: data.tutorialText }]
-			: []
+		data.tutorialText ? [{ variant: data.challenge.variant, tutorial_text: data.tutorialText }] : []
 	);
 
 	onMount(() => {
-		// Auto-show tutorial once per variant per team session (localStorage)
-		if (data.tutorialText && data.team?.id) {
+		// Auto-show tutorial once per variant per team session, only when already in-game.
+		// When attempt is null (pre-game gate), the tutorial is shown inline — no overlay needed.
+		if (data.tutorialText && data.team?.id && data.attempt) {
 			const key = `tutorial_seen_${data.team.id}_${data.challenge.variant}`;
 			if (!localStorage.getItem(key)) {
 				showTutorial = true;
@@ -267,14 +296,37 @@
 		}
 	});
 
+	// Pre-game gate: mark tutorial as seen immediately so the overlay won't pop on reload.
+	$effect(() => {
+		if (
+			!data.attempt &&
+			!result &&
+			data.challenge.status === 'active' &&
+			data.tutorialText &&
+			data.team?.id &&
+			typeof localStorage !== 'undefined'
+		) {
+			localStorage.setItem(`tutorial_seen_${data.team.id}_${data.challenge.variant}`, '1');
+		}
+	});
+
 	// ── Field label display ───────────────────────────────────────────────────
 	const FIELD_LABELS: Record<AnswerField, string> = {
-		artist: 'Artist', title: 'Title', year: 'Year',
-		label: 'Record Label', festival: 'Festival', vocal_source: 'Vocal source'
+		artist: 'Artist',
+		title: 'Title',
+		year: 'Year',
+		label: 'Record Label',
+		festival: 'Festival',
+		vocal_source: 'Vocal source'
 	};
-	function fieldLabel(field: AnswerField) { return FIELD_LABELS[field] ?? field; }
+	function fieldLabel(field: AnswerField) {
+		return FIELD_LABELS[field] ?? field;
+	}
 
 	let reviewingKey = $state<string | null>(null); // `${trackId}:${field}`
+
+	const VariantIcon = $derived(getVariantIcon(data.challenge.variant));
+	const variantColor = $derived(getVariantColor(data.challenge.variant));
 
 	// ── Live result (realtime submissions subscription) ───────────────────────
 	let liveScore = $state<number | null>(null);
@@ -294,22 +346,31 @@
 
 		const channel = supabaseBrowser
 			.channel(`submission-${submissionId}`)
-			.on('postgres_changes', {
-				event: 'UPDATE', schema: 'public', table: 'submissions',
-				filter: `id=eq.${submissionId}`
-			}, async () => {
-				const { data: sub } = await supabaseBrowser
-					.from('submissions').select('score, status').eq('id', submissionId).single();
-				if (sub) {
-					const oldScore = liveScore ?? 0;
-					liveScore = sub.score ?? liveScore;
-					liveStatus = sub.status;
-					if (sub.status === 'review_approved' || sub.status === 'review_rejected') {
-						reviewJustResolved = true;
-						pointsAwarded = (sub.score ?? 0) - oldScore;
+			.on(
+				'postgres_changes',
+				{
+					event: 'UPDATE',
+					schema: 'public',
+					table: 'submissions',
+					filter: `id=eq.${submissionId}`
+				},
+				async () => {
+					const { data: sub } = await supabaseBrowser
+						.from('submissions')
+						.select('score, status')
+						.eq('id', submissionId)
+						.single();
+					if (sub) {
+						const oldScore = liveScore ?? 0;
+						liveScore = sub.score ?? liveScore;
+						liveStatus = sub.status;
+						if (sub.status === 'review_approved' || sub.status === 'review_rejected') {
+							reviewJustResolved = true;
+							pointsAwarded = (sub.score ?? 0) - oldScore;
+						}
 					}
 				}
-			})
+			)
 			.subscribe();
 
 		return () => supabaseBrowser.removeChannel(channel);
@@ -318,7 +379,10 @@
 	// ── Animated score count-up ───────────────────────────────────────────────
 	$effect(() => {
 		const target = liveScore ?? 0;
-		if (target === 0) { animatedScore = 0; return; }
+		if (target === 0) {
+			animatedScore = 0;
+			return;
+		}
 		const from = animatedScore;
 		const duration = Math.min(1400, 400 + Math.abs(target - from) * 8);
 		const startTime = performance.now();
@@ -344,49 +408,41 @@
 
 {#if showHintModal && data.challenge.hint_text}
 	<!-- ── Hint modal ──────────────────────────────────────────────────────── -->
-	<div class="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm"
-		role="dialog" aria-modal="true"
-		onclick={() => (showHintModal = false)}>
-		<div class="w-full max-w-lg rounded-t-3xl bg-zinc-900 border-t border-zinc-700 px-6 py-8 pb-10"
-			onclick={(e) => e.stopPropagation()}>
+	<div
+		class="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm"
+		role="dialog"
+		aria-modal="true"
+		onclick={() => (showHintModal = false)}
+	>
+		<div
+			class="w-full max-w-lg rounded-t-3xl border-t border-zinc-700 bg-zinc-900 px-6 py-8 pb-10"
+			onclick={(e) => e.stopPropagation()}
+		>
 			<div class="mb-4 flex items-center gap-3">
 				<span class="text-2xl">💡</span>
 				<h2 class="text-lg font-black text-white">Hint</h2>
 				<span class="ml-auto text-xs text-zinc-500">{data.challenge.title}</span>
 			</div>
-			<p class="text-base text-zinc-200 leading-relaxed">{data.challenge.hint_text}</p>
+			<p class="text-base leading-relaxed text-zinc-200">{data.challenge.hint_text}</p>
 			<button
 				onclick={() => (showHintModal = false)}
 				class="mt-6 w-full rounded-xl py-3 text-sm font-bold transition-colors"
-				style="background-color: {teamHex}22; color: {teamHex}; border: 1px solid {teamHex}44;">
+				style="background-color: {teamHex}22; color: {teamHex}; border: 1px solid {teamHex}44;"
+			>
 				Got it
 			</button>
 		</div>
 	</div>
 {/if}
 
-{#if !data.attempt && !result}
-	<!-- ── Challenge not available (inactive, no prior attempt) ─────────────── -->
-	<div class="mx-auto min-h-screen max-w-lg p-4">
-		<div class="pb-6 pt-4">
-			<span class="rounded-full px-3 py-1 text-xs font-bold uppercase tracking-widest text-white"
-				style="background-color: {teamHex};">
-				{data.team.display_name}
-			</span>
-		</div>
-		<h1 class="mb-6 text-2xl font-black">{data.challenge.title}</h1>
-		<div class="rounded-2xl border border-zinc-800 bg-zinc-900 p-8 text-center space-y-3">
-			<p class="text-lg font-semibold text-zinc-200">This challenge has ended</p>
-			<p class="text-sm text-zinc-500">The host has closed this challenge. Head back to your team page.</p>
-			<a href="/team" class="mt-2 inline-block text-sm underline underline-offset-2" style="color: {teamHex};">Back to team</a>
-		</div>
-	</div>
-{:else if result}
+{#if result}
 	<!-- ── Results screen ──────────────────────────────────────────────────── -->
 	<div class="mx-auto min-h-screen max-w-lg p-4">
-		<div class="pb-6 pt-4">
-			<span class="rounded-full px-3 py-1 text-xs font-bold uppercase tracking-widest text-white"
-				style="background-color: {teamHex};">
+		<div class="pt-4 pb-6">
+			<span
+				class="rounded-full px-3 py-1 text-xs font-bold tracking-widest text-white uppercase"
+				style="background-color: {teamHex};"
+			>
 				{data.team.display_name}
 			</span>
 		</div>
@@ -395,15 +451,21 @@
 		<p class="mb-4 text-sm text-zinc-400">{data.challenge.title}</p>
 
 		{#if reviewError}
-			<div class="mb-4 rounded-xl border border-red-600/50 bg-red-900/30 p-3 text-sm text-red-300">{reviewError}</div>
+			<div class="mb-4 rounded-xl border border-red-600/50 bg-red-900/30 p-3 text-sm text-red-300">
+				{reviewError}
+			</div>
 		{/if}
 
 		{#if reviewJustResolved && liveStatus === 'review_approved'}
-			<div class="mb-4 rounded-xl border border-green-600/50 bg-green-900/30 p-3 text-sm text-green-300">
+			<div
+				class="mb-4 rounded-xl border border-green-600/50 bg-green-900/30 p-3 text-sm text-green-300"
+			>
 				✓ Review approved{pointsAwarded > 0 ? ` — +${pointsAwarded} points added!` : ''}
 			</div>
 		{:else if reviewJustResolved && liveStatus === 'review_rejected'}
-			<div class="mb-4 rounded-xl border border-zinc-600/50 bg-zinc-800/60 p-3 text-sm text-zinc-400">
+			<div
+				class="mb-4 rounded-xl border border-zinc-600/50 bg-zinc-800/60 p-3 text-sm text-zinc-400"
+			>
 				Review rejected — your original score stands.
 			</div>
 		{/if}
@@ -412,10 +474,13 @@
 		{#if result.tracks.length > 1}
 			<div class="mb-4 flex gap-1 overflow-x-auto pb-1">
 				{#each result.tracks as tr, i}
-					<button type="button" onclick={() => (resultTrackIndex = i)}
+					<button
+						type="button"
+						onclick={() => (resultTrackIndex = i)}
 						class="shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors
 							{resultTrackIndex === i ? 'text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}"
-						style={resultTrackIndex === i ? `background-color: ${teamHex};` : ''}>
+						style={resultTrackIndex === i ? `background-color: ${teamHex};` : ''}
+					>
 						Track {tr.trackIndex}
 						<span class="ml-1 text-xs opacity-70">{tr.total}/{tr.maxTotal}</span>
 					</button>
@@ -424,7 +489,7 @@
 		{/if}
 
 		{#if resultTrack}
-			<div class="mb-6 rounded-2xl bg-zinc-900 p-5 space-y-1">
+			<div class="mb-6 space-y-1 rounded-2xl bg-zinc-900 p-5">
 				{#each resultTrack.fields as fr, i}
 					{@const isPartial = fr.score > 0 && fr.score < fr.maxScore}
 					{@const isCorrect = fr.score === fr.maxScore}
@@ -436,17 +501,27 @@
 					<div class="py-3">
 						<div class="flex items-center justify-between">
 							<div>
-								<div class="mb-0.5 text-xs font-semibold uppercase tracking-wide text-zinc-500">{fieldLabel(fr.field)}</div>
+								<div class="mb-0.5 text-xs font-semibold tracking-wide text-zinc-500 uppercase">
+									{fieldLabel(fr.field)}
+								</div>
 								<div class="font-semibold">{fr.submitted || '—'}</div>
 								{#if !isCorrect}
 									<div class="text-xs text-zinc-500">Correct: {fr.correct}</div>
 									{#if fr.fuzzyScore !== undefined}
-										<div class="text-xs text-zinc-600">Match: {Math.round(fr.fuzzyScore * 100)}%</div>
+										<div class="text-xs text-zinc-600">
+											Match: {Math.round(fr.fuzzyScore * 100)}%
+										</div>
 									{/if}
 								{/if}
 							</div>
 							<div class="ml-4 shrink-0 text-right">
-								<div class="text-xl font-black {isCorrect ? 'text-green-400' : isPartial ? 'text-yellow-400' : 'text-red-400'}">
+								<div
+									class="text-xl font-black {isCorrect
+										? 'text-green-400'
+										: isPartial
+											? 'text-yellow-400'
+											: 'text-red-400'}"
+								>
 									{isCorrect ? '✓' : isPartial ? '~' : '✗'}
 								</div>
 								<div class="text-sm text-zinc-400">+{fr.score} / {fr.maxScore}</div>
@@ -455,39 +530,60 @@
 
 						{#if (isWrong || isPartial) && data.fieldModes[fr.field] === 'open_text'}
 							{@const effectiveStatus = liveStatus ?? result.status}
-							{@const alreadyRequested = reviewedKeys.has(reviewKey) || effectiveStatus === 'review_requested' || effectiveStatus === 'review_approved' || effectiveStatus === 'review_rejected'}
+							{@const alreadyRequested =
+								reviewedKeys.has(reviewKey) ||
+								effectiveStatus === 'review_requested' ||
+								effectiveStatus === 'review_approved' ||
+								effectiveStatus === 'review_rejected'}
 							{#if alreadyRequested}
 								<p class="mt-2 text-xs text-amber-400">Review requested ✓</p>
 							{:else}
 								<div class="mt-2">
 									{#if reviewingKey === reviewKey}
-										<form method="POST" action="?/requestReview"
-											use:enhance={() => async ({ update }) => { reviewingKey = null; await update(); }}>
+										<form
+											method="POST"
+											action="?/requestReview"
+											use:enhance={() =>
+												async ({ update }) => {
+													reviewingKey = null;
+													await update();
+												}}
+										>
 											<input type="hidden" name="submission_id" value={result.submissionId} />
 											<input type="hidden" name="team_id" value={data.team.id} />
 											<input type="hidden" name="field_name" value={fr.field} />
 											<input type="hidden" name="track_id" value={resultTrack.trackId} />
-											<textarea name="player_message"
+											<textarea
+												name="player_message"
 												placeholder="Optional: explain why you think this is correct"
 												rows="2"
-												class="mb-2 w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200 focus:outline-none">
+												class="mb-2 w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200 focus:outline-none"
+											>
 											</textarea>
 											<div class="flex gap-2">
-												<button type="submit"
+												<button
+													type="submit"
 													class="rounded-lg px-3 py-1.5 text-xs font-bold text-white transition-colors hover:opacity-90"
-													style="background-color: {teamHex};">
+													style="background-color: {teamHex};"
+												>
 													Send request
 												</button>
-												<button type="button" onclick={() => (reviewingKey = null)}
-													class="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200">
+												<button
+													type="button"
+													onclick={() => (reviewingKey = null)}
+													class="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200"
+												>
 													Cancel
 												</button>
 											</div>
 										</form>
 									{:else}
-										<button type="button" onclick={() => (reviewingKey = reviewKey)}
+										<button
+											type="button"
+											onclick={() => (reviewingKey = reviewKey)}
 											class="text-xs font-medium underline underline-offset-2"
-											style="color: {teamHex};">
+											style="color: {teamHex};"
+										>
 											Request manual review
 										</button>
 									{/if}
@@ -503,10 +599,12 @@
 			<BonusTracker breakdown={result.breakdown} teamColor={teamHex} />
 		{/if}
 
-		<div class="mb-6 rounded-2xl border p-6 text-center"
-			style="border-color: {teamHex}40; background-color: {teamHex}1a;">
+		<div
+			class="mb-6 rounded-2xl border p-6 text-center"
+			style="border-color: {teamHex}40; background-color: {teamHex}1a;"
+		>
 			<div class="mb-1 text-sm text-zinc-400">Total Score</div>
-			<div class="tabular-nums text-6xl font-black text-white transition-none">{animatedScore}</div>
+			<div class="text-6xl font-black text-white tabular-nums transition-none">{animatedScore}</div>
 			{#if result.breakdown && result.breakdown.base !== result.breakdown.final}
 				<div class="mt-1 text-xs text-zinc-500">{result.breakdown.base} base pts</div>
 			{:else}
@@ -520,18 +618,102 @@
 			</a>
 		</div>
 	</div>
+{:else if !data.attempt && data.challenge.status !== 'active'}
+	<!-- ── Challenge has ended (inactive, no prior attempt) ─────────────────── -->
+	<div class="mx-auto min-h-screen max-w-lg p-4">
+		<div class="pt-4 pb-6">
+			<span
+				class="rounded-full px-3 py-1 text-xs font-bold tracking-widest text-white uppercase"
+				style="background-color: {teamHex};"
+			>
+				{data.team.display_name}
+			</span>
+		</div>
+		<h1 class="mb-6 text-2xl font-black">{data.challenge.title}</h1>
+		<div class="space-y-3 rounded-2xl border border-zinc-800 bg-zinc-900 p-8 text-center">
+			<p class="text-lg font-semibold text-zinc-200">This challenge has ended</p>
+			<p class="text-sm text-zinc-500">
+				The host has closed this challenge. Head back to your team page.
+			</p>
+			<a
+				href="/team"
+				class="mt-2 inline-block text-sm underline underline-offset-2"
+				style="color: {teamHex};">Back to team</a
+			>
+		</div>
+	</div>
+{:else if !data.attempt}
+	<!-- ── Pre-game gate: tutorial + Start button ────────────────────────────── -->
+	<div class="mx-auto min-h-screen max-w-lg p-4">
+		<div class="pt-4 pb-6">
+			<span
+				class="rounded-full px-3 py-1 text-xs font-bold tracking-widest text-white uppercase"
+				style="background-color: {teamHex};"
+			>
+				{data.team.display_name}
+			</span>
+		</div>
+
+		<div class="mb-6">
+			<div class="mb-2">
+				<span
+					class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-bold {variantColor}"
+				>
+					<VariantIcon size={12} />
+					{data.challenge.variant}
+				</span>
+			</div>
+			<h1 class="text-2xl font-black">{data.challenge.title}</h1>
+		</div>
+
+		{#if data.tutorialText}
+			<div class="mb-8 rounded-2xl border border-zinc-700 bg-zinc-900 p-6">
+				<h2 class="mb-3 text-xs font-bold tracking-widest text-zinc-400 uppercase">How to play</h2>
+				<p class="text-sm leading-relaxed text-zinc-200">{data.tutorialText}</p>
+			</div>
+		{/if}
+
+		<form
+			method="POST"
+			action="?/startChallenge"
+			use:enhance={() => {
+				startingChallenge = true;
+				return async ({ result: res }) => {
+					if (res.type === 'success') {
+						window.location.reload();
+					} else {
+						startingChallenge = false;
+					}
+				};
+			}}
+		>
+			<button
+				type="submit"
+				disabled={startingChallenge}
+				class="w-full rounded-xl py-4 text-lg font-black tracking-widest text-white uppercase transition-colors hover:opacity-90 disabled:opacity-50"
+				style="background-color: {teamHex};"
+			>
+				{startingChallenge ? 'Starting…' : 'Start challenge'}
+			</button>
+		</form>
+		<p class="mt-3 text-center text-xs text-zinc-600">Timer begins when you tap Start</p>
+	</div>
 {:else}
 	<!-- ── Challenge form ───────────────────────────────────────────────────── -->
 	<div class="mx-auto min-h-screen max-w-lg p-4">
-		<div class="flex items-center justify-between pb-6 pt-4">
-			<span class="rounded-full px-3 py-1 text-xs font-bold uppercase tracking-widest text-white"
-				style="background-color: {teamHex};">
+		<div class="flex items-center justify-between pt-4 pb-6">
+			<span
+				class="rounded-full px-3 py-1 text-xs font-bold tracking-widest text-white uppercase"
+				style="background-color: {teamHex};"
+			>
 				{data.team.display_name}
 			</span>
 
 			{#if timerMs !== null}
-				<span class="font-mono text-sm font-bold tabular-nums
-					{timerMs < 30_000 ? 'text-red-400' : timerMs < 60_000 ? 'text-yellow-400' : 'text-zinc-400'}">
+				<span
+					class="font-mono text-sm font-bold tabular-nums
+					{timerMs < 30_000 ? 'text-red-400' : timerMs < 60_000 ? 'text-yellow-400' : 'text-zinc-400'}"
+				>
 					{fmtMs(timerMs)}
 				</span>
 			{/if}
@@ -544,7 +726,8 @@
 					<button
 						onclick={() => (showTutorial = true)}
 						class="rounded-full px-3 py-1 text-xs font-semibold transition-colors"
-						style="background-color: {teamHex}22; color: {teamHex}; border: 1px solid {teamHex}44;">
+						style="background-color: {teamHex}22; color: {teamHex}; border: 1px solid {teamHex}44;"
+					>
 						ⓘ
 					</button>
 				{/if}
@@ -552,7 +735,8 @@
 					<button
 						onclick={() => (showHintModal = true)}
 						class="rounded-full px-3 py-1 text-xs font-semibold transition-colors"
-						style="background-color: {teamHex}22; color: {teamHex}; border: 1px solid {teamHex}44;">
+						style="background-color: {teamHex}22; color: {teamHex}; border: 1px solid {teamHex}44;"
+					>
 						💡 Hint
 					</button>
 				{/if}
@@ -563,10 +747,13 @@
 		{#if isMultiTrack}
 			<div class="mb-4 flex gap-1 overflow-x-auto pb-1">
 				{#each data.challengeTracks as _ct, i}
-					<button type="button" onclick={() => (activeTrackIndex = i)}
+					<button
+						type="button"
+						onclick={() => (activeTrackIndex = i)}
 						class="shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors
 							{activeTrackIndex === i ? 'text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}"
-						style={activeTrackIndex === i ? `background-color: ${teamHex};` : ''}>
+						style={activeTrackIndex === i ? `background-color: ${teamHex};` : ''}
+					>
 						Track {i + 1}
 					</button>
 				{/each}
@@ -576,10 +763,13 @@
 		<!-- Audio player -->
 		<div class="mb-6 rounded-2xl bg-zinc-900 p-5">
 			<div class="flex items-center gap-4">
-				<button type="button" onclick={togglePlay}
+				<button
+					type="button"
+					onclick={togglePlay}
 					class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full transition-colors hover:opacity-90"
 					style="background-color: {teamHex};"
-					aria-label={isPlaying ? 'Pause' : 'Play'}>
+					aria-label={isPlaying ? 'Pause' : 'Play'}
+				>
 					{#if isPlaying}
 						<svg class="h-5 w-5 text-white" fill="currentColor" viewBox="0 0 20 20">
 							<rect x="5" y="4" width="3" height="12" rx="1" />
@@ -587,7 +777,9 @@
 						</svg>
 					{:else}
 						<svg class="ml-0.5 h-5 w-5 text-white" fill="currentColor" viewBox="0 0 20 20">
-							<path d="M6.3 2.841A1.5 1.5 0 004 4.11v11.78a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
+							<path
+								d="M6.3 2.841A1.5 1.5 0 004 4.11v11.78a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"
+							/>
 						</svg>
 					{/if}
 				</button>
@@ -600,7 +792,10 @@
 							progressColor={teamHex}
 							effects={activeTrack?.effects ?? {}}
 							onPlayStateChange={(p) => (isPlaying = p)}
-							onTimeUpdate={(t, d) => { currentTime = t; duration = d; }}
+							onTimeUpdate={(t, d) => {
+								currentTime = t;
+								duration = d;
+							}}
 						/>
 					{/key}
 					<div class="font-mono text-xs text-zinc-500">{timeLabel}</div>
@@ -609,22 +804,33 @@
 		</div>
 
 		{#if formError}
-			<div class="mb-4 rounded-xl border border-red-600/50 bg-red-900/30 p-3 text-sm text-red-300">{formError}</div>
+			<div class="mb-4 rounded-xl border border-red-600/50 bg-red-900/30 p-3 text-sm text-red-300">
+				{formError}
+			</div>
 		{/if}
 
 		{#if timerMs === 0}
-			<div class="mb-4 rounded-xl border border-amber-600/50 bg-amber-900/30 p-3 text-sm text-amber-300">
+			<div
+				class="mb-4 rounded-xl border border-amber-600/50 bg-amber-900/30 p-3 text-sm text-amber-300"
+			>
 				Time's up — submitting your answers…
 			</div>
 		{/if}
 
-		<form bind:this={formEl} method="POST" action="?/submit"
+		<form
+			bind:this={formEl}
+			method="POST"
+			action="?/submit"
 			use:enhance={({ formData }) => {
 				submitting = true;
 				formData.set('answers_json', JSON.stringify(buildAnswersForSubmit()));
-				return async ({ update }) => { await update(); submitting = false; };
+				return async ({ update }) => {
+					await update();
+					submitting = false;
+				};
 			}}
-			class="space-y-5">
+			class="space-y-5"
+		>
 			<input type="hidden" name="team_id" value={data.team.id} />
 
 			<!-- {#key} forces components to remount when switching tracks, so inputText resets correctly -->
@@ -632,13 +838,15 @@
 				{#each data.variantFields as field (field)}
 					{@const mode = data.fieldModes[field] as InputMode}
 					<div>
-						<label class="mb-1.5 block text-sm font-semibold text-zinc-400">{fieldLabel(field)}</label>
+						<label class="mb-1.5 block text-sm font-semibold text-zinc-400"
+							>{fieldLabel(field)}</label
+						>
 
 						{#if field === 'artist' && hasArtistCombobox}
 							<!-- Multi-artist collab input -->
 							{#each collabArtists[activeTrackIndex] as _, slotIdx}
-								<div class="mb-2 flex gap-2 items-start">
-									<div class="flex-1 min-w-0">
+								<div class="mb-2 flex items-start gap-2">
+									<div class="min-w-0 flex-1">
 										<Combobox
 											name="artist_slot_{slotIdx}"
 											pool={data.pools['artist'] ?? []}
@@ -650,8 +858,9 @@
 										<button
 											type="button"
 											onclick={() => removeArtistSlot(activeTrackIndex, slotIdx)}
-											class="mt-2 text-zinc-600 hover:text-red-400 text-lg leading-none shrink-0"
-											aria-label="Remove artist">−</button>
+											class="mt-2 shrink-0 text-lg leading-none text-zinc-600 hover:text-red-400"
+											aria-label="Remove artist">−</button
+										>
 									{/if}
 								</div>
 							{/each}
@@ -659,8 +868,9 @@
 								<button
 									type="button"
 									onclick={() => addArtistSlot(activeTrackIndex)}
-									class="text-xs font-semibold underline underline-offset-2 mt-1"
-									style="color: {teamHex};">
+									class="mt-1 text-xs font-semibold underline underline-offset-2"
+									style="color: {teamHex};"
+								>
 									+ Add collab artist
 								</button>
 							{/if}
@@ -679,19 +889,36 @@
 								bind:value={allFieldValues[activeTrackIndex][field]}
 							/>
 						{:else if mode === 'open_text'}
-							<OpenText name={field} {teamHex} bind:value={allFieldValues[activeTrackIndex][field]} />
+							<OpenText
+								name={field}
+								{teamHex}
+								bind:value={allFieldValues[activeTrackIndex][field]}
+							/>
 						{:else if mode === 'slider'}
-							<YearInput name={field} mode="slider" {teamHex} bind:value={allYearValues[activeTrackIndex]} />
+							<YearInput
+								name={field}
+								mode="slider"
+								{teamHex}
+								bind:value={allYearValues[activeTrackIndex]}
+							/>
 						{:else if mode === 'typeable_number'}
-							<YearInput name={field} mode="typeable_number" {teamHex} bind:value={allYearValues[activeTrackIndex]} />
+							<YearInput
+								name={field}
+								mode="typeable_number"
+								{teamHex}
+								bind:value={allYearValues[activeTrackIndex]}
+							/>
 						{/if}
 					</div>
 				{/each}
 			{/key}
 
-			<button type="submit" disabled={!canSubmit}
-				class="w-full rounded-xl py-4 text-lg font-black uppercase tracking-widest text-white transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-				style="background-color: {teamHex};">
+			<button
+				type="submit"
+				disabled={!canSubmit}
+				class="w-full rounded-xl py-4 text-lg font-black tracking-widest text-white uppercase transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+				style="background-color: {teamHex};"
+			>
 				{submitting ? 'Submitting…' : 'Submit'}
 			</button>
 
