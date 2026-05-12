@@ -2,6 +2,16 @@
 @plugin '@tailwindcss/forms';
 @plugin '@tailwindcss/typography';
 
+@theme {
+	--color-mixup-magenta: #ff2daa;
+	--color-mixup-cyan: #00e5ff;
+	--color-mixup-yellow: #ffe600;
+	--color-mixup-violet: #7c4dff;
+	--color-mixup-orange: #ff7f11;
+	--color-mixup-night: #0b0b1f;
+	--color-mixup-ice: #e5f2ff;
+}
+
 body {
 	background-color: #0a0a0f;
 	color: #f1f5f9;

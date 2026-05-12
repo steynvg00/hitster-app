@@ -1,3 +1,24 @@
+<script module lang="ts">
+	// Module-level cache: one MediaElementAudioSourceNode per HTMLAudioElement.
+	// The Web Audio API forbids creating a second source for the same element —
+	// this prevents the InvalidStateError that occurs when applyEffects runs
+	// concurrently (e.g. from both the WaveSurfer 'ready' callback and the
+	// reactive $effect that fires when isReady becomes true).
+	const mediaElementSourceCache = new WeakMap<HTMLAudioElement, MediaElementAudioSourceNode>();
+
+	function getOrCreateMediaElementSource(
+		audioEl: HTMLAudioElement,
+		ctx: AudioContext
+	): MediaElementAudioSourceNode {
+		let source = mediaElementSourceCache.get(audioEl);
+		if (!source) {
+			source = ctx.createMediaElementSource(audioEl);
+			mediaElementSourceCache.set(audioEl, source);
+		}
+		return source;
+	}
+</script>
+
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 
@@ -67,24 +88,27 @@
 			return;
 		}
 
-		// Init Tone.js chain once per media element
-		if (!toneSourceNode) {
-			const Tone = await import('tone');
-			await Tone.start();
-			const ctx = Tone.context.rawContext as AudioContext;
-			toneSourceNode = ctx.createMediaElementSource(mediaEl);
+		const Tone = await import('tone');
+		await Tone.start();
+		const ctx = Tone.context.rawContext as AudioContext;
+
+		// Retrieve or create the cached source node (never call createMediaElementSource twice)
+		const source = getOrCreateMediaElementSource(mediaEl as HTMLAudioElement, ctx);
+
+		if (!tonePitchShift) {
 			tonePitchShift = new Tone.PitchShift();
 			tonePitchShift.toDestination();
-			// Connect native source node → Tone input (native AudioNode)
-			toneSourceNode.connect(tonePitchShift.input as unknown as AudioNode);
 		}
+
+		// Disconnect before re-wiring so stale connections don't persist
+		source.disconnect();
+		source.connect(tonePitchShift.input as unknown as AudioNode);
+		toneSourceNode = source;
 
 		// tempo changes pitch by log2(tempo)*12 semitones; correct for it
 		const tempoCorrection = -Math.log2(tempo) * 12;
 		mediaEl.playbackRate = tempo;
-		if (tonePitchShift) {
-			tonePitchShift.pitch = pitch + tempoCorrection;
-		}
+		tonePitchShift.pitch = pitch + tempoCorrection;
 	}
 
 	onMount(() => {

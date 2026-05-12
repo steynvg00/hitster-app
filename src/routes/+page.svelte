@@ -30,18 +30,21 @@
 	<!-- Wordmark -->
 	<div class="mb-10 text-center">
 		<h1
-			class="text-[5rem] font-black uppercase leading-none tracking-tighter text-white drop-shadow-lg sm:text-[7rem]"
+			class="wordmark text-[6rem] leading-none font-black tracking-tighter uppercase sm:text-[8.5rem]"
 		>
 			MixUp!
 		</h1>
-		<p class="tagline mt-3 text-base text-white">music games for parties</p>
+		<p class="tagline mt-3 text-base text-mixup-ice/80 sm:text-lg">music games for parties</p>
 	</div>
 
 	<!-- Host login card -->
 	<div class="w-full max-w-sm">
-		<div class="rounded-2xl border border-zinc-700/60 bg-zinc-900/90 p-6 shadow-2xl backdrop-blur-sm">
+		<div
+			class="rounded-2xl border border-zinc-700/60 bg-zinc-900/90 p-6 shadow-2xl backdrop-blur-sm"
+		>
 			<div class="mb-4 text-center">
-				<span class="text-xs font-semibold uppercase tracking-widest text-zinc-400">Host login</span>
+				<span class="text-xs font-semibold tracking-widest text-zinc-400 uppercase">Host login</span
+				>
 			</div>
 
 			{#if data.loggedIn}
@@ -61,9 +64,16 @@
 </div>
 
 <style>
+	.wordmark {
+		color: #ff2daa;
+		text-shadow:
+			0 0 40px rgba(255, 45, 170, 0.55),
+			0 2px 12px rgba(0, 0, 0, 0.8);
+	}
 	.tagline {
 		font-family: 'Nunito', sans-serif;
 		font-weight: 600;
-		text-shadow: 0 1px 8px rgba(0, 0, 0, 0.75);
+		letter-spacing: 0.04em;
+		text-shadow: 0 1px 8px rgba(0, 0, 0, 0.9);
 	}
 </style>
