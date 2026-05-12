@@ -2,6 +2,7 @@ import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
 import { generateAssignmentSlots, TEAM_COLOR_ORDER } from '$lib/server/randomize';
+import { setPresets } from '$lib/presets/setPresets';
 
 export const load: PageServerLoad = async () => {
 	const db = createAdminClient();
@@ -53,11 +54,49 @@ export const actions: Actions = {
 
 		const { data, error } = await db
 			.from('game_sets')
-			.insert({ name, description, team_count, total_timer_seconds, expected_player_count, status: 'inactive', created_by: locals.user?.id ?? null })
+			.insert({
+				name,
+				description,
+				team_count,
+				total_timer_seconds,
+				expected_player_count,
+				status: 'inactive',
+				created_by: locals.user?.id ?? null
+			})
 			.select('id')
 			.single();
 
 		if (error || !data) return fail(500, { error: 'Could not create set' });
+
+		redirect(303, `/admin/sets/${data.id}`);
+	},
+
+	createFromPreset: async ({ request, locals }) => {
+		const db = createAdminClient();
+		const formData = await request.formData();
+		const slug = formData.get('slug') as string;
+		const preset = setPresets.find((p) => p.slug === slug);
+		if (!preset || preset.status !== 'ready') {
+			return fail(400, { error: 'Invalid preset' });
+		}
+
+		const insertData = {
+			name: `New ${preset.name} Game`,
+			status: 'inactive' as const,
+			play_state: 'joining' as const,
+			team_count: preset.defaults?.team_count ?? 6,
+			total_timer_seconds: preset.defaults?.total_timer_seconds ?? null,
+			powerups_enabled: preset.defaults?.powerups_enabled ?? false,
+			powerup_mode: preset.defaults?.powerup_mode ?? ('threshold' as const),
+			powerup_config: (preset.defaults?.powerup_config ?? {
+				thresholds_percent: [25, 50, 75]
+			}) as never,
+			created_by: locals.user?.id ?? null
+		};
+
+		const { data, error } = await db.from('game_sets').insert(insertData).select('id').single();
+
+		if (error || !data) return fail(500, { error: error?.message ?? 'Could not create set' });
 
 		redirect(303, `/admin/sets/${data.id}`);
 	},

@@ -1,17 +1,22 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import type { PageData, ActionData } from './$types';
+	import { setPresets } from '$lib/presets/setPresets';
+	import * as LucideIcons from 'lucide-svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
-	let showCreate = $state(false);
-	let creating = $state(false);
+	let creatingSlug = $state<string | null>(null);
 	let togglingId = $state<string | null>(null);
 
 	const STATUS_BADGE: Record<string, string> = {
 		inactive: 'bg-zinc-700 text-zinc-300',
 		active: 'bg-green-900/60 text-green-400'
 	};
+
+	function getIcon(name: string) {
+		return (LucideIcons as Record<string, unknown>)[name] as typeof LucideIcons.Sparkles;
+	}
 </script>
 
 <svelte:head>
@@ -19,159 +24,175 @@
 </svelte:head>
 
 <div class="p-8">
-	<div class="mb-6 flex items-center justify-between">
-		<div>
-			<h1 class="text-2xl font-black text-white">Game Sets</h1>
-			<p class="mt-0.5 text-sm text-zinc-400">Manage rounds and team randomization.</p>
-		</div>
-		<button
-			onclick={() => (showCreate = !showCreate)}
-			class="rounded-lg bg-amber-400 px-4 py-2 text-sm font-bold text-zinc-950 transition-colors hover:bg-amber-300"
-		>
-			+ New Set
-		</button>
+	<div class="mb-6">
+		<h1 class="text-2xl font-black text-white">Game Sets</h1>
+		<p class="mt-0.5 text-sm text-zinc-400">Manage rounds and team randomization.</p>
 	</div>
 
-	<!-- Create form -->
-	{#if showCreate}
-		<div class="mb-6 rounded-xl border border-zinc-700 bg-zinc-900 p-5">
-			<h2 class="mb-4 font-bold text-white">New Game Set</h2>
-			{#if form?.error}
-				<p class="mb-3 text-sm text-red-400">{form.error}</p>
-			{/if}
-			<form
-				method="POST"
-				action="?/create"
-				use:enhance={() => {
-					creating = true;
-					return async ({ update }) => {
-						creating = false;
-						await update();
-					};
-				}}
-				class="grid grid-cols-2 gap-4"
-			>
-				<div class="col-span-2">
-					<label class="admin-label" for="new-name">Name</label>
-					<input id="new-name" name="name" class="admin-input" placeholder="e.g. Round 1" required />
-				</div>
-				<div class="col-span-2">
-					<label class="admin-label" for="new-desc">Description <span class="font-normal text-zinc-500">(optional)</span></label>
-					<input id="new-desc" name="description" class="admin-input" placeholder="Brief description" />
-				</div>
-				<div>
-					<label class="admin-label" for="new-tc">Teams (2–6)</label>
-					<input id="new-tc" name="team_count" type="number" min="2" max="6" value="6" class="admin-input" />
-				</div>
-				<div>
-					<label class="admin-label" for="new-epc">Expected players (optional)</label>
-					<input id="new-epc" name="expected_player_count" type="number" min="1" class="admin-input" placeholder="leave blank" />
-				</div>
-				<div>
-					<label class="admin-label" for="new-timer">Timer (minutes, optional)</label>
-					<input id="new-timer" name="total_timer_minutes" type="number" min="1" class="admin-input" placeholder="leave blank" />
-				</div>
-				<div class="col-span-2 flex gap-3">
-					<button
-						type="submit"
-						disabled={creating}
-						class="rounded-lg bg-amber-400 px-4 py-2 text-sm font-bold text-zinc-950 hover:bg-amber-300 disabled:opacity-50"
+	<!-- Preset tile grid -->
+	<section class="mb-10">
+		<h2 class="mb-4 text-sm font-semibold tracking-widest text-zinc-400 uppercase">
+			Start a new game
+		</h2>
+
+		{#if form?.error}
+			<p class="mb-4 rounded-lg border border-red-800 bg-red-950/50 px-4 py-2 text-sm text-red-400">
+				{form.error}
+			</p>
+		{/if}
+
+		<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+			{#each setPresets as preset}
+				{#if preset.status === 'ready'}
+					<form
+						method="POST"
+						action="?/createFromPreset"
+						use:enhance={() => {
+							creatingSlug = preset.slug;
+							return async ({ update }) => {
+								creatingSlug = null;
+								await update();
+							};
+						}}
 					>
-						{creating ? 'Creating…' : 'Create & Edit'}
-					</button>
-					<button
-						type="button"
-						onclick={() => (showCreate = false)}
-						class="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-200"
+						<input type="hidden" name="slug" value={preset.slug} />
+						<button
+							type="submit"
+							disabled={creatingSlug !== null}
+							class="group relative flex w-full flex-col items-start gap-3 rounded-xl border border-zinc-700 bg-zinc-900 p-5 text-left transition-all hover:border-amber-400/60 hover:bg-zinc-800 disabled:opacity-60"
+						>
+							<div
+								class="flex h-10 w-10 items-center justify-center rounded-lg bg-zinc-800 text-amber-400 transition-colors group-hover:bg-amber-400/10"
+							>
+								{#if creatingSlug === preset.slug}
+									<span class="text-xs text-zinc-400">…</span>
+								{:else}
+									<svelte:component this={getIcon(preset.icon)} size={22} />
+								{/if}
+							</div>
+							<div>
+								<p class="text-sm font-bold text-white">{preset.name}</p>
+								<p class="mt-0.5 text-xs text-zinc-400">{preset.description}</p>
+							</div>
+						</button>
+					</form>
+				{:else}
+					<div
+						class="relative flex cursor-not-allowed flex-col items-start gap-3 rounded-xl border border-zinc-800 bg-zinc-950 p-5 opacity-50"
+						title={preset.comingSoonNote}
 					>
-						Cancel
-					</button>
-				</div>
-			</form>
+						<span
+							class="absolute top-3 right-3 rounded-full bg-zinc-700 px-2 py-0.5 text-[10px] font-semibold tracking-wider text-zinc-400 uppercase"
+						>
+							Soon
+						</span>
+						<div
+							class="flex h-10 w-10 items-center justify-center rounded-lg bg-zinc-800 text-zinc-500"
+						>
+							<svelte:component this={getIcon(preset.icon)} size={22} />
+						</div>
+						<div>
+							<p class="text-sm font-bold text-zinc-400">{preset.name}</p>
+							<p class="mt-0.5 text-xs text-zinc-500">{preset.description}</p>
+						</div>
+					</div>
+				{/if}
+			{/each}
 		</div>
-	{/if}
+	</section>
 
 	<!-- Sets table -->
-	{#if data.sets.length === 0}
-		<div class="rounded-xl border border-zinc-800 bg-zinc-900 p-12 text-center text-zinc-500">
-			No game sets yet. Create one to get started.
-		</div>
-	{:else}
-		<div class="overflow-hidden rounded-xl border border-zinc-800">
-			<table class="w-full text-sm">
-				<thead class="border-b border-zinc-800 bg-zinc-900">
-					<tr>
-						<th class="px-4 py-3 text-left font-semibold text-zinc-400">Name</th>
-						<th class="px-4 py-3 text-left font-semibold text-zinc-400">Status</th>
-						<th class="px-4 py-3 text-right font-semibold text-zinc-400">Teams</th>
-						<th class="px-4 py-3 text-right font-semibold text-zinc-400">Challenges</th>
-						<th class="px-4 py-3 text-right font-semibold text-zinc-400">Cards</th>
-						<th class="px-4 py-3 text-right font-semibold text-zinc-400">Players</th>
-						<th class="px-4 py-3 text-right font-semibold text-zinc-400">Actions</th>
-					</tr>
-				</thead>
-				<tbody class="divide-y divide-zinc-800 bg-zinc-950">
-					{#each data.sets as s}
-						<tr class="hover:bg-zinc-900/50">
-							<td class="px-4 py-3">
-								<a href="/admin/sets/{s.id}" class="font-semibold text-white hover:text-amber-400 transition-colors">
-									{s.name}
-								</a>
-								{#if s.description}
-									<p class="text-xs text-zinc-500">{s.description}</p>
-								{/if}
-							</td>
-							<td class="px-4 py-3">
-								<form
-									method="POST"
-									action="?/toggle"
-									use:enhance={() => {
-										togglingId = s.id;
-										return async ({ update }) => {
-											await update();
-											togglingId = null;
-										};
-									}}
-								>
-									<input type="hidden" name="id" value={s.id} />
-									<button
-										type="submit"
-										disabled={togglingId === s.id}
-										class="cursor-pointer rounded-full px-2 py-0.5 text-xs font-semibold transition-opacity hover:opacity-70 disabled:opacity-40 {STATUS_BADGE[s.status] ?? 'bg-zinc-700 text-zinc-300'}"
-										title="Click to toggle"
-									>
-										{togglingId === s.id ? '…' : s.status}
-									</button>
-								</form>
-							</td>
-							<td class="px-4 py-3 text-right text-zinc-300">{s.team_count}</td>
-							<td class="px-4 py-3 text-right text-zinc-300">{s.challenge_count}</td>
-							<td class="px-4 py-3 text-right text-zinc-300">{s.card_count}</td>
-							<td class="px-4 py-3 text-right text-zinc-300">{s.player_count}</td>
-							<td class="px-4 py-3 text-right">
-								<div class="flex items-center justify-end gap-2">
+	<section>
+		<h2 class="mb-4 text-sm font-semibold tracking-widest text-zinc-400 uppercase">
+			Your game sets
+		</h2>
+
+		{#if data.sets.length === 0}
+			<div class="rounded-xl border border-zinc-800 bg-zinc-900 p-12 text-center text-zinc-500">
+				No game sets yet. Pick a preset above to get started.
+			</div>
+		{:else}
+			<div class="overflow-hidden rounded-xl border border-zinc-800">
+				<table class="w-full text-sm">
+					<thead class="border-b border-zinc-800 bg-zinc-900">
+						<tr>
+							<th class="px-4 py-3 text-left font-semibold text-zinc-400">Name</th>
+							<th class="px-4 py-3 text-left font-semibold text-zinc-400">Status</th>
+							<th class="px-4 py-3 text-right font-semibold text-zinc-400">Teams</th>
+							<th class="px-4 py-3 text-right font-semibold text-zinc-400">Challenges</th>
+							<th class="px-4 py-3 text-right font-semibold text-zinc-400">Cards</th>
+							<th class="px-4 py-3 text-right font-semibold text-zinc-400">Players</th>
+							<th class="px-4 py-3 text-right font-semibold text-zinc-400">Actions</th>
+						</tr>
+					</thead>
+					<tbody class="divide-y divide-zinc-800 bg-zinc-950">
+						{#each data.sets as s (s.id)}
+							<tr class="hover:bg-zinc-900/50">
+								<td class="px-4 py-3">
 									<a
 										href="/admin/sets/{s.id}"
-										class="rounded px-2 py-1 text-xs font-medium text-zinc-400 hover:text-white transition-colors"
+										class="font-semibold text-white transition-colors hover:text-amber-400"
 									>
-										Edit
+										{s.name}
 									</a>
-									{#if s.status === 'active'}
-										<a
-											href="/admin/sets/{s.id}/lobby"
-											class="rounded px-2 py-1 text-xs font-medium text-amber-400 hover:text-amber-300 transition-colors"
-										>
-											Lobby
-										</a>
+									{#if s.description}
+										<p class="text-xs text-zinc-500">{s.description}</p>
 									{/if}
-								</div>
-							</td>
-						</tr>
-					{/each}
-				</tbody>
-			</table>
-		</div>
-	{/if}
+								</td>
+								<td class="px-4 py-3">
+									<form
+										method="POST"
+										action="?/toggle"
+										use:enhance={() => {
+											togglingId = s.id;
+											return async ({ update }) => {
+												await update();
+												togglingId = null;
+											};
+										}}
+									>
+										<input type="hidden" name="id" value={s.id} />
+										<button
+											type="submit"
+											disabled={togglingId === s.id}
+											class="cursor-pointer rounded-full px-2 py-0.5 text-xs font-semibold transition-opacity hover:opacity-70 disabled:opacity-40 {STATUS_BADGE[
+												s.status
+											] ?? 'bg-zinc-700 text-zinc-300'}"
+											title="Click to toggle"
+										>
+											{togglingId === s.id ? '…' : s.status}
+										</button>
+									</form>
+								</td>
+								<td class="px-4 py-3 text-right text-zinc-300">{s.team_count}</td>
+								<td class="px-4 py-3 text-right text-zinc-300">{s.challenge_count}</td>
+								<td class="px-4 py-3 text-right text-zinc-300">{s.card_count}</td>
+								<td class="px-4 py-3 text-right text-zinc-300">{s.player_count}</td>
+								<td class="px-4 py-3 text-right">
+									<div class="flex items-center justify-end gap-2">
+										<a
+											href="/admin/sets/{s.id}"
+											class="rounded px-2 py-1 text-xs font-medium text-zinc-400 transition-colors hover:text-white"
+										>
+											Edit
+										</a>
+										{#if s.status === 'active'}
+											<a
+												href="/admin/sets/{s.id}/lobby"
+												class="rounded px-2 py-1 text-xs font-medium text-amber-400 transition-colors hover:text-amber-300"
+											>
+												Lobby
+											</a>
+										{/if}
+									</div>
+								</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		{/if}
+	</section>
 </div>
 
 <style>

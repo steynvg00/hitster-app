@@ -38,11 +38,13 @@
 		"vite": "^8.0.7"
 	},
 	"dependencies": {
+		"@ffmpeg/core": "^0.12.6",
 		"@ffmpeg/ffmpeg": "^0.12.15",
 		"@ffmpeg/util": "^0.12.2",
 		"@supabase/ssr": "^0.10.2",
 		"@supabase/supabase-js": "^2.104.1",
 		"fuse.js": "^7.3.0",
+		"lucide-svelte": "^1.0.1",
 		"tone": "^15.1.22",
 		"wavesurfer.js": "^7.12.6"
 	}
