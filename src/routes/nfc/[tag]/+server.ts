@@ -20,7 +20,7 @@ export const GET: RequestHandler = async ({ params, cookies }) => {
 	const { tag } = params;
 	const admin = createAdminClient();
 
-	const { data: nfcTag } = await admin.from('nfc_tags').select('*').eq('id', tag).single();
+	const { data: nfcTag } = await admin.from('nfc_tags').select('*').eq('slug', tag).single();
 
 	if (!nfcTag) redirect(302, '/join?error=unknown-tag');
 
@@ -45,11 +45,7 @@ export const GET: RequestHandler = async ({ params, cookies }) => {
 		const position = count ?? 0;
 		const teamColor = snakeColorAt(position);
 
-		const { data: team } = await admin
-			.from('teams')
-			.select('id')
-			.eq('color', teamColor)
-			.single();
+		const { data: team } = await admin.from('teams').select('id').eq('color', teamColor).single();
 
 		if (team) {
 			await admin.from('activity_log').insert({

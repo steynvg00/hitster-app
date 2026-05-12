@@ -6,10 +6,29 @@ export type Json = string | number | boolean | null | { [key: string]: Json | un
 
 type TeamColor = 'blue' | 'yellow' | 'green' | 'red' | 'indigo' | 'black';
 type ClipType = 'snippet' | 'fragment' | 'kick' | 'vocal' | 'mashup';
-type ChallengeVariant = 'normal' | 'label' | 'anthem' | 'vocal' | 'fragments' | 'kick' | 'mashup' | 'battle';
+type ChallengeVariant =
+	| 'normal'
+	| 'label'
+	| 'anthem'
+	| 'vocal'
+	| 'fragments'
+	| 'kick'
+	| 'mashup'
+	| 'battle';
 type AnswerField = 'artist' | 'title' | 'year' | 'label' | 'festival' | 'vocal_source';
-type NfcTagPurpose = 'team_identity' | 'team_entry' | 'challenge' | 'randomizer' | 'hint' | 'challenge_unlock';
-type SubmissionStatus = 'auto_correct' | 'auto_wrong' | 'review_requested' | 'review_approved' | 'review_rejected';
+type NfcTagPurpose =
+	| 'team_identity'
+	| 'team_entry'
+	| 'challenge'
+	| 'randomizer'
+	| 'hint'
+	| 'challenge_unlock';
+type SubmissionStatus =
+	| 'auto_correct'
+	| 'auto_wrong'
+	| 'review_requested'
+	| 'review_approved'
+	| 'review_rejected';
 
 export type Database = {
 	public: {
@@ -278,6 +297,7 @@ export type Database = {
 			nfc_tags: {
 				Row: {
 					id: string;
+					slug: string;
 					purpose: NfcTagPurpose;
 					team_color: TeamColor | null;
 					challenge_id: string | null;
@@ -286,7 +306,8 @@ export type Database = {
 					created_at: string;
 				};
 				Insert: {
-					id: string;
+					id?: string;
+					slug: string;
 					purpose: NfcTagPurpose;
 					team_color?: TeamColor | null;
 					challenge_id?: string | null;
@@ -296,6 +317,7 @@ export type Database = {
 				};
 				Update: {
 					id?: string;
+					slug?: string;
 					purpose?: NfcTagPurpose;
 					team_color?: TeamColor | null;
 					challenge_id?: string | null;
@@ -645,4 +667,5 @@ export type ChallengeUnlockRow = Database['public']['Tables']['challenge_unlocks
 export type AnswerPoolArtistRow = Database['public']['Tables']['answer_pool_artists']['Row'];
 export type AnswerPoolLabelRow = Database['public']['Tables']['answer_pool_labels']['Row'];
 export type AnswerPoolFestivalRow = Database['public']['Tables']['answer_pool_festivals']['Row'];
-export type AnswerPoolVocalSourceRow = Database['public']['Tables']['answer_pool_vocal_sources']['Row'];
+export type AnswerPoolVocalSourceRow =
+	Database['public']['Tables']['answer_pool_vocal_sources']['Row'];

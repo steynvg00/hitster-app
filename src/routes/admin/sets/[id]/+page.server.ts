@@ -10,9 +10,13 @@ export const load: PageServerLoad = async ({ params }) => {
 	const [{ data: gameSet }, { data: setChallengesRaw }, { data: allChallenges }, { data: cards }] =
 		await Promise.all([
 			db.from('game_sets').select('*').eq('id', id).maybeSingle(),
-			db.from('set_challenges').select('id, challenge_id, position, challenge_multiplier').eq('set_id', id).order('position'),
+			db
+				.from('set_challenges')
+				.select('id, challenge_id, position, challenge_multiplier')
+				.eq('set_id', id)
+				.order('position'),
 			db.from('challenges').select('id, title, variant, is_active').order('title'),
-			db.from('nfc_tags').select('id, set_id').eq('purpose', 'randomizer').eq('set_id', id)
+			db.from('nfc_tags').select('id, slug, set_id').eq('purpose', 'randomizer').eq('set_id', id)
 		]);
 
 	if (!gameSet) redirect(302, '/admin/sets');
@@ -22,9 +26,17 @@ export const load: PageServerLoad = async ({ params }) => {
 
 	// Player count + recently joined (for console joining state)
 	const [{ data: players }, unlockTagsResult] = await Promise.all([
-		db.from('players').select('id, display_name, created_at').eq('set_id', id).order('created_at', { ascending: false }),
+		db
+			.from('players')
+			.select('id, display_name, created_at')
+			.eq('set_id', id)
+			.order('created_at', { ascending: false }),
 		// Load challenge_unlock NFC tags for this set (purpose: challenge_unlock, set_id match)
-		db.from('nfc_tags').select('id, challenge_id').eq('purpose', 'challenge_unlock').eq('set_id', id)
+		db
+			.from('nfc_tags')
+			.select('id, slug, challenge_id')
+			.eq('purpose', 'challenge_unlock')
+			.eq('set_id', id)
 	]);
 
 	const playerList = players ?? [];
@@ -38,7 +50,11 @@ export const load: PageServerLoad = async ({ params }) => {
 		const scopedColors = TEAM_COLOR_ORDER.slice(0, gameSet.team_count);
 		const [{ data: teams }, { data: subs }] = await Promise.all([
 			db.from('teams').select('id, display_name, color').in('color', scopedColors),
-			db.from('submissions').select('team_id, challenge_id').eq('is_final', true).in('challenge_id', challengeIds)
+			db
+				.from('submissions')
+				.select('team_id, challenge_id')
+				.eq('is_final', true)
+				.in('challenge_id', challengeIds)
 		]);
 		const subsByTeam = new Map<string, number>();
 		for (const s of subs ?? []) {
@@ -46,12 +62,16 @@ export const load: PageServerLoad = async ({ params }) => {
 		}
 		teamProgress = (teams ?? [])
 			.sort((a, b) => TEAM_COLOR_ORDER.indexOf(a.color) - TEAM_COLOR_ORDER.indexOf(b.color))
-			.map((t) => ({ name: t.display_name, done: subsByTeam.get(t.id) ?? 0, total: challengeIds.length }));
+			.map((t) => ({
+				name: t.display_name,
+				done: subsByTeam.get(t.id) ?? 0,
+				total: challengeIds.length
+			}));
 	}
 
 	const challengeUnlockTags = (unlockTagsResult.data ?? []).map((t) => ({
 		challenge_id: t.challenge_id ?? '',
-		slug: t.id
+		slug: t.slug
 	}));
 
 	return {
@@ -95,13 +115,24 @@ export const actions: Actions = {
 		const db = createAdminClient();
 		const formData = await request.formData();
 		const raw = (formData.get('challenge_ids') as string | null) ?? '';
-		const challengeIds = raw.split(',').map((s) => s.trim()).filter(Boolean);
+		const challengeIds = raw
+			.split(',')
+			.map((s) => s.trim())
+			.filter(Boolean);
 
 		let multipliersMap: Record<string, number> = {};
-		try { multipliersMap = JSON.parse((formData.get('multipliers_json') as string | null) ?? '{}'); } catch { /* ok */ }
+		try {
+			multipliersMap = JSON.parse((formData.get('multipliers_json') as string | null) ?? '{}');
+		} catch {
+			/* ok */
+		}
 
 		let nfcSlugsMap: Record<string, string> = {};
-		try { nfcSlugsMap = JSON.parse((formData.get('nfc_slugs_json') as string | null) ?? '{}'); } catch { /* ok */ }
+		try {
+			nfcSlugsMap = JSON.parse((formData.get('nfc_slugs_json') as string | null) ?? '{}');
+		} catch {
+			/* ok */
+		}
 
 		// Rebuild set_challenges
 		await db.from('set_challenges').delete().eq('set_id', params.id);
@@ -110,7 +141,10 @@ export const actions: Actions = {
 				set_id: params.id,
 				challenge_id,
 				position: i,
-				challenge_multiplier: Math.max(1, parseInt(String(multipliersMap[challenge_id] ?? 1), 10) || 1),
+				challenge_multiplier: Math.max(
+					1,
+					parseInt(String(multipliersMap[challenge_id] ?? 1), 10) || 1
+				),
 				created_by: locals.user?.id ?? null
 			}));
 			const { error } = await db.from('set_challenges').insert(rows);
@@ -122,14 +156,30 @@ export const actions: Actions = {
 		const unlockTagRows = Object.entries(nfcSlugsMap)
 			.filter(([, slug]) => slug.trim())
 			.map(([challenge_id, slug]) => ({
-				id: slug.trim(),
+				slug: slug.trim(),
 				purpose: 'challenge_unlock' as const,
 				challenge_id,
 				set_id: params.id,
 				created_by: locals.user?.id ?? null
 			}));
 		if (unlockTagRows.length > 0) {
-			const { error } = await db.from('nfc_tags').upsert(unlockTagRows, { ignoreDuplicates: false });
+			const userId = locals.user?.id ?? null;
+			if (userId) {
+				const slugsToCheck = unlockTagRows.map((r) => r.slug);
+				const { data: conflicts } = await db
+					.from('nfc_tags')
+					.select('slug')
+					.in('slug', slugsToCheck)
+					.eq('created_by', userId);
+				if (conflicts && conflicts.length > 0) {
+					const s = conflicts[0].slug;
+					return fail(400, {
+						error: `Tag '${s}' already in use`,
+						existingTagUrl: `/admin/nfc-tags?slug=${encodeURIComponent(s)}`
+					});
+				}
+			}
+			const { error } = await db.from('nfc_tags').insert(unlockTagRows);
 			if (error) return fail(500, { error: `Could not save NFC unlock tags: ${error.message}` });
 		}
 
@@ -157,7 +207,11 @@ export const actions: Actions = {
 		} else {
 			let assignment_slots: string[] = [];
 			if (gameSet.expected_player_count && gameSet.expected_player_count > 0) {
-				assignment_slots = await generateAssignmentSlots(db, gameSet.expected_player_count, gameSet.team_count);
+				assignment_slots = await generateAssignmentSlots(
+					db,
+					gameSet.expected_player_count,
+					gameSet.team_count
+				);
 			}
 			const { error } = await db
 				.from('game_sets')
@@ -180,17 +234,31 @@ export const actions: Actions = {
 
 	toggleNfcLock: async ({ params }) => {
 		const db = createAdminClient();
-		const { data: gs } = await db.from('game_sets').select('nfc_lock_enabled').eq('id', params.id).maybeSingle();
+		const { data: gs } = await db
+			.from('game_sets')
+			.select('nfc_lock_enabled')
+			.eq('id', params.id)
+			.maybeSingle();
 		if (!gs) return fail(404, { error: 'Set not found' });
-		await db.from('game_sets').update({ nfc_lock_enabled: !gs.nfc_lock_enabled }).eq('id', params.id);
+		await db
+			.from('game_sets')
+			.update({ nfc_lock_enabled: !gs.nfc_lock_enabled })
+			.eq('id', params.id);
 		return { success: true };
 	},
 
 	toggleRandomizer: async ({ params }) => {
 		const db = createAdminClient();
-		const { data: gs } = await db.from('game_sets').select('randomizer_enabled').eq('id', params.id).maybeSingle();
+		const { data: gs } = await db
+			.from('game_sets')
+			.select('randomizer_enabled')
+			.eq('id', params.id)
+			.maybeSingle();
 		if (!gs) return fail(404, { error: 'Set not found' });
-		await db.from('game_sets').update({ randomizer_enabled: !gs.randomizer_enabled }).eq('id', params.id);
+		await db
+			.from('game_sets')
+			.update({ randomizer_enabled: !gs.randomizer_enabled })
+			.eq('id', params.id);
 		return { success: true };
 	},
 
@@ -224,7 +292,8 @@ export const actions: Actions = {
 			.eq('id', params.id)
 			.maybeSingle();
 
-		if (!gameSet || gameSet.status !== 'active') return fail(400, { error: 'Set must be active to start recap' });
+		if (!gameSet || gameSet.status !== 'active')
+			return fail(400, { error: 'Set must be active to start recap' });
 		if (gameSet.play_state === 'recap') return fail(400, { error: 'Recap already started' });
 
 		const { error } = await db
@@ -241,15 +310,25 @@ export const actions: Actions = {
 		const setId = params.id;
 
 		// Load set + scoped team IDs
-		const { data: gs } = await db.from('game_sets').select('team_count').eq('id', setId).maybeSingle();
+		const { data: gs } = await db
+			.from('game_sets')
+			.select('team_count')
+			.eq('id', setId)
+			.maybeSingle();
 		if (!gs) return fail(404, { error: 'Set not found' });
 
 		const scopedColors = TEAM_COLOR_ORDER.slice(0, gs.team_count);
-		const { data: teams } = await db.from('teams').select('id, display_name, score, color').in('color', scopedColors);
+		const { data: teams } = await db
+			.from('teams')
+			.select('id, display_name, score, color')
+			.in('color', scopedColors);
 		const teamIds = (teams ?? []).map((t) => t.id);
 
 		// Get challenge IDs in this set
-		const { data: setChallenges } = await db.from('set_challenges').select('challenge_id').eq('set_id', setId);
+		const { data: setChallenges } = await db
+			.from('set_challenges')
+			.select('challenge_id')
+			.eq('set_id', setId);
 		const challengeIds = (setChallenges ?? []).map((sc) => sc.challenge_id);
 
 		// Capture rankings BEFORE clearing
@@ -299,18 +378,21 @@ export const actions: Actions = {
 		await db.from('players').update({ set_id: null, team_id: null }).eq('set_id', setId);
 
 		// Reset set state + persist last_results
-		const { error } = await db.from('game_sets').update({
-			play_state: 'joining',
-			started_at: null,
-			ended_at: null,
-			scores_hidden: false,
-			recap_ranking: [] as never,
-			recap_reveal_index: 0,
-			recap_state: 'pending',
-			assignment_slots: [] as never,
-			assignment_index: 0,
-			last_results: last_results as never
-		}).eq('id', setId);
+		const { error } = await db
+			.from('game_sets')
+			.update({
+				play_state: 'joining',
+				started_at: null,
+				ended_at: null,
+				scores_hidden: false,
+				recap_ranking: [] as never,
+				recap_reveal_index: 0,
+				recap_state: 'pending',
+				assignment_slots: [] as never,
+				assignment_index: 0,
+				last_results: last_results as never
+			})
+			.eq('id', setId);
 
 		if (error) return fail(500, { error: 'Could not reset game' });
 		return { success: true };
@@ -319,7 +401,11 @@ export const actions: Actions = {
 	delete: async ({ params }) => {
 		const db = createAdminClient();
 
-		const { data: gameSet } = await db.from('game_sets').select('status').eq('id', params.id).maybeSingle();
+		const { data: gameSet } = await db
+			.from('game_sets')
+			.select('status')
+			.eq('id', params.id)
+			.maybeSingle();
 		if (gameSet?.status === 'active') return fail(400, { error: 'Cannot delete an active set' });
 
 		await db.from('game_sets').delete().eq('id', params.id);
@@ -330,36 +416,51 @@ export const actions: Actions = {
 		const db = createAdminClient();
 		const formData = await request.formData();
 		const slug = (formData.get('slug') as string | null)?.trim() ?? '';
+		const userId = locals.user?.id ?? null;
 
 		if (!slug) return fail(400, { error: 'Card slug is required' });
 
+		// Per-user duplicate check: only conflict within this user's tags
+		if (userId) {
+			const { data: existing } = await db
+				.from('nfc_tags')
+				.select('id')
+				.eq('slug', slug)
+				.eq('created_by', userId)
+				.maybeSingle();
+			if (existing) {
+				return fail(400, {
+					error: `Tag '${slug}' already in use`,
+					existingTagUrl: `/admin/nfc-tags?slug=${encodeURIComponent(slug)}`
+				});
+			}
+		}
+
 		const { error } = await db
 			.from('nfc_tags')
-			.insert({ id: slug, purpose: 'randomizer', set_id: params.id, created_by: locals.user?.id ?? null });
+			.insert({ slug, purpose: 'randomizer', set_id: params.id, created_by: userId });
 
 		if (error) {
 			if (error.code === '23505') {
-				const { data: existing } = await db.from('nfc_tags').select('purpose, set_id, challenge_id').eq('id', slug).maybeSingle();
-				let existingTagUrl: string | null = null;
-				if (existing) {
-					if (existing.purpose === 'randomizer') existingTagUrl = existing.set_id ? `/admin/sets/${existing.set_id}` : '/admin/nfc-tags';
-					else if (existing.purpose === 'challenge') existingTagUrl = existing.challenge_id ? `/admin/challenges/${existing.challenge_id}` : '/admin/nfc-tags';
-					else existingTagUrl = '/admin/nfc-tags';
-				}
-				return fail(400, { error: `Slug "${slug}" is already assigned to another tag.`, existingTagUrl, existingTagPurpose: existing?.purpose ?? null });
+				return fail(400, {
+					error: `Tag '${slug}' already in use`,
+					existingTagUrl: `/admin/nfc-tags?slug=${encodeURIComponent(slug)}`
+				});
 			}
 			return fail(500, { error: 'Could not add card' });
 		}
 		return { success: true };
 	},
 
-	removeCard: async ({ request }) => {
+	removeCard: async ({ request, locals }) => {
 		const db = createAdminClient();
 		const formData = await request.formData();
 		const slug = formData.get('slug') as string | null;
 		if (!slug) return fail(400, { error: 'Missing slug' });
 
-		await db.from('nfc_tags').delete().eq('id', slug).eq('purpose', 'randomizer');
+		let q = db.from('nfc_tags').delete().eq('slug', slug).eq('purpose', 'randomizer');
+		if (locals.user?.id) q = q.eq('created_by', locals.user.id);
+		await q;
 		return { success: true };
 	}
 };
