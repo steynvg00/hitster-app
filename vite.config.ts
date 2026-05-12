@@ -34,7 +34,8 @@ function copyFfmpegCore(): Plugin {
 					url.startsWith('/@fs/') ||
 					url.startsWith('/@id/') ||
 					url.startsWith('/node_modules/') ||
-					url.startsWith('/src/')
+					url.startsWith('/src/') ||
+					url.startsWith('/ffmpeg/')
 				) {
 					res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
 					res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
