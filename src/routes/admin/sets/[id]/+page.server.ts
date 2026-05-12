@@ -29,7 +29,7 @@ export const load: PageServerLoad = async ({ params }) => {
 			.select('id, challenge_id, position, challenge_multiplier')
 			.eq('set_id', id)
 			.order('position'),
-		db.from('challenges').select('id, title, variant, is_active').order('title'),
+		db.from('challenges').select('id, title, variant, is_active, nfc_lock_override').order('title'),
 		db.from('nfc_tags').select('id, slug, set_id').eq('purpose', 'randomizer').eq('set_id', id),
 		db.from('powerups').select('*').order('sort_order'),
 		db.from('set_powerups').select('*').eq('set_id', id)

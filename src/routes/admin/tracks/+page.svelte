@@ -5,6 +5,7 @@
 	import Waveform from '$lib/components/ui/Waveform.svelte';
 	import TrimModal from '$lib/components/ui/TrimModal.svelte';
 	import { Music } from 'lucide-svelte';
+	import HelpTooltip from '$lib/components/ui/HelpTooltip.svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -1079,15 +1080,18 @@
 											</div>
 
 											<!-- Clip type -->
-											<select
-												bind:value={staged.clipType}
-												disabled={staged.status !== 'queued'}
-												class="input-field py-1 text-xs disabled:opacity-50"
-											>
-												{#each CLIP_TYPES as t}
-													<option value={t}>{t}</option>
-												{/each}
-											</select>
+											<div class="flex items-center gap-1">
+												<select
+													bind:value={staged.clipType}
+													disabled={staged.status !== 'queued'}
+													class="input-field min-w-0 flex-1 py-1 text-xs disabled:opacity-50"
+												>
+													{#each CLIP_TYPES as t}
+														<option value={t}>{t}</option>
+													{/each}
+												</select>
+												<HelpTooltip text="Which variant this clip can be used for." />
+											</div>
 
 											<!-- Order index -->
 											<input
@@ -1135,7 +1139,12 @@
 						<!-- ── Accepted titles ────────────────────────────────────────────── -->
 						<div class="mt-4 border-t border-zinc-800 pt-3">
 							<div class="mb-2 flex items-center justify-between">
-								<div class="text-xs tracking-widest text-zinc-500 uppercase">Accepted Titles</div>
+								<div class="flex items-center text-xs tracking-widest text-zinc-500 uppercase">
+									Accepted Titles
+									<HelpTooltip
+										text="Alternative spellings of the title that count as correct in open-text submissions (fuzzy matched at 90% similarity)."
+									/>
+								</div>
 								<button
 									onclick={() => (editingTitles = editingTitles === track.id ? null : track.id)}
 									class="text-xs text-zinc-400 transition-colors hover:text-zinc-200"

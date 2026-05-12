@@ -10,6 +10,7 @@
 		TokenShopConfig
 	} from '$lib/types';
 	import { getVariantIcon, getVariantColor } from '$lib/variants';
+	import HelpTooltip from '$lib/components/ui/HelpTooltip.svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -154,6 +155,10 @@
 	}
 	function challengeVariant(id: string) {
 		return data.allChallenges.find((c) => c.id === id)?.variant ?? '';
+	}
+	function challengeNfcOverride(id: string): boolean | null {
+		const ch = data.allChallenges.find((c) => c.id === id);
+		return (ch as unknown as { nfc_lock_override?: boolean | null })?.nfc_lock_override ?? null;
 	}
 
 	let multipliers = $state<Record<string, number>>(
@@ -470,7 +475,10 @@
 		<!-- Config row: editable fields that blur-to-save -->
 		<div class="grid grid-cols-3 divide-x divide-zinc-800 border-b border-zinc-800">
 			<div class="px-5 py-3">
-				<div class="mb-1 text-xs tracking-wide text-zinc-600 uppercase">Teams</div>
+				<div class="mb-1 flex items-center text-xs tracking-wide text-zinc-600 uppercase">
+					Teams
+					<HelpTooltip text="Number of teams in this set (2–6)." />
+				</div>
 				<input
 					type="number"
 					min="2"
@@ -492,7 +500,12 @@
 				/>
 			</div>
 			<div class="px-5 py-3">
-				<div class="mb-1 text-xs tracking-wide text-zinc-600 uppercase">Timer (min)</div>
+				<div class="mb-1 flex items-center text-xs tracking-wide text-zinc-600 uppercase">
+					Timer (min)
+					<HelpTooltip
+						text="Total game length in minutes. The game auto-ends when elapsed, or when the host triggers recap manually."
+					/>
+				</div>
 				<input
 					type="number"
 					min="1"
@@ -675,7 +688,12 @@
 		{#if isActive}
 			<div class="border-t border-zinc-800 px-5 py-4">
 				<div class="mb-3 flex items-center justify-between">
-					<span class="text-sm font-semibold text-zinc-300">Randomizer card</span>
+					<span class="flex items-center text-sm font-semibold text-zinc-300">
+						Randomizer card
+						<HelpTooltip
+							text="Enables the team randomization NFC card flow for this set. Teams scan the card to be auto-assigned to a team."
+						/>
+					</span>
 					<form
 						method="POST"
 						action="?/toggleRandomizer"
@@ -823,7 +841,12 @@
 		<!-- NFC lock toggle: always visible, independent of collapsible state and set status -->
 		<div class="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
 			<div>
-				<span class="text-sm font-semibold text-zinc-300">NFC unlock required</span>
+				<span class="flex items-center text-sm font-semibold text-zinc-300">
+					NFC unlock required
+					<HelpTooltip
+						text="When on, teams must scan a challenge's NFC unlock card before they can play it. Individual challenges can override this via their own settings."
+					/>
+				</span>
 				<p class="mt-0.5 text-xs text-zinc-600">
 					When enabled, each challenge requires the team to scan its NFC tag before playing.
 				</p>
@@ -946,8 +969,8 @@
 											>
 										</div>
 									</div>
-									<!-- NFC lock slot (shown when nfc_lock_enabled) -->
-									{#if nfcLockEnabled}
+									<!-- NFC lock slot (shown when set lock is on, or this challenge always requires unlock) -->
+									{#if nfcLockEnabled || challengeNfcOverride(id) === true}
 										<div class="mt-2 flex items-center gap-2 pl-6">
 											<span class="text-xs text-zinc-600">🔒 NFC slug:</span>
 											<input
@@ -1061,7 +1084,13 @@
 
 		{#if powerupsEnabled}
 			<!-- Mode selector -->
-			<div class="mt-4 flex gap-1 rounded-lg border border-zinc-700 bg-zinc-800/50 p-1">
+			<div class="mt-4 mb-1 flex items-center gap-1">
+				<span class="text-xs text-zinc-500">Mode</span>
+				<HelpTooltip
+					text="Score Thresholds awards random powerups when a team's score crosses set percentages. Token Shop lets teams earn and spend tokens on powerups."
+				/>
+			</div>
+			<div class="flex gap-1 rounded-lg border border-zinc-700 bg-zinc-800/50 p-1">
 				{#each ['threshold', 'token_shop'] as mode (mode)}
 					<form
 						method="POST"
@@ -1089,9 +1118,14 @@
 			<!-- Conditional rules form -->
 			<div class="mt-4 rounded-lg border border-zinc-700 bg-zinc-800/50 p-4">
 				{#if powerupMode === 'threshold'}
-					<h3 class="mb-1 text-xs font-semibold tracking-widest text-zinc-500 uppercase">
-						Score Thresholds
-					</h3>
+					<div class="mb-1 flex items-center gap-1">
+						<h3 class="text-xs font-semibold tracking-widest text-zinc-500 uppercase">
+							Score Thresholds
+						</h3>
+						<HelpTooltip
+							text="Percentage thresholds of total possible points across played challenges. When a team crosses a threshold, they're awarded a random powerup."
+						/>
+					</div>
 					<p class="mb-3 text-xs text-zinc-600">
 						Teams earn a random powerup when their score-percentage crosses each threshold. % =
 						team_score / total possible across played challenges.
@@ -1172,7 +1206,12 @@
 								/>
 							</div>
 							<div>
-								<label class="admin-label">Per correct challenge</label>
+								<label class="admin-label flex items-center">
+									Per correct challenge
+									<HelpTooltip
+										text="Tokens awarded to a team for each correct challenge submission."
+									/>
+								</label>
 								<input
 									type="number"
 									name="per_correct_challenge"

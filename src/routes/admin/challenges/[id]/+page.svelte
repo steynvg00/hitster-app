@@ -2,6 +2,7 @@
 	import { enhance } from '$app/forms';
 	import type { PageData, ActionData } from './$types';
 	import { getVariantIcon, getVariantColor } from '$lib/variants';
+	import HelpTooltip from '$lib/components/ui/HelpTooltip.svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -86,6 +87,14 @@
 	// Difficulty star state
 	let difficulty = $state(
 		(data.challenge as unknown as { difficulty_rating?: number }).difficulty_rating ?? 3
+	);
+
+	// NFC lock override tri-state
+	type NfcOverride = 'inherit' | 'true' | 'false';
+	const nfcOverrideRaw = (data.challenge as unknown as { nfc_lock_override?: boolean | null })
+		.nfc_lock_override;
+	let nfcOverride = $state<NfcOverride>(
+		nfcOverrideRaw === true ? 'true' : nfcOverrideRaw === false ? 'false' : 'inherit'
 	);
 
 	// Points JSON editor
@@ -208,7 +217,10 @@
 			</div>
 			<div class="grid grid-cols-2 gap-3">
 				<div>
-					<label class="mb-1 block text-xs text-zinc-400">Variant</label>
+					<label class="mb-1 flex items-center text-xs text-zinc-400">
+						Variant
+						<HelpTooltip text="Determines which fields teams must guess for this challenge." />
+					</label>
 					<select name="variant" class="input-field">
 						{#each VARIANTS as v}
 							<option value={v} selected={v === data.challenge.variant}>{v}</option>
@@ -216,7 +228,10 @@
 					</select>
 				</div>
 				<div>
-					<label class="mb-1 block text-xs text-zinc-400">Timer (seconds)</label>
+					<label class="mb-1 flex items-center text-xs text-zinc-400">
+						Timer (seconds)
+						<HelpTooltip text="Per-team time limit in seconds. Set to 0 to disable the timer." />
+					</label>
 					<input
 						name="timer_seconds"
 						type="number"
@@ -229,7 +244,12 @@
 			</div>
 			<div class="grid grid-cols-2 gap-3">
 				<div>
-					<label class="mb-1 block text-xs text-zinc-400">Difficulty</label>
+					<label class="mb-1 flex items-center text-xs text-zinc-400">
+						Difficulty
+						<HelpTooltip
+							text="1–5 scale. Final score is multiplied by rating/3 (3 = neutral, 5 = +67%, 1 = −67%)."
+						/>
+					</label>
 					<div class="flex items-center gap-1">
 						{#each [1, 2, 3, 4, 5] as star}
 							<button
@@ -246,9 +266,12 @@
 					<input type="hidden" name="difficulty_rating" value={difficulty} />
 				</div>
 				<div>
-					<label class="mb-1 block text-xs text-zinc-400"
-						>Speed bonus threshold (sec, optional)</label
-					>
+					<label class="mb-1 flex items-center text-xs text-zinc-400">
+						Speed bonus threshold (sec)
+						<HelpTooltip
+							text="Teams submitting within this many seconds get a +5 speed bonus. Leave empty to disable."
+						/>
+					</label>
 					<input
 						name="speed_threshold_seconds"
 						type="number"
@@ -262,9 +285,12 @@
 				</div>
 			</div>
 			<div>
-				<label class="mb-1 block text-xs text-zinc-400"
-					>Hint text (optional — shown when team scans hint NFC tag)</label
-				>
+				<label class="mb-1 flex items-center text-xs text-zinc-400">
+					Hint text (optional)
+					<HelpTooltip
+						text="Shown to teams that scan this challenge's hint NFC card. Leave empty if no hint is needed."
+					/>
+				</label>
 				<textarea
 					name="hint_text"
 					rows="2"
@@ -272,6 +298,33 @@
 					class="input-field text-sm"
 					>{(data.challenge as unknown as { hint_text?: string | null }).hint_text ?? ''}</textarea
 				>
+			</div>
+			<div>
+				<label class="mb-2 flex items-center text-xs text-zinc-400">
+					NFC unlock required
+					<HelpTooltip
+						text="Override the set's NFC lock setting. Inherit follows whatever the set is configured for."
+					/>
+				</label>
+				<div class="flex gap-1 rounded-lg border border-zinc-700 bg-zinc-800/50 p-1">
+					{#each [['inherit', 'Inherit from set'], ['true', 'Always require'], ['false', 'Never require']] as [val, label]}
+						<label
+							class="flex-1 cursor-pointer rounded px-2 py-1.5 text-center text-xs font-medium transition-colors {nfcOverride ===
+							val
+								? 'bg-zinc-700 text-white'
+								: 'text-zinc-500 hover:text-zinc-300'}"
+						>
+							<input
+								type="radio"
+								name="nfc_lock_override"
+								value={val}
+								bind:group={nfcOverride}
+								class="sr-only"
+							/>
+							{label}
+						</label>
+					{/each}
+				</div>
 			</div>
 			<div>
 				<label class="mb-1 block text-xs text-zinc-400">Points config (JSON)</label>

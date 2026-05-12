@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import type { PageData, ActionData } from './$types';
+	import HelpTooltip from '$lib/components/ui/HelpTooltip.svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -10,31 +11,39 @@
 	let tutorialText = $state(data.tutorialText);
 </script>
 
-<div class="p-6 max-w-lg">
+<div class="max-w-lg p-6">
 	<div class="mb-2 flex items-center gap-2">
-		<a href="/admin/variant-defaults" class="text-sm text-zinc-500 hover:text-zinc-300">← Defaults</a>
+		<a href="/admin/variant-defaults" class="text-sm text-zinc-500 hover:text-zinc-300"
+			>← Defaults</a
+		>
 	</div>
 
-	<h1 class="mb-1 text-2xl font-bold capitalize text-white">{data.variant}</h1>
-	<p class="mb-6 text-sm text-zinc-400">Default point values and streak bonuses for this variant.</p>
+	<h1 class="mb-1 text-2xl font-bold text-white capitalize">{data.variant}</h1>
+	<p class="mb-6 text-sm text-zinc-400">
+		Default point values and streak bonuses for this variant.
+	</p>
 
 	{#if f?.saved}
-		<div class="mb-4 rounded-lg border border-green-700 bg-green-950 px-4 py-3 text-sm text-green-300">
+		<div
+			class="mb-4 rounded-lg border border-green-700 bg-green-950 px-4 py-3 text-sm text-green-300"
+		>
 			Saved successfully
 		</div>
 	{/if}
 
 	{#if f?.error}
-		<div class="mb-4 rounded-lg border border-red-800 bg-red-950 px-4 py-3 text-sm text-red-300">{f.error}</div>
+		<div class="mb-4 rounded-lg border border-red-800 bg-red-950 px-4 py-3 text-sm text-red-300">
+			{f.error}
+		</div>
 	{/if}
 
 	<form method="POST" action="?/save" use:enhance class="space-y-4">
 		<div class="rounded-xl border border-zinc-800 bg-zinc-900 px-5 py-4">
-			<h2 class="mb-3 text-xs font-bold uppercase tracking-widest text-zinc-500">Field points</h2>
+			<h2 class="mb-3 text-xs font-bold tracking-widest text-zinc-500 uppercase">Field points</h2>
 			<div class="space-y-3">
 				{#each data.fields as item}
 					<div class="flex items-center justify-between">
-						<label for="pts_{item.field}" class="font-medium capitalize text-zinc-200">
+						<label for="pts_{item.field}" class="font-medium text-zinc-200 capitalize">
 							{item.field.replace('_', ' ')}
 						</label>
 						<div class="flex items-center gap-2">
@@ -55,9 +64,15 @@
 		</div>
 
 		<div class="rounded-xl border border-zinc-800 bg-zinc-900 px-5 py-4">
-			<h2 class="mb-1 text-xs font-bold uppercase tracking-widest text-zinc-500">Tutorial text</h2>
+			<div class="mb-1 flex items-center gap-1">
+				<h2 class="text-xs font-bold tracking-widest text-zinc-500 uppercase">Tutorial text</h2>
+				<HelpTooltip
+					text="Shown to teams in the lobby and on the challenge page for this variant. 2–3 sentences recommended."
+				/>
+			</div>
 			<p class="mb-3 text-xs text-zinc-600">
-				Shown to players before they start this variant. 2–3 sentences recommended (≤300 chars ideal).
+				Shown to players before they start this variant. 2–3 sentences recommended (≤300 chars
+				ideal).
 			</p>
 			<textarea
 				name="tutorial_text"
@@ -65,27 +80,34 @@
 				rows="4"
 				maxlength="500"
 				placeholder="Explain the rules of this variant in 2–3 sentences…"
-				class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 resize-none"
+				class="w-full resize-none rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white focus:border-amber-500 focus:outline-none"
 			></textarea>
 			<div class="mt-1 text-right text-xs text-zinc-600">{tutorialText.length} / 500</div>
 		</div>
 
 		<div class="rounded-xl border border-zinc-800 bg-zinc-900 px-5 py-4">
-			<h2 class="mb-1 text-xs font-bold uppercase tracking-widest text-zinc-500">Streak config</h2>
+			<div class="mb-1 flex items-center gap-1">
+				<h2 class="text-xs font-bold tracking-widest text-zinc-500 uppercase">Streak config</h2>
+				<HelpTooltip
+					text="Bonus points awarded for consecutive correct answers. Define thresholds (streak count) and the flat bonus added when each is reached."
+				/>
+			</div>
 			<p class="mb-3 text-xs text-zinc-600">
-				JSON: <code class="font-mono">{"{ thresholds: [{streak: 3, bonus: 5}] }"}</code> — flat bonus added when
-				team's consecutive correct-answer streak meets each threshold.
+				JSON: <code class="font-mono">{'{ thresholds: [{streak: 3, bonus: 5}] }'}</code> — flat bonus
+				added when team's consecutive correct-answer streak meets each threshold.
 			</p>
 			<textarea
 				name="streak_config"
 				bind:value={streakConfigJson}
 				rows="6"
-				class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-white focus:outline-none focus:border-amber-500"
+				class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-white focus:border-amber-500 focus:outline-none"
 			></textarea>
 		</div>
 
-		<button type="submit"
-			class="w-full rounded-xl bg-amber-500 py-3 font-bold text-black transition-colors hover:bg-amber-400">
+		<button
+			type="submit"
+			class="w-full rounded-xl bg-amber-500 py-3 font-bold text-black transition-colors hover:bg-amber-400"
+		>
 			Save defaults
 		</button>
 	</form>

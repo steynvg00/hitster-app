@@ -9,11 +9,7 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 	const supabase = createPublicClient(cookies);
 	const admin = createAdminClient();
 
-	const { data: team } = await supabase
-		.from('teams')
-		.select('*')
-		.eq('id', locals.teamId)
-		.single();
+	const { data: team } = await supabase.from('teams').select('*').eq('id', locals.teamId).single();
 
 	if (!team) redirect(302, '/join');
 
@@ -23,7 +19,7 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		.select('id, score')
 		.order('score', { ascending: false });
 
-	const position = ((allTeams ?? []).findIndex((t) => t.id === locals.teamId) + 1) || 1;
+	const position = (allTeams ?? []).findIndex((t) => t.id === locals.teamId) + 1 || 1;
 	const totalTeams = (allTeams ?? []).length;
 
 	// Determine active set_id for challenge filtering (resolved below with player lookup)
@@ -38,7 +34,13 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 	}
 
 	// Challenges: scoped to player's set when in one, otherwise all active
-	let challenges: Array<{ id: string; title: string; variant: string; timer_seconds: number }> = [];
+	let challenges: Array<{
+		id: string;
+		title: string;
+		variant: string;
+		timer_seconds: number;
+		nfc_lock_override: boolean | null;
+	}> = [];
 	if (playerSetId) {
 		const { data: scRows } = await admin
 			.from('set_challenges')
@@ -49,7 +51,7 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		if (setChallengeIds.length > 0) {
 			const { data: chs } = await supabase
 				.from('challenges')
-				.select('id, title, variant, timer_seconds')
+				.select('id, title, variant, timer_seconds, nfc_lock_override')
 				.in('id', setChallengeIds);
 			// Preserve set order
 			const posMap = new Map((scRows ?? []).map((sc) => [sc.challenge_id, sc.position]));
@@ -58,7 +60,7 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 	} else {
 		const { data: chs } = await supabase
 			.from('challenges')
-			.select('id, title, variant, timer_seconds')
+			.select('id, title, variant, timer_seconds, nfc_lock_override')
 			.eq('is_active', true);
 		challenges = chs ?? [];
 	}
@@ -188,15 +190,13 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 						.in('challenge_id', challengeIds);
 					setCompletedCount = (teamSubs ?? []).length;
 
-					// Load NFC unlocks for this team in this set
-					if (gs.nfc_lock_enabled) {
-						const { data: unlockRows } = await admin
-							.from('challenge_unlocks')
-							.select('challenge_id')
-							.eq('team_id', locals.teamId)
-							.eq('set_id', gs.id);
-						challengeUnlocks = (unlockRows ?? []).map((r) => r.challenge_id);
-					}
+					// Load NFC unlocks for this team — needed when set lock is on OR any challenge overrides to true
+					const { data: unlockRows } = await admin
+						.from('challenge_unlocks')
+						.select('challenge_id')
+						.eq('team_id', locals.teamId)
+						.eq('set_id', gs.id);
+					challengeUnlocks = (unlockRows ?? []).map((r) => r.challenge_id);
 				}
 			}
 		}

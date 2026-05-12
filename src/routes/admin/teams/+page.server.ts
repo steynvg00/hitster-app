@@ -40,6 +40,12 @@ export const actions: Actions = {
 
 		const newScore = Math.max(0, (team.score ?? 0) + delta);
 
+		const { data: teamRow } = await db
+			.from('teams')
+			.select('display_name')
+			.eq('id', team_id)
+			.single();
+
 		const [updateRes] = await Promise.all([
 			db.from('teams').update({ score: newScore }).eq('id', team_id),
 			db.from('activity_log').insert({
@@ -50,7 +56,9 @@ export const actions: Actions = {
 		]);
 
 		if (updateRes.error) return fail(500, { error: updateRes.error.message });
-		return { success: true };
+		const sign = delta >= 0 ? '+' : '';
+		const teamName = teamRow?.display_name ?? 'Team';
+		return { success: true, message: `Score updated: ${teamName} ${sign}${delta} pts` };
 	},
 
 	resetScore: async ({ request }) => {
@@ -80,7 +88,8 @@ export const actions: Actions = {
 		const team_id = data.get('team_id') as string;
 		const display_name = (data.get('display_name') as string)?.trim();
 
-		if (!team_id || !display_name) return fail(400, { error: 'team_id and display_name are required' });
+		if (!team_id || !display_name)
+			return fail(400, { error: 'team_id and display_name are required' });
 
 		const { error } = await db.from('teams').update({ display_name }).eq('id', team_id);
 		if (error) return fail(500, { error: error.message });
@@ -95,10 +104,16 @@ export const actions: Actions = {
 			db.from('review_requests').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
 			db.from('activity_log').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
 			db.from('challenge_attempts').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
-			db.from('teams').update({ score: 0, current_streak: 0 } as never).neq('id', '00000000-0000-0000-0000-000000000000')
+			db
+				.from('teams')
+				.update({ score: 0, current_streak: 0 } as never)
+				.neq('id', '00000000-0000-0000-0000-000000000000')
 		]);
 
-		await db.from('challenges').update({ status: 'active', is_active: true }).neq('status', 'active');
+		await db
+			.from('challenges')
+			.update({ status: 'active', is_active: true })
+			.neq('status', 'active');
 
 		return { success: true, action: 'resetEverything' };
 	},
@@ -126,7 +141,10 @@ export const actions: Actions = {
 		const { data: urlData } = db.storage.from('team-photos').getPublicUrl(path);
 		const photo_url = urlData.publicUrl;
 
-		const { error: updateErr } = await db.from('teams').update({ photo_url } as never).eq('id', teamId);
+		const { error: updateErr } = await db
+			.from('teams')
+			.update({ photo_url } as never)
+			.eq('id', teamId);
 		if (updateErr) return fail(500, { error: updateErr.message });
 
 		return { success: true };

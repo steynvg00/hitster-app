@@ -1,7 +1,13 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { createPublicClient, createAdminClient } from '$lib/server/supabase';
-import type { AnswerField, InputMode, ChallengeResult, AnswerArrayEntry } from '$lib/types/index.js';
+import { isNfcUnlockRequired } from '$lib/server/nfc';
+import type {
+	AnswerField,
+	InputMode,
+	ChallengeResult,
+	AnswerArrayEntry
+} from '$lib/types/index.js';
 import {
 	VARIANT_FIELDS,
 	DEFAULT_INPUT_MODES,
@@ -55,7 +61,8 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 			.maybeSingle()
 	]);
 
-	if (!tracksResult.data?.length || !clipsResult.data?.length) error(500, 'Track or clip data missing');
+	if (!tracksResult.data?.length || !clipsResult.data?.length)
+		error(500, 'Track or clip data missing');
 	if (!teamResult.data) redirect(302, '/join');
 
 	const team = teamResult.data;
@@ -83,7 +90,11 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 	// Three-tier field points: challenge override > variant_defaults > hardcoded
 	let variantDefaultPoints: Record<string, number> = {};
 	let tutorialText: string | null = null;
-	const { data: vd } = await admin.from('variant_defaults').select('points_config, tutorial_text').eq('variant', variant).maybeSingle();
+	const { data: vd } = await admin
+		.from('variant_defaults')
+		.select('points_config, tutorial_text')
+		.eq('variant', variant)
+		.maybeSingle();
 	if (vd) {
 		const vdConfig = vd.points_config as Record<string, unknown>;
 		variantDefaultPoints = (vdConfig.field_points ?? {}) as Record<string, number>;
@@ -93,12 +104,19 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 	const challengeFieldPoints = (pcRaw.field_points ?? {}) as Record<string, number>;
 	const fieldPoints: Record<string, number> = {};
 	for (const f of variantFields) {
-		fieldPoints[f] = challengeFieldPoints[f] ?? variantDefaultPoints[f] ?? DEFAULT_FIELD_MAX[f as AnswerField] ?? 5;
+		fieldPoints[f] =
+			challengeFieldPoints[f] ??
+			variantDefaultPoints[f] ??
+			DEFAULT_FIELD_MAX[f as AnswerField] ??
+			5;
 	}
 
 	const fieldModes: Record<string, InputMode> = {};
 	for (const f of variantFields) {
-		fieldModes[f] = (savedModes[f] as InputMode) ?? DEFAULT_INPUT_MODES[variant]?.[f as AnswerField] ?? 'open_text';
+		fieldModes[f] =
+			(savedModes[f] as InputMode) ??
+			DEFAULT_INPUT_MODES[variant]?.[f as AnswerField] ??
+			'open_text';
 	}
 
 	// ── Clip URLs ─────────────────────────────────────────────────────────────
@@ -125,8 +143,11 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 			.map(async (f) => {
 				const table = FIELD_POOL_TABLE[f as AnswerField];
 				if (!table) return;
-				const { data } = await admin.from(table as never).select('name').order('name');
-				pools[f] = (data as { name: string }[] ?? []).map((r) => r.name);
+				const { data } = await admin
+					.from(table as never)
+					.select('name')
+					.order('name');
+				pools[f] = ((data as { name: string }[]) ?? []).map((r) => r.name);
 			})
 	);
 
@@ -167,8 +188,12 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 				? buildFieldResults(variantFields, entry.field_values ?? {}, track, fieldModes, fieldPoints)
 				: [];
 			const total = entry.total ?? fields.reduce((s, fr) => s + fr.score, 0);
-			const maxTotal = fields.reduce((s, fr) => s + fr.maxScore, 0) ||
-				variantFields.reduce((s, f) => s + (fieldPoints[f] ?? DEFAULT_FIELD_MAX[f as AnswerField] ?? 5), 0);
+			const maxTotal =
+				fields.reduce((s, fr) => s + fr.maxScore, 0) ||
+				variantFields.reduce(
+					(s, f) => s + (fieldPoints[f] ?? DEFAULT_FIELD_MAX[f as AnswerField] ?? 5),
+					0
+				);
 			return { trackId: entry.track_id ?? '', trackIndex: i + 1, fields, total, maxTotal };
 		});
 
@@ -220,8 +245,8 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 				activeSetId = gs.id;
 				activeSetRecapState = gs.recap_state ?? null;
 
-				// NFC lock guard: if lock is enabled and team hasn't scanned, redirect to /team
-				if (gs.nfc_lock_enabled && locals.teamId) {
+				// NFC lock guard: check set-level setting plus per-challenge override
+				if (isNfcUnlockRequired(challenge, gs) && locals.teamId) {
 					const { data: unlockRow } = await admin
 						.from('challenge_unlocks')
 						.select('id')
@@ -282,7 +307,11 @@ export const actions: Actions = {
 
 		const [challengeRes, challengeTracksRes] = await Promise.all([
 			supabase.from('challenges').select('*').eq('id', params.id).single(),
-			supabase.from('challenge_tracks').select('id, track_id, sort_order').eq('challenge_id', params.id).order('sort_order')
+			supabase
+				.from('challenge_tracks')
+				.select('id, track_id, sort_order')
+				.eq('challenge_id', params.id)
+				.order('sort_order')
 		]);
 		const challenge = challengeRes.data;
 		const challengeTracks = challengeTracksRes.data;
@@ -300,17 +329,30 @@ export const actions: Actions = {
 		const savedModes = (pcRaw.field_modes ?? {}) as Record<string, string>;
 		const fieldModes: Record<string, InputMode> = {};
 		for (const f of variantFields) {
-			fieldModes[f] = (savedModes[f] as InputMode) ?? DEFAULT_INPUT_MODES[variant]?.[f as AnswerField] ?? 'open_text';
+			fieldModes[f] =
+				(savedModes[f] as InputMode) ??
+				DEFAULT_INPUT_MODES[variant]?.[f as AnswerField] ??
+				'open_text';
 		}
 
-		const { data: vdRow } = await admin.from('variant_defaults').select('points_config, streak_config').eq('variant', variant).maybeSingle();
-		const variantDefaultPoints = ((vdRow?.points_config as Record<string, unknown> | null)?.field_points ?? {}) as Record<string, number>;
-		const streakThresholds = ((vdRow?.streak_config as Record<string, unknown> | null)?.thresholds ?? []) as Array<{ streak: number; bonus: number }>;
+		const { data: vdRow } = await admin
+			.from('variant_defaults')
+			.select('points_config, streak_config')
+			.eq('variant', variant)
+			.maybeSingle();
+		const variantDefaultPoints = ((vdRow?.points_config as Record<string, unknown> | null)
+			?.field_points ?? {}) as Record<string, number>;
+		const streakThresholds = ((vdRow?.streak_config as Record<string, unknown> | null)
+			?.thresholds ?? []) as Array<{ streak: number; bonus: number }>;
 
 		const challengeFieldPoints = (pcRaw.field_points ?? {}) as Record<string, number>;
 		const fieldPoints: Record<string, number> = {};
 		for (const f of variantFields) {
-			fieldPoints[f] = challengeFieldPoints[f] ?? variantDefaultPoints[f] ?? DEFAULT_FIELD_MAX[f as AnswerField] ?? 5;
+			fieldPoints[f] =
+				challengeFieldPoints[f] ??
+				variantDefaultPoints[f] ??
+				DEFAULT_FIELD_MAX[f as AnswerField] ??
+				5;
 		}
 
 		// Parse answers_json from form (set directly on FormData by use:enhance callback)
@@ -328,7 +370,12 @@ export const actions: Actions = {
 		const [teamRes, allTeamsRes, attemptRes] = await Promise.all([
 			admin.from('teams').select('score, current_streak').eq('id', teamId).single(),
 			admin.from('teams').select('score').order('score', { ascending: false }).limit(1),
-			admin.from('challenge_attempts').select('started_at').eq('challenge_id', params.id).eq('team_id', teamId).maybeSingle()
+			admin
+				.from('challenge_attempts')
+				.select('started_at')
+				.eq('challenge_id', params.id)
+				.eq('team_id', teamId)
+				.maybeSingle()
 		]);
 
 		const teamRow = teamRes.data;
@@ -341,7 +388,11 @@ export const actions: Actions = {
 		// challenge_multiplier: look up set_challenges for the player's active set
 		let challengeMultiplier = 1;
 		if (locals.playerId) {
-			const { data: playerRow } = await admin.from('players').select('set_id').eq('id', locals.playerId).maybeSingle();
+			const { data: playerRow } = await admin
+				.from('players')
+				.select('set_id')
+				.eq('id', locals.playerId)
+				.maybeSingle();
 			if (playerRow?.set_id) {
 				const { data: sc } = await admin
 					.from('set_challenges')
@@ -349,40 +400,55 @@ export const actions: Actions = {
 					.eq('challenge_id', params.id)
 					.eq('set_id', playerRow.set_id)
 					.maybeSingle();
-				challengeMultiplier = (sc as { challenge_multiplier?: number } | null)?.challenge_multiplier ?? 1;
+				challengeMultiplier =
+					(sc as { challenge_multiplier?: number } | null)?.challenge_multiplier ?? 1;
 			}
 		}
 
 		const bonusParams: BonusParams = {
-			difficulty_rating: (challenge as unknown as { difficulty_rating?: number }).difficulty_rating ?? 3,
+			difficulty_rating:
+				(challenge as unknown as { difficulty_rating?: number }).difficulty_rating ?? 3,
 			challenge_multiplier: challengeMultiplier,
 			team_score: teamRow?.score ?? 0,
 			leader_score: leaderScore,
 			current_streak: teamRow?.current_streak ?? 0,
 			streak_thresholds: streakThresholds,
 			elapsed_seconds: elapsedSeconds,
-			speed_threshold_seconds: (challenge as unknown as { speed_threshold_seconds?: number | null }).speed_threshold_seconds ?? null
+			speed_threshold_seconds:
+				(challenge as unknown as { speed_threshold_seconds?: number | null })
+					.speed_threshold_seconds ?? null
 		};
 
 		const trackDataMap = new Map<string, TrackData>(tracks.map((t) => [t.id, t as TrackData]));
 		const ctList = challengeTracks.map((ct) => ({ id: ct.id, trackId: ct.track_id }));
 
 		const { answersArray, result: scoredResult } = scoreSubmission(
-			draftByTrack, ctList, trackDataMap, variantFields, fieldModes, fieldPoints, bonusParams
+			draftByTrack,
+			ctList,
+			trackDataMap,
+			variantFields,
+			fieldModes,
+			fieldPoints,
+			bonusParams
 		);
 
 		const finalScore = scoredResult.breakdown?.final ?? scoredResult.total;
 
-		const { data: sub, error: subErr } = await supabase.from('submissions').insert({
-			challenge_id: params.id,
-			team_id: teamId,
-			answers: answersArray as never,
-			score: finalScore,
-			is_final: true
-		}).select('id').single();
+		const { data: sub, error: subErr } = await supabase
+			.from('submissions')
+			.insert({
+				challenge_id: params.id,
+				team_id: teamId,
+				answers: answersArray as never,
+				score: finalScore,
+				is_final: true
+			})
+			.select('id')
+			.single();
 
 		if (subErr) {
-			if (subErr.code === '23505') return fail(409, { formError: 'Already submitted — reload to see your result' });
+			if (subErr.code === '23505')
+				return fail(409, { formError: 'Already submitted — reload to see your result' });
 			return fail(500, { formError: subErr.message });
 		}
 		if (!sub) return fail(500, { formError: 'Submission insert returned no data' });
@@ -391,9 +457,19 @@ export const actions: Actions = {
 		const newStreak = scoredResult.total > 0 ? (teamRow?.current_streak ?? 0) + 1 : 0;
 
 		await Promise.all([
-			admin.from('submissions').update({ status: scoredResult.status } as never).eq('id', sub.id),
-			admin.from('challenge_attempts').update({ ended_at: new Date().toISOString() }).eq('challenge_id', params.id).eq('team_id', teamId),
-			admin.from('teams').update({ score: (teamRow?.score ?? 0) + finalScore, current_streak: newStreak }).eq('id', teamId)
+			admin
+				.from('submissions')
+				.update({ status: scoredResult.status } as never)
+				.eq('id', sub.id),
+			admin
+				.from('challenge_attempts')
+				.update({ ended_at: new Date().toISOString() })
+				.eq('challenge_id', params.id)
+				.eq('team_id', teamId),
+			admin
+				.from('teams')
+				.update({ score: (teamRow?.score ?? 0) + finalScore, current_streak: newStreak })
+				.eq('id', teamId)
 		]);
 
 		const result: ChallengeResult = {

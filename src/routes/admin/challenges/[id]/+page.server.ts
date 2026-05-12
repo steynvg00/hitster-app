@@ -58,6 +58,9 @@ export const actions: Actions = {
 		const speedRaw = (data.get('speed_threshold_seconds') as string | null)?.trim();
 		const speed_threshold_seconds = speedRaw ? parseInt(speedRaw, 10) || null : null;
 		const hint_text = (data.get('hint_text') as string | null)?.trim() || null;
+		const nfcOverrideRaw = data.get('nfc_lock_override') as string | null;
+		const nfc_lock_override =
+			nfcOverrideRaw === 'true' ? true : nfcOverrideRaw === 'false' ? false : null;
 
 		let points_config: object;
 		try {
@@ -78,7 +81,8 @@ export const actions: Actions = {
 				points_config: points_config as never,
 				difficulty_rating,
 				speed_threshold_seconds,
-				hint_text
+				hint_text,
+				nfc_lock_override
 			})
 			.eq('id', params.id);
 		if (e) return fail(500, { error: e.message });
@@ -285,6 +289,7 @@ export const actions: Actions = {
 				difficulty_rating: source.difficulty_rating,
 				speed_threshold_seconds: source.speed_threshold_seconds,
 				hint_text: source.hint_text,
+				nfc_lock_override: source.nfc_lock_override,
 				status: 'draft',
 				is_active: false,
 				created_by: locals.user?.id ?? null
