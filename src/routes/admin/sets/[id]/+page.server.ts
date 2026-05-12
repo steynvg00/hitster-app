@@ -2,7 +2,14 @@ import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
 import { generateAssignmentSlots, TEAM_COLOR_ORDER } from '$lib/server/randomize';
-import type { PowerupConfig, PowerupVisibility, TokenEarningConfig } from '$lib/types';
+import type {
+	PowerupConfig,
+	PowerupMode,
+	PowerupVisibility,
+	SetPowerupConfig,
+	ThresholdConfig,
+	TokenShopConfig
+} from '$lib/types';
 
 export const load: PageServerLoad = async ({ params }) => {
 	const db = createAdminClient();
@@ -98,20 +105,12 @@ export const load: PageServerLoad = async ({ params }) => {
 		};
 	});
 
-	const rawConfig = gameSet.token_earning_config;
-	const tokenEarningConfig: TokenEarningConfig =
+	const powerupMode: PowerupMode = (gameSet.powerup_mode as PowerupMode) ?? 'threshold';
+	const rawConfig = gameSet.powerup_config;
+	const powerupSetConfig: SetPowerupConfig =
 		rawConfig && typeof rawConfig === 'object' && !Array.isArray(rawConfig)
-			? (rawConfig as unknown as TokenEarningConfig)
-			: {
-					starting_tokens: 0,
-					per_correct_challenge: 1,
-					streak_bonuses: [
-						{ streak: 3, bonus: 2 },
-						{ streak: 5, bonus: 5 }
-					],
-					time_tick_minutes: null,
-					tokens_per_tick: 1
-				};
+			? (rawConfig as unknown as SetPowerupConfig)
+			: { thresholds_percent: [25, 50, 75] };
 
 	return {
 		gameSet,
@@ -124,7 +123,8 @@ export const load: PageServerLoad = async ({ params }) => {
 		teamProgress,
 		challengeUnlockTags,
 		powerupConfigs,
-		tokenEarningConfig
+		powerupMode,
+		powerupSetConfig
 	};
 };
 
@@ -454,46 +454,95 @@ export const actions: Actions = {
 		return { success: true };
 	},
 
-	save_earning_rules: async ({ request, params }) => {
+	set_powerup_mode: async ({ request, params }) => {
 		const db = createAdminClient();
 		const fd = await request.formData();
+		const mode = (fd.get('mode') as string | null)?.trim() as PowerupMode | null;
+		if (mode !== 'threshold' && mode !== 'token_shop')
+			return fail(400, { error: 'Invalid powerup mode' });
 
-		const startingTokens = parseInt((fd.get('starting_tokens') as string) ?? '0') || 0;
-		const perCorrect = parseInt((fd.get('per_correct_challenge') as string) ?? '1') || 0;
-		const timeTick = (fd.get('time_tick_minutes') as string | null)?.trim();
-		const timeTickMinutes = timeTick ? parseInt(timeTick) || null : null;
-		const tokensPerTick = parseInt((fd.get('tokens_per_tick') as string) ?? '1') || 1;
-
-		if (startingTokens < 0) return fail(400, { error: 'Starting tokens must be ≥ 0' });
-		if (perCorrect < 0) return fail(400, { error: 'Per-challenge bonus must be ≥ 0' });
-		if (timeTickMinutes !== null && timeTickMinutes < 1)
-			return fail(400, { error: 'Time tick must be a positive number of minutes' });
-
-		// Parse streak_bonuses rows from form (streak_streak_N / streak_bonus_N pairs)
-		const streakBonuses: Array<{ streak: number; bonus: number }> = [];
-		let i = 0;
-		while (fd.has(`streak_streak_${i}`)) {
-			const streak = parseInt((fd.get(`streak_streak_${i}`) as string) ?? '');
-			const bonus = parseInt((fd.get(`streak_bonus_${i}`) as string) ?? '');
-			if (!isNaN(streak) && streak >= 1 && !isNaN(bonus) && bonus >= 0) {
-				streakBonuses.push({ streak, bonus });
+		const defaults: Record<PowerupMode, SetPowerupConfig> = {
+			threshold: { thresholds_percent: [25, 50, 75] },
+			token_shop: {
+				starting_tokens: 0,
+				per_correct_challenge: 1,
+				streak_bonuses: [
+					{ streak: 3, bonus: 2 },
+					{ streak: 5, bonus: 5 }
+				],
+				time_tick_minutes: null,
+				tokens_per_tick: 1
 			}
-			i++;
-		}
-
-		const config: TokenEarningConfig = {
-			starting_tokens: startingTokens,
-			per_correct_challenge: perCorrect,
-			streak_bonuses: streakBonuses,
-			time_tick_minutes: timeTickMinutes,
-			tokens_per_tick: tokensPerTick
 		};
 
 		const { error } = await db
 			.from('game_sets')
-			.update({ token_earning_config: config as never })
+			.update({ powerup_mode: mode, powerup_config: defaults[mode] as never })
 			.eq('id', params.id);
-		if (error) return fail(500, { error: 'Could not save earning rules' });
+		if (error) return fail(500, { error: 'Could not set powerup mode' });
+		return { success: true };
+	},
+
+	save_powerup_config: async ({ request, params }) => {
+		const db = createAdminClient();
+		const fd = await request.formData();
+		const mode = (fd.get('mode') as string | null)?.trim() as PowerupMode | null;
+
+		let config: SetPowerupConfig;
+
+		if (mode === 'threshold') {
+			// Parse thresholds_percent_N values
+			const percents: number[] = [];
+			let i = 0;
+			while (fd.has(`threshold_${i}`)) {
+				const v = parseInt((fd.get(`threshold_${i}`) as string) ?? '');
+				if (!isNaN(v) && v >= 1 && v <= 100) percents.push(v);
+				i++;
+			}
+			// Deduplicate and sort ascending
+			const sorted = [...new Set(percents)].sort((a, b) => a - b);
+			if (sorted.length === 0) return fail(400, { error: 'At least one threshold is required' });
+			const thresholdConfig: ThresholdConfig = { thresholds_percent: sorted };
+			config = thresholdConfig;
+		} else if (mode === 'token_shop') {
+			const startingTokens = parseInt((fd.get('starting_tokens') as string) ?? '0') || 0;
+			const perCorrect = parseInt((fd.get('per_correct_challenge') as string) ?? '1') || 0;
+			const timeTick = (fd.get('time_tick_minutes') as string | null)?.trim();
+			const timeTickMinutes = timeTick ? parseInt(timeTick) || null : null;
+			const tokensPerTick = parseInt((fd.get('tokens_per_tick') as string) ?? '1') || 1;
+
+			if (startingTokens < 0) return fail(400, { error: 'Starting tokens must be ≥ 0' });
+			if (perCorrect < 0) return fail(400, { error: 'Per-challenge bonus must be ≥ 0' });
+			if (timeTickMinutes !== null && timeTickMinutes < 1)
+				return fail(400, { error: 'Time tick must be a positive number of minutes' });
+
+			const streakBonuses: Array<{ streak: number; bonus: number }> = [];
+			let i = 0;
+			while (fd.has(`streak_streak_${i}`)) {
+				const streak = parseInt((fd.get(`streak_streak_${i}`) as string) ?? '');
+				const bonus = parseInt((fd.get(`streak_bonus_${i}`) as string) ?? '');
+				if (!isNaN(streak) && streak >= 1 && !isNaN(bonus) && bonus >= 0) {
+					streakBonuses.push({ streak, bonus });
+				}
+				i++;
+			}
+			const shopConfig: TokenShopConfig = {
+				starting_tokens: startingTokens,
+				per_correct_challenge: perCorrect,
+				streak_bonuses: streakBonuses,
+				time_tick_minutes: timeTickMinutes,
+				tokens_per_tick: tokensPerTick
+			};
+			config = shopConfig;
+		} else {
+			return fail(400, { error: 'Invalid powerup mode' });
+		}
+
+		const { error } = await db
+			.from('game_sets')
+			.update({ powerup_config: config as never })
+			.eq('id', params.id);
+		if (error) return fail(500, { error: 'Could not save powerup config' });
 		return { success: true };
 	},
 

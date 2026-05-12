@@ -46,6 +46,8 @@ export type Database = {
 					current_streak: number;
 					photo_url: string | null;
 					token_balance: number;
+					held_powerups: Json;
+					last_threshold_crossed: number;
 					created_at: string;
 				};
 				Insert: {
@@ -57,6 +59,8 @@ export type Database = {
 					current_streak?: number;
 					photo_url?: string | null;
 					token_balance?: number;
+					held_powerups?: Json;
+					last_threshold_crossed?: number;
 					created_at?: string;
 				};
 				Update: {
@@ -68,6 +72,8 @@ export type Database = {
 					current_streak?: number;
 					photo_url?: string | null;
 					token_balance?: number;
+					held_powerups?: Json;
+					last_threshold_crossed?: number;
 					created_at?: string;
 				};
 				Relationships: [];
@@ -355,7 +361,8 @@ export type Database = {
 					randomizer_enabled: boolean;
 					last_results: Json | null;
 					powerups_enabled: boolean;
-					token_earning_config: Json;
+					powerup_mode: 'threshold' | 'token_shop';
+					powerup_config: Json;
 					created_by: string | null;
 					created_at: string;
 				};
@@ -380,7 +387,8 @@ export type Database = {
 					randomizer_enabled?: boolean;
 					last_results?: Json | null;
 					powerups_enabled?: boolean;
-					token_earning_config?: Json;
+					powerup_mode?: 'threshold' | 'token_shop';
+					powerup_config?: Json;
 					created_by?: string | null;
 					created_at?: string;
 				};
@@ -405,7 +413,8 @@ export type Database = {
 					randomizer_enabled?: boolean;
 					last_results?: Json | null;
 					powerups_enabled?: boolean;
-					token_earning_config?: Json;
+					powerup_mode?: 'threshold' | 'token_shop';
+					powerup_config?: Json;
 					created_by?: string | null;
 					created_at?: string;
 				};

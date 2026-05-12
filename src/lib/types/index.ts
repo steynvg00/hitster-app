@@ -220,6 +220,7 @@ export interface SetChallenge {
 export type PowerupCategory = 'offensive' | 'defensive' | 'information' | 'social' | 'self';
 export type PowerupVisibility = 'public' | 'target_only' | 'hidden' | 'silent';
 export type PowerupTargetType = 'self' | 'team' | 'all_others' | 'none';
+export type PowerupMode = 'threshold' | 'token_shop';
 
 export interface Powerup {
 	id: string;
@@ -253,10 +254,16 @@ export interface PowerupConfig extends Powerup {
 	has_override: boolean;
 }
 
-export interface TokenEarningConfig {
+export interface ThresholdConfig {
+	thresholds_percent: number[];
+}
+
+export interface TokenShopConfig {
 	starting_tokens: number;
 	per_correct_challenge: number;
 	streak_bonuses: Array<{ streak: number; bonus: number }>;
 	time_tick_minutes: number | null;
 	tokens_per_tick: number;
 }
+
+export type SetPowerupConfig = ThresholdConfig | TokenShopConfig;

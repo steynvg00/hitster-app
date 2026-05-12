@@ -3,7 +3,12 @@
 	import { onMount } from 'svelte';
 	import { supabaseBrowser } from '$lib/supabase-browser';
 	import type { PageData, ActionData } from './$types';
-	import type { PowerupVisibility } from '$lib/types';
+	import type {
+		PowerupMode,
+		PowerupVisibility,
+		ThresholdConfig,
+		TokenShopConfig
+	} from '$lib/types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -274,16 +279,36 @@
 
 	// ── Powerups section ─────────────────────────────────────────────────────
 	let powerupsEnabled = $state(data.gameSet.powerups_enabled ?? false);
-	let savingEarningRules = $state(false);
+	let powerupMode = $state<PowerupMode>(data.powerupMode);
+	let savingPowerupConfig = $state(false);
 
-	// Token earning rules form state — initialised from server data
-	let earningStarting = $state(data.tokenEarningConfig.starting_tokens);
-	let earningPerCorrect = $state(data.tokenEarningConfig.per_correct_challenge);
-	let earningStreaks = $state<Array<{ streak: number; bonus: number }>>(
-		data.tokenEarningConfig.streak_bonuses.map((s) => ({ ...s }))
+	// Threshold config state
+	const initThresholds = () =>
+		(data.powerupSetConfig as ThresholdConfig).thresholds_percent?.map((v) => v) ?? [25, 50, 75];
+	let thresholds = $state<number[]>(
+		data.powerupMode === 'threshold' ? initThresholds() : [25, 50, 75]
 	);
-	let earningTimeTick = $state<number | ''>(data.tokenEarningConfig.time_tick_minutes ?? '');
-	let earningTokensPerTick = $state(data.tokenEarningConfig.tokens_per_tick);
+
+	// Token shop config state
+	const initShop = () => data.powerupSetConfig as TokenShopConfig;
+	let earningStarting = $state(data.powerupMode === 'token_shop' ? initShop().starting_tokens : 0);
+	let earningPerCorrect = $state(
+		data.powerupMode === 'token_shop' ? initShop().per_correct_challenge : 1
+	);
+	let earningStreaks = $state<Array<{ streak: number; bonus: number }>>(
+		data.powerupMode === 'token_shop'
+			? initShop().streak_bonuses.map((s) => ({ ...s }))
+			: [
+					{ streak: 3, bonus: 2 },
+					{ streak: 5, bonus: 5 }
+				]
+	);
+	let earningTimeTick = $state<number | ''>(
+		data.powerupMode === 'token_shop' ? (initShop().time_tick_minutes ?? '') : ''
+	);
+	let earningTokensPerTick = $state(
+		data.powerupMode === 'token_shop' ? initShop().tokens_per_tick : 1
+	);
 
 	const VISIBILITY_OPTIONS: PowerupVisibility[] = ['public', 'target_only', 'hidden', 'silent'];
 
@@ -970,13 +995,13 @@
 			<div>
 				<h2 class="text-sm font-bold tracking-widest text-zinc-400 uppercase">Powerups</h2>
 				<p class="mt-0.5 text-xs text-zinc-600">
-					Configure powerup availability and token earning for this set
+					Configure powerup availability and earning mode for this set
 				</p>
 			</div>
 			<form
 				method="POST"
 				action="?/toggle_powerups_enabled"
-				use:enhance={({ cancel }) => {
+				use:enhance={() => {
 					powerupsEnabled = !powerupsEnabled;
 					return async ({ update }) => {
 						await update({ reset: false });
@@ -998,117 +1023,199 @@
 		</div>
 
 		{#if powerupsEnabled}
-			<!-- Token earning rules -->
-			<div class="mt-5 rounded-lg border border-zinc-700 bg-zinc-800/50 p-4">
-				<h3 class="mb-3 text-xs font-semibold tracking-widest text-zinc-500 uppercase">
-					Token Earning Rules
-				</h3>
-				<form
-					method="POST"
-					action="?/save_earning_rules"
-					use:enhance={() => {
-						savingEarningRules = true;
-						return async ({ update }) => {
-							savingEarningRules = false;
-							await update({ reset: false });
-						};
-					}}
-				>
-					<div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-						<div>
-							<label class="admin-label">Starting tokens</label>
-							<input
-								type="number"
-								name="starting_tokens"
-								min="0"
-								bind:value={earningStarting}
-								class="admin-input"
-							/>
-						</div>
-						<div>
-							<label class="admin-label">Per correct challenge</label>
-							<input
-								type="number"
-								name="per_correct_challenge"
-								min="0"
-								bind:value={earningPerCorrect}
-								class="admin-input"
-							/>
-						</div>
-						<div>
-							<label class="admin-label">Time tick (min)</label>
-							<input
-								type="number"
-								name="time_tick_minutes"
-								min="1"
-								placeholder="Off"
-								bind:value={earningTimeTick}
-								class="admin-input"
-							/>
-						</div>
-						<div>
-							<label class="admin-label">Tokens per tick</label>
-							<input
-								type="number"
-								name="tokens_per_tick"
-								min="1"
-								bind:value={earningTokensPerTick}
-								class="admin-input"
-							/>
-						</div>
-					</div>
+			<!-- Mode selector -->
+			<div class="mt-4 flex gap-1 rounded-lg border border-zinc-700 bg-zinc-800/50 p-1">
+				{#each ['threshold', 'token_shop'] as mode (mode)}
+					<form
+						method="POST"
+						action="?/set_powerup_mode"
+						class="flex-1"
+						use:enhance={() => {
+							powerupMode = mode as PowerupMode;
+							return async ({ update }) => {
+								await update({ reset: false });
+							};
+						}}
+					>
+						<input type="hidden" name="mode" value={mode} />
+						<button
+							type="submit"
+							class="w-full rounded px-3 py-1.5 text-xs font-semibold transition-colors
+								{powerupMode === mode ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-zinc-300'}"
+						>
+							{mode === 'threshold' ? 'Score Thresholds' : 'Token Shop'}
+						</button>
+					</form>
+				{/each}
+			</div>
 
-					<!-- Streak bonuses -->
-					<div class="mt-3">
-						<div class="mb-1 flex items-center justify-between">
-							<span class="admin-label" style="margin-bottom:0">Streak bonuses</span>
-							<button
-								type="button"
-								onclick={() => (earningStreaks = [...earningStreaks, { streak: 3, bonus: 2 }])}
-								class="text-xs text-amber-400 hover:text-amber-300"
-							>
-								+ Add row
-							</button>
-						</div>
-						{#if earningStreaks.length === 0}
-							<p class="text-xs text-zinc-600">No streak bonuses configured.</p>
-						{/if}
-						{#each earningStreaks as row, i (i)}
+			<!-- Conditional rules form -->
+			<div class="mt-4 rounded-lg border border-zinc-700 bg-zinc-800/50 p-4">
+				{#if powerupMode === 'threshold'}
+					<h3 class="mb-1 text-xs font-semibold tracking-widest text-zinc-500 uppercase">
+						Score Thresholds
+					</h3>
+					<p class="mb-3 text-xs text-zinc-600">
+						Teams earn a random powerup when their score-percentage crosses each threshold. % =
+						team_score / total possible across played challenges.
+					</p>
+					<form
+						method="POST"
+						action="?/save_powerup_config"
+						use:enhance={() => {
+							savingPowerupConfig = true;
+							return async ({ update }) => {
+								savingPowerupConfig = false;
+								await update({ reset: false });
+							};
+						}}
+					>
+						<input type="hidden" name="mode" value="threshold" />
+						{#each thresholds as _pct, i (i)}
 							<div class="mb-1.5 flex items-center gap-2">
-								<span class="shrink-0 text-xs text-zinc-500">Streak ≥</span>
 								<input
 									type="number"
-									name="streak_streak_{i}"
+									name="threshold_{i}"
 									min="1"
-									bind:value={row.streak}
-									class="admin-input w-16 py-1 text-xs"
+									max="100"
+									bind:value={thresholds[i]}
+									class="admin-input w-20 py-1 text-xs"
 								/>
-								<span class="shrink-0 text-xs text-zinc-500">→ bonus</span>
-								<input
-									type="number"
-									name="streak_bonus_{i}"
-									min="0"
-									bind:value={row.bonus}
-									class="admin-input w-16 py-1 text-xs"
-								/>
+								<span class="text-xs text-zinc-500">%</span>
 								<button
 									type="button"
-									onclick={() => (earningStreaks = earningStreaks.filter((_, j) => j !== i))}
+									onclick={() => (thresholds = thresholds.filter((_, j) => j !== i))}
 									class="text-xs text-zinc-600 hover:text-red-400"
 									title="Remove">✕</button
 								>
 							</div>
 						{/each}
-					</div>
-
-					<button
-						type="submit"
-						disabled={savingEarningRules}
-						class="mt-3 rounded-lg bg-amber-400 px-4 py-1.5 text-xs font-bold text-zinc-950 transition-colors hover:bg-amber-300 disabled:opacity-50"
+						<button
+							type="button"
+							onclick={() => (thresholds = [...thresholds, 90])}
+							class="mb-3 text-xs text-amber-400 hover:text-amber-300"
+						>
+							+ Add threshold
+						</button>
+						<div>
+							<button
+								type="submit"
+								disabled={savingPowerupConfig}
+								class="rounded-lg bg-amber-400 px-4 py-1.5 text-xs font-bold text-zinc-950 transition-colors hover:bg-amber-300 disabled:opacity-50"
+							>
+								{savingPowerupConfig ? 'Saving…' : 'Save thresholds'}
+							</button>
+						</div>
+					</form>
+				{:else}
+					<h3 class="mb-3 text-xs font-semibold tracking-widest text-zinc-500 uppercase">
+						Token Earning Rules
+					</h3>
+					<form
+						method="POST"
+						action="?/save_powerup_config"
+						use:enhance={() => {
+							savingPowerupConfig = true;
+							return async ({ update }) => {
+								savingPowerupConfig = false;
+								await update({ reset: false });
+							};
+						}}
 					>
-						{savingEarningRules ? 'Saving…' : 'Save earning rules'}
-					</button>
-				</form>
+						<input type="hidden" name="mode" value="token_shop" />
+						<div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+							<div>
+								<label class="admin-label">Starting tokens</label>
+								<input
+									type="number"
+									name="starting_tokens"
+									min="0"
+									bind:value={earningStarting}
+									class="admin-input"
+								/>
+							</div>
+							<div>
+								<label class="admin-label">Per correct challenge</label>
+								<input
+									type="number"
+									name="per_correct_challenge"
+									min="0"
+									bind:value={earningPerCorrect}
+									class="admin-input"
+								/>
+							</div>
+							<div>
+								<label class="admin-label">Time tick (min)</label>
+								<input
+									type="number"
+									name="time_tick_minutes"
+									min="1"
+									placeholder="Off"
+									bind:value={earningTimeTick}
+									class="admin-input"
+								/>
+							</div>
+							<div>
+								<label class="admin-label">Tokens per tick</label>
+								<input
+									type="number"
+									name="tokens_per_tick"
+									min="1"
+									bind:value={earningTokensPerTick}
+									class="admin-input"
+								/>
+							</div>
+						</div>
+						<div class="mt-3">
+							<div class="mb-1 flex items-center justify-between">
+								<span class="admin-label" style="margin-bottom:0">Streak bonuses</span>
+								<button
+									type="button"
+									onclick={() => (earningStreaks = [...earningStreaks, { streak: 3, bonus: 2 }])}
+									class="text-xs text-amber-400 hover:text-amber-300"
+								>
+									+ Add row
+								</button>
+							</div>
+							{#if earningStreaks.length === 0}
+								<p class="text-xs text-zinc-600">No streak bonuses configured.</p>
+							{/if}
+							{#each earningStreaks as row, i (i)}
+								<div class="mb-1.5 flex items-center gap-2">
+									<span class="shrink-0 text-xs text-zinc-500">Streak ≥</span>
+									<input
+										type="number"
+										name="streak_streak_{i}"
+										min="1"
+										bind:value={row.streak}
+										class="admin-input w-16 py-1 text-xs"
+									/>
+									<span class="shrink-0 text-xs text-zinc-500">→ bonus</span>
+									<input
+										type="number"
+										name="streak_bonus_{i}"
+										min="0"
+										bind:value={row.bonus}
+										class="admin-input w-16 py-1 text-xs"
+									/>
+									<button
+										type="button"
+										onclick={() => (earningStreaks = earningStreaks.filter((_, j) => j !== i))}
+										class="text-xs text-zinc-600 hover:text-red-400"
+										title="Remove">✕</button
+									>
+								</div>
+							{/each}
+						</div>
+						<button
+							type="submit"
+							disabled={savingPowerupConfig}
+							class="mt-3 rounded-lg bg-amber-400 px-4 py-1.5 text-xs font-bold text-zinc-950 transition-colors hover:bg-amber-300 disabled:opacity-50"
+						>
+							{savingPowerupConfig ? 'Saving…' : 'Save earning rules'}
+						</button>
+					</form>
+				{/if}
 			</div>
 
 			<!-- Powerup grid -->
@@ -1161,33 +1268,39 @@
 									</button>
 								</form>
 
-								<!-- Cost override -->
-								<form
-									method="POST"
-									action="?/update_powerup_config"
-									use:enhance={() =>
-										async ({ update }) =>
-											update({ reset: false })}
-								>
-									<input type="hidden" name="powerup_id" value={p.id} />
-									<input type="hidden" name="field" value="cost_override" />
-									<label class="flex items-center gap-1.5">
-										<span class="text-xs text-zinc-500">Cost</span>
-										<input
-											type="number"
-											name="value"
-											min="1"
-											value={p.effective_cost}
-											onblur={(e) => {
-												const form = (e.target as HTMLInputElement).closest(
-													'form'
-												) as HTMLFormElement | null;
-												form?.requestSubmit();
-											}}
-											class="admin-input w-16 py-0.5 text-xs"
-										/>
-									</label>
-								</form>
+								<!-- Cost (token shop only) -->
+								{#if powerupMode === 'token_shop'}
+									<form
+										method="POST"
+										action="?/update_powerup_config"
+										use:enhance={() =>
+											async ({ update }) =>
+												update({ reset: false })}
+									>
+										<input type="hidden" name="powerup_id" value={p.id} />
+										<input type="hidden" name="field" value="cost_override" />
+										<label class="flex items-center gap-1.5">
+											<span class="text-xs text-zinc-500">Cost</span>
+											<input
+												type="number"
+												name="value"
+												min="1"
+												value={p.effective_cost}
+												onblur={(e) => {
+													const f = (e.target as HTMLInputElement).closest(
+														'form'
+													) as HTMLFormElement | null;
+													f?.requestSubmit();
+												}}
+												class="admin-input w-16 py-0.5 text-xs"
+											/>
+										</label>
+									</form>
+								{:else}
+									<span class="text-xs text-zinc-600" title="Cost unused in Score Thresholds mode"
+										>Cost —</span
+									>
+								{/if}
 
 								<!-- Visibility override -->
 								<form
@@ -1205,10 +1318,10 @@
 											name="value"
 											value={p.effective_visibility}
 											onchange={(e) => {
-												const form = (e.target as HTMLSelectElement).closest(
+												const f = (e.target as HTMLSelectElement).closest(
 													'form'
 												) as HTMLFormElement | null;
-												form?.requestSubmit();
+												f?.requestSubmit();
 											}}
 											class="admin-input py-0.5 text-xs"
 										>
