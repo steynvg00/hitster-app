@@ -5,6 +5,9 @@
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
 type TeamColor = 'blue' | 'yellow' | 'green' | 'red' | 'indigo' | 'black';
+type PowerupCategory = 'offensive' | 'defensive' | 'information' | 'social' | 'self';
+type PowerupVisibility = 'public' | 'target_only' | 'hidden' | 'silent';
+type PowerupTargetType = 'self' | 'team' | 'all_others' | 'none';
 type ClipType = 'snippet' | 'fragment' | 'kick' | 'vocal' | 'mashup';
 type ChallengeVariant =
 	| 'normal'
@@ -42,6 +45,7 @@ export type Database = {
 					score: number;
 					current_streak: number;
 					photo_url: string | null;
+					token_balance: number;
 					created_at: string;
 				};
 				Insert: {
@@ -52,6 +56,7 @@ export type Database = {
 					score?: number;
 					current_streak?: number;
 					photo_url?: string | null;
+					token_balance?: number;
 					created_at?: string;
 				};
 				Update: {
@@ -62,6 +67,7 @@ export type Database = {
 					score?: number;
 					current_streak?: number;
 					photo_url?: string | null;
+					token_balance?: number;
 					created_at?: string;
 				};
 				Relationships: [];
@@ -348,6 +354,8 @@ export type Database = {
 					nfc_lock_enabled: boolean;
 					randomizer_enabled: boolean;
 					last_results: Json | null;
+					powerups_enabled: boolean;
+					token_earning_config: Json;
 					created_by: string | null;
 					created_at: string;
 				};
@@ -371,6 +379,8 @@ export type Database = {
 					nfc_lock_enabled?: boolean;
 					randomizer_enabled?: boolean;
 					last_results?: Json | null;
+					powerups_enabled?: boolean;
+					token_earning_config?: Json;
 					created_by?: string | null;
 					created_at?: string;
 				};
@@ -394,6 +404,8 @@ export type Database = {
 					nfc_lock_enabled?: boolean;
 					randomizer_enabled?: boolean;
 					last_results?: Json | null;
+					powerups_enabled?: boolean;
+					token_earning_config?: Json;
 					created_by?: string | null;
 					created_at?: string;
 				};
@@ -639,6 +651,126 @@ export type Database = {
 				};
 				Relationships: [];
 			};
+			powerups: {
+				Row: {
+					id: string;
+					slug: string;
+					name: string;
+					description: string;
+					category: PowerupCategory;
+					default_cost: number;
+					default_visibility: PowerupVisibility;
+					target_type: PowerupTargetType;
+					effect_payload: Json;
+					sort_order: number;
+					created_at: string;
+				};
+				Insert: {
+					id?: string;
+					slug: string;
+					name: string;
+					description: string;
+					category: PowerupCategory;
+					default_cost?: number;
+					default_visibility?: PowerupVisibility;
+					target_type: PowerupTargetType;
+					effect_payload?: Json;
+					sort_order?: number;
+					created_at?: string;
+				};
+				Update: {
+					id?: string;
+					slug?: string;
+					name?: string;
+					description?: string;
+					category?: PowerupCategory;
+					default_cost?: number;
+					default_visibility?: PowerupVisibility;
+					target_type?: PowerupTargetType;
+					effect_payload?: Json;
+					sort_order?: number;
+					created_at?: string;
+				};
+				Relationships: [];
+			};
+			set_powerups: {
+				Row: {
+					id: string;
+					set_id: string;
+					powerup_id: string;
+					enabled: boolean;
+					cost_override: number | null;
+					visibility_override: PowerupVisibility | null;
+					effect_payload_override: Json;
+					created_at: string;
+				};
+				Insert: {
+					id?: string;
+					set_id: string;
+					powerup_id: string;
+					enabled?: boolean;
+					cost_override?: number | null;
+					visibility_override?: PowerupVisibility | null;
+					effect_payload_override?: Json;
+					created_at?: string;
+				};
+				Update: {
+					id?: string;
+					set_id?: string;
+					powerup_id?: string;
+					enabled?: boolean;
+					cost_override?: number | null;
+					visibility_override?: PowerupVisibility | null;
+					effect_payload_override?: Json;
+					created_at?: string;
+				};
+				Relationships: [];
+			};
+			powerup_usages: {
+				Row: {
+					id: string;
+					set_id: string;
+					powerup_id: string;
+					attacker_team_id: string;
+					target_team_id: string | null;
+					challenge_id: string | null;
+					cost_paid: number;
+					used_at: string;
+					effect_payload: Json;
+					effect_ends_at: string | null;
+					effect_resolved: boolean;
+					visibility: string;
+				};
+				Insert: {
+					id?: string;
+					set_id: string;
+					powerup_id: string;
+					attacker_team_id: string;
+					target_team_id?: string | null;
+					challenge_id?: string | null;
+					cost_paid: number;
+					used_at?: string;
+					effect_payload?: Json;
+					effect_ends_at?: string | null;
+					effect_resolved?: boolean;
+					visibility: string;
+				};
+				Update: {
+					id?: string;
+					set_id?: string;
+					powerup_id?: string;
+					attacker_team_id?: string;
+					target_team_id?: string | null;
+					challenge_id?: string | null;
+					cost_paid?: number;
+					used_at?: string;
+					effect_payload?: Json;
+					effect_ends_at?: string | null;
+					effect_resolved?: boolean;
+					visibility?: string;
+				};
+				Relationships: [];
+			};
 		};
 		Views: { [_ in never]: never };
 		Functions: { [_ in never]: never };
@@ -669,3 +801,6 @@ export type AnswerPoolLabelRow = Database['public']['Tables']['answer_pool_label
 export type AnswerPoolFestivalRow = Database['public']['Tables']['answer_pool_festivals']['Row'];
 export type AnswerPoolVocalSourceRow =
 	Database['public']['Tables']['answer_pool_vocal_sources']['Row'];
+export type PowerupRow = Database['public']['Tables']['powerups']['Row'];
+export type SetPowerupRow = Database['public']['Tables']['set_powerups']['Row'];
+export type PowerupUsageRow = Database['public']['Tables']['powerup_usages']['Row'];

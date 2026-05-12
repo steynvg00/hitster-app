@@ -2,22 +2,31 @@ import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
 import { generateAssignmentSlots, TEAM_COLOR_ORDER } from '$lib/server/randomize';
+import type { PowerupConfig, PowerupVisibility, TokenEarningConfig } from '$lib/types';
 
 export const load: PageServerLoad = async ({ params }) => {
 	const db = createAdminClient();
 	const { id } = params;
 
-	const [{ data: gameSet }, { data: setChallengesRaw }, { data: allChallenges }, { data: cards }] =
-		await Promise.all([
-			db.from('game_sets').select('*').eq('id', id).maybeSingle(),
-			db
-				.from('set_challenges')
-				.select('id, challenge_id, position, challenge_multiplier')
-				.eq('set_id', id)
-				.order('position'),
-			db.from('challenges').select('id, title, variant, is_active').order('title'),
-			db.from('nfc_tags').select('id, slug, set_id').eq('purpose', 'randomizer').eq('set_id', id)
-		]);
+	const [
+		{ data: gameSet },
+		{ data: setChallengesRaw },
+		{ data: allChallenges },
+		{ data: cards },
+		{ data: powerupsRaw },
+		{ data: setPowerupsRaw }
+	] = await Promise.all([
+		db.from('game_sets').select('*').eq('id', id).maybeSingle(),
+		db
+			.from('set_challenges')
+			.select('id, challenge_id, position, challenge_multiplier')
+			.eq('set_id', id)
+			.order('position'),
+		db.from('challenges').select('id, title, variant, is_active').order('title'),
+		db.from('nfc_tags').select('id, slug, set_id').eq('purpose', 'randomizer').eq('set_id', id),
+		db.from('powerups').select('*').order('sort_order'),
+		db.from('set_powerups').select('*').eq('set_id', id)
+	]);
 
 	if (!gameSet) redirect(302, '/admin/sets');
 
@@ -74,6 +83,36 @@ export const load: PageServerLoad = async ({ params }) => {
 		slug: t.slug
 	}));
 
+	// Merge powerups with set_powerups overrides into a unified config list
+	const setPowerupMap = new Map((setPowerupsRaw ?? []).map((sp) => [sp.powerup_id, sp]));
+	const powerupConfigs: PowerupConfig[] = (powerupsRaw ?? []).map((p) => {
+		const sp = setPowerupMap.get(p.id);
+		return {
+			...p,
+			effect_payload: p.effect_payload as Record<string, unknown>,
+			set_powerup_id: sp?.id ?? null,
+			effective_enabled: sp?.enabled ?? true,
+			effective_cost: sp?.cost_override ?? p.default_cost,
+			effective_visibility: sp?.visibility_override ?? p.default_visibility,
+			has_override: !!sp
+		};
+	});
+
+	const rawConfig = gameSet.token_earning_config;
+	const tokenEarningConfig: TokenEarningConfig =
+		rawConfig && typeof rawConfig === 'object' && !Array.isArray(rawConfig)
+			? (rawConfig as unknown as TokenEarningConfig)
+			: {
+					starting_tokens: 0,
+					per_correct_challenge: 1,
+					streak_bonuses: [
+						{ streak: 3, bonus: 2 },
+						{ streak: 5, bonus: 5 }
+					],
+					time_tick_minutes: null,
+					tokens_per_tick: 1
+				};
+
 	return {
 		gameSet,
 		setChallenges,
@@ -83,7 +122,9 @@ export const load: PageServerLoad = async ({ params }) => {
 		playerIds,
 		recentPlayers,
 		teamProgress,
-		challengeUnlockTags
+		challengeUnlockTags,
+		powerupConfigs,
+		tokenEarningConfig
 	};
 };
 
@@ -395,6 +436,101 @@ export const actions: Actions = {
 			.eq('id', setId);
 
 		if (error) return fail(500, { error: 'Could not reset game' });
+		return { success: true };
+	},
+
+	toggle_powerups_enabled: async ({ params }) => {
+		const db = createAdminClient();
+		const { data: gs } = await db
+			.from('game_sets')
+			.select('powerups_enabled')
+			.eq('id', params.id)
+			.maybeSingle();
+		if (!gs) return fail(404, { error: 'Set not found' });
+		await db
+			.from('game_sets')
+			.update({ powerups_enabled: !gs.powerups_enabled })
+			.eq('id', params.id);
+		return { success: true };
+	},
+
+	save_earning_rules: async ({ request, params }) => {
+		const db = createAdminClient();
+		const fd = await request.formData();
+
+		const startingTokens = parseInt((fd.get('starting_tokens') as string) ?? '0') || 0;
+		const perCorrect = parseInt((fd.get('per_correct_challenge') as string) ?? '1') || 0;
+		const timeTick = (fd.get('time_tick_minutes') as string | null)?.trim();
+		const timeTickMinutes = timeTick ? parseInt(timeTick) || null : null;
+		const tokensPerTick = parseInt((fd.get('tokens_per_tick') as string) ?? '1') || 1;
+
+		if (startingTokens < 0) return fail(400, { error: 'Starting tokens must be ≥ 0' });
+		if (perCorrect < 0) return fail(400, { error: 'Per-challenge bonus must be ≥ 0' });
+		if (timeTickMinutes !== null && timeTickMinutes < 1)
+			return fail(400, { error: 'Time tick must be a positive number of minutes' });
+
+		// Parse streak_bonuses rows from form (streak_streak_N / streak_bonus_N pairs)
+		const streakBonuses: Array<{ streak: number; bonus: number }> = [];
+		let i = 0;
+		while (fd.has(`streak_streak_${i}`)) {
+			const streak = parseInt((fd.get(`streak_streak_${i}`) as string) ?? '');
+			const bonus = parseInt((fd.get(`streak_bonus_${i}`) as string) ?? '');
+			if (!isNaN(streak) && streak >= 1 && !isNaN(bonus) && bonus >= 0) {
+				streakBonuses.push({ streak, bonus });
+			}
+			i++;
+		}
+
+		const config: TokenEarningConfig = {
+			starting_tokens: startingTokens,
+			per_correct_challenge: perCorrect,
+			streak_bonuses: streakBonuses,
+			time_tick_minutes: timeTickMinutes,
+			tokens_per_tick: tokensPerTick
+		};
+
+		const { error } = await db
+			.from('game_sets')
+			.update({ token_earning_config: config as never })
+			.eq('id', params.id);
+		if (error) return fail(500, { error: 'Could not save earning rules' });
+		return { success: true };
+	},
+
+	update_powerup_config: async ({ request, params }) => {
+		const db = createAdminClient();
+		const fd = await request.formData();
+		const powerupId = (fd.get('powerup_id') as string | null)?.trim();
+		const field = fd.get('field') as 'enabled' | 'cost_override' | 'visibility_override' | null;
+		if (!powerupId || !field) return fail(400, { error: 'Missing powerup_id or field' });
+
+		type UpsertData = {
+			set_id: string;
+			powerup_id: string;
+			enabled?: boolean;
+			cost_override?: number | null;
+			visibility_override?: PowerupVisibility | null;
+		};
+		const upsertData: UpsertData = { set_id: params.id, powerup_id: powerupId };
+
+		const VALID_VISIBILITIES: PowerupVisibility[] = ['public', 'target_only', 'hidden', 'silent'];
+
+		if (field === 'enabled') {
+			upsertData.enabled = fd.get('value') === 'true';
+		} else if (field === 'cost_override') {
+			const v = (fd.get('value') as string | null)?.trim();
+			upsertData.cost_override = v ? parseInt(v) || null : null;
+		} else if (field === 'visibility_override') {
+			const v = (fd.get('value') as string | null)?.trim() as PowerupVisibility | '' | null;
+			upsertData.visibility_override = v && VALID_VISIBILITIES.includes(v) ? v : null;
+		} else {
+			return fail(400, { error: 'Unknown field' });
+		}
+
+		const { error } = await db
+			.from('set_powerups')
+			.upsert(upsertData, { onConflict: 'set_id,powerup_id' });
+		if (error) return fail(500, { error: 'Could not save powerup config' });
 		return { success: true };
 	},
 

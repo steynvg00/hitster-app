@@ -165,7 +165,7 @@ export interface TrackFieldResult {
 
 // Challenge result returned by submit action + stored as priorResult in load()
 export interface ChallengeResult {
-	total: number;        // base field-score sum
+	total: number; // base field-score sum
 	maxTotal: number;
 	tracks: TrackFieldResult[]; // one entry per challenge_track
 	status: SubmissionStatus;
@@ -213,4 +213,50 @@ export interface SetChallenge {
 	set_id: string;
 	challenge_id: string;
 	position: number;
+}
+
+// ─── Powerups ─────────────────────────────────────────────────────────────────
+
+export type PowerupCategory = 'offensive' | 'defensive' | 'information' | 'social' | 'self';
+export type PowerupVisibility = 'public' | 'target_only' | 'hidden' | 'silent';
+export type PowerupTargetType = 'self' | 'team' | 'all_others' | 'none';
+
+export interface Powerup {
+	id: string;
+	slug: string;
+	name: string;
+	description: string;
+	category: PowerupCategory;
+	default_cost: number;
+	default_visibility: PowerupVisibility;
+	target_type: PowerupTargetType;
+	effect_payload: Record<string, unknown>;
+	sort_order: number;
+}
+
+export interface SetPowerup {
+	id: string;
+	set_id: string;
+	powerup_id: string;
+	enabled: boolean;
+	cost_override: number | null;
+	visibility_override: PowerupVisibility | null;
+	effect_payload_override: Record<string, unknown>;
+}
+
+// Merged view: powerup defaults overlaid with any per-set override
+export interface PowerupConfig extends Powerup {
+	set_powerup_id: string | null;
+	effective_enabled: boolean;
+	effective_cost: number;
+	effective_visibility: PowerupVisibility;
+	has_override: boolean;
+}
+
+export interface TokenEarningConfig {
+	starting_tokens: number;
+	per_correct_challenge: number;
+	streak_bonuses: Array<{ streak: number; bonus: number }>;
+	time_tick_minutes: number | null;
+	tokens_per_tick: number;
 }

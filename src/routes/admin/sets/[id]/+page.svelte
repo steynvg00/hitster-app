@@ -3,6 +3,7 @@
 	import { onMount } from 'svelte';
 	import { supabaseBrowser } from '$lib/supabase-browser';
 	import type { PageData, ActionData } from './$types';
+	import type { PowerupVisibility } from '$lib/types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -270,6 +271,29 @@
 	function triggerAutoSave() {
 		autoSaveForm?.requestSubmit();
 	}
+
+	// ── Powerups section ─────────────────────────────────────────────────────
+	let powerupsEnabled = $state(data.gameSet.powerups_enabled ?? false);
+	let savingEarningRules = $state(false);
+
+	// Token earning rules form state — initialised from server data
+	let earningStarting = $state(data.tokenEarningConfig.starting_tokens);
+	let earningPerCorrect = $state(data.tokenEarningConfig.per_correct_challenge);
+	let earningStreaks = $state<Array<{ streak: number; bonus: number }>>(
+		data.tokenEarningConfig.streak_bonuses.map((s) => ({ ...s }))
+	);
+	let earningTimeTick = $state<number | ''>(data.tokenEarningConfig.time_tick_minutes ?? '');
+	let earningTokensPerTick = $state(data.tokenEarningConfig.tokens_per_tick);
+
+	const VISIBILITY_OPTIONS: PowerupVisibility[] = ['public', 'target_only', 'hidden', 'silent'];
+
+	const CATEGORY_COLORS: Record<string, string> = {
+		offensive: 'bg-red-900/60 text-red-300',
+		defensive: 'bg-blue-900/60 text-blue-300',
+		information: 'bg-purple-900/60 text-purple-300',
+		social: 'bg-green-900/60 text-green-300',
+		self: 'bg-zinc-700 text-zinc-300'
+	};
 
 	// ── NFC URL copy ──────────────────────────────────────────────────────────
 	let copiedSlug = $state<string | null>(null);
@@ -935,6 +959,269 @@
 						{savingChallenges ? 'Saving…' : 'Save Challenge Order'}
 					</button>
 				</form>
+			</div>
+		{/if}
+	</section>
+
+	<!-- ── Powerups ─────────────────────────────────────────────────────────── -->
+	<section class="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
+		<!-- Header with master toggle -->
+		<div class="flex items-center justify-between">
+			<div>
+				<h2 class="text-sm font-bold tracking-widest text-zinc-400 uppercase">Powerups</h2>
+				<p class="mt-0.5 text-xs text-zinc-600">
+					Configure powerup availability and token earning for this set
+				</p>
+			</div>
+			<form
+				method="POST"
+				action="?/toggle_powerups_enabled"
+				use:enhance={({ cancel }) => {
+					powerupsEnabled = !powerupsEnabled;
+					return async ({ update }) => {
+						await update({ reset: false });
+					};
+				}}
+			>
+				<button
+					type="submit"
+					class="flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors
+						{powerupsEnabled
+						? 'border-amber-500 bg-amber-500/10 text-amber-400'
+						: 'border-zinc-700 text-zinc-500 hover:border-zinc-500 hover:text-zinc-300'}"
+				>
+					<span class="h-2 w-2 rounded-full {powerupsEnabled ? 'bg-amber-400' : 'bg-zinc-600'}"
+					></span>
+					{powerupsEnabled ? 'Enabled' : 'Disabled'}
+				</button>
+			</form>
+		</div>
+
+		{#if powerupsEnabled}
+			<!-- Token earning rules -->
+			<div class="mt-5 rounded-lg border border-zinc-700 bg-zinc-800/50 p-4">
+				<h3 class="mb-3 text-xs font-semibold tracking-widest text-zinc-500 uppercase">
+					Token Earning Rules
+				</h3>
+				<form
+					method="POST"
+					action="?/save_earning_rules"
+					use:enhance={() => {
+						savingEarningRules = true;
+						return async ({ update }) => {
+							savingEarningRules = false;
+							await update({ reset: false });
+						};
+					}}
+				>
+					<div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+						<div>
+							<label class="admin-label">Starting tokens</label>
+							<input
+								type="number"
+								name="starting_tokens"
+								min="0"
+								bind:value={earningStarting}
+								class="admin-input"
+							/>
+						</div>
+						<div>
+							<label class="admin-label">Per correct challenge</label>
+							<input
+								type="number"
+								name="per_correct_challenge"
+								min="0"
+								bind:value={earningPerCorrect}
+								class="admin-input"
+							/>
+						</div>
+						<div>
+							<label class="admin-label">Time tick (min)</label>
+							<input
+								type="number"
+								name="time_tick_minutes"
+								min="1"
+								placeholder="Off"
+								bind:value={earningTimeTick}
+								class="admin-input"
+							/>
+						</div>
+						<div>
+							<label class="admin-label">Tokens per tick</label>
+							<input
+								type="number"
+								name="tokens_per_tick"
+								min="1"
+								bind:value={earningTokensPerTick}
+								class="admin-input"
+							/>
+						</div>
+					</div>
+
+					<!-- Streak bonuses -->
+					<div class="mt-3">
+						<div class="mb-1 flex items-center justify-between">
+							<span class="admin-label" style="margin-bottom:0">Streak bonuses</span>
+							<button
+								type="button"
+								onclick={() => (earningStreaks = [...earningStreaks, { streak: 3, bonus: 2 }])}
+								class="text-xs text-amber-400 hover:text-amber-300"
+							>
+								+ Add row
+							</button>
+						</div>
+						{#if earningStreaks.length === 0}
+							<p class="text-xs text-zinc-600">No streak bonuses configured.</p>
+						{/if}
+						{#each earningStreaks as row, i (i)}
+							<div class="mb-1.5 flex items-center gap-2">
+								<span class="shrink-0 text-xs text-zinc-500">Streak ≥</span>
+								<input
+									type="number"
+									name="streak_streak_{i}"
+									min="1"
+									bind:value={row.streak}
+									class="admin-input w-16 py-1 text-xs"
+								/>
+								<span class="shrink-0 text-xs text-zinc-500">→ bonus</span>
+								<input
+									type="number"
+									name="streak_bonus_{i}"
+									min="0"
+									bind:value={row.bonus}
+									class="admin-input w-16 py-1 text-xs"
+								/>
+								<button
+									type="button"
+									onclick={() => (earningStreaks = earningStreaks.filter((_, j) => j !== i))}
+									class="text-xs text-zinc-600 hover:text-red-400"
+									title="Remove">✕</button
+								>
+							</div>
+						{/each}
+					</div>
+
+					<button
+						type="submit"
+						disabled={savingEarningRules}
+						class="mt-3 rounded-lg bg-amber-400 px-4 py-1.5 text-xs font-bold text-zinc-950 transition-colors hover:bg-amber-300 disabled:opacity-50"
+					>
+						{savingEarningRules ? 'Saving…' : 'Save earning rules'}
+					</button>
+				</form>
+			</div>
+
+			<!-- Powerup grid -->
+			<div class="mt-4">
+				<h3 class="mb-2 text-xs font-semibold tracking-widest text-zinc-500 uppercase">
+					Powerup Config
+				</h3>
+				<div class="space-y-2">
+					{#each data.powerupConfigs as p (p.id)}
+						<div
+							class="rounded-lg border px-4 py-3 transition-colors
+								{p.effective_enabled ? 'border-zinc-700 bg-zinc-800/50' : 'border-zinc-800 bg-zinc-900 opacity-60'}"
+						>
+							<div class="flex flex-wrap items-center gap-3">
+								<!-- Name + badge -->
+								<div class="min-w-0 flex-1">
+									<div class="flex items-center gap-2">
+										<span class="text-sm font-semibold text-zinc-200">{p.name}</span>
+										<span
+											class="rounded px-1.5 py-0.5 text-xs font-medium {CATEGORY_COLORS[
+												p.category
+											] ?? 'bg-zinc-700 text-zinc-400'}">{p.category}</span
+										>
+										{#if p.has_override}
+											<span class="text-xs text-amber-400">edited</span>
+										{/if}
+									</div>
+									<p class="mt-0.5 text-xs text-zinc-500">{p.description}</p>
+								</div>
+
+								<!-- Enabled toggle -->
+								<form
+									method="POST"
+									action="?/update_powerup_config"
+									use:enhance={() =>
+										async ({ update }) =>
+											update({ reset: false })}
+								>
+									<input type="hidden" name="powerup_id" value={p.id} />
+									<input type="hidden" name="field" value="enabled" />
+									<input type="hidden" name="value" value={String(!p.effective_enabled)} />
+									<button
+										type="submit"
+										class="flex items-center gap-1.5 rounded border px-2 py-1 text-xs font-medium transition-colors
+											{p.effective_enabled
+											? 'border-green-800 bg-green-950/40 text-green-400 hover:border-green-700'
+											: 'border-zinc-700 text-zinc-500 hover:border-zinc-500 hover:text-zinc-300'}"
+									>
+										{p.effective_enabled ? 'On' : 'Off'}
+									</button>
+								</form>
+
+								<!-- Cost override -->
+								<form
+									method="POST"
+									action="?/update_powerup_config"
+									use:enhance={() =>
+										async ({ update }) =>
+											update({ reset: false })}
+								>
+									<input type="hidden" name="powerup_id" value={p.id} />
+									<input type="hidden" name="field" value="cost_override" />
+									<label class="flex items-center gap-1.5">
+										<span class="text-xs text-zinc-500">Cost</span>
+										<input
+											type="number"
+											name="value"
+											min="1"
+											value={p.effective_cost}
+											onblur={(e) => {
+												const form = (e.target as HTMLInputElement).closest(
+													'form'
+												) as HTMLFormElement | null;
+												form?.requestSubmit();
+											}}
+											class="admin-input w-16 py-0.5 text-xs"
+										/>
+									</label>
+								</form>
+
+								<!-- Visibility override -->
+								<form
+									method="POST"
+									action="?/update_powerup_config"
+									use:enhance={() =>
+										async ({ update }) =>
+											update({ reset: false })}
+								>
+									<input type="hidden" name="powerup_id" value={p.id} />
+									<input type="hidden" name="field" value="visibility_override" />
+									<label class="flex items-center gap-1.5">
+										<span class="text-xs text-zinc-500">Visibility</span>
+										<select
+											name="value"
+											value={p.effective_visibility}
+											onchange={(e) => {
+												const form = (e.target as HTMLSelectElement).closest(
+													'form'
+												) as HTMLFormElement | null;
+												form?.requestSubmit();
+											}}
+											class="admin-input py-0.5 text-xs"
+										>
+											{#each VISIBILITY_OPTIONS as v}
+												<option value={v}>{v}</option>
+											{/each}
+										</select>
+									</label>
+								</form>
+							</div>
+						</div>
+					{/each}
+				</div>
 			</div>
 		{/if}
 	</section>
