@@ -647,5 +647,79 @@ export const actions: Actions = {
 		if (locals.user?.id) q = q.eq('created_by', locals.user.id);
 		await q;
 		return { success: true };
+	},
+
+	duplicateSet: async ({ params, locals }) => {
+		const db = createAdminClient();
+
+		const { data: source } = await db.from('game_sets').select('*').eq('id', params.id).single();
+		if (!source) return fail(404, { error: 'Set not found' });
+
+		const { data: newSet, error } = await db
+			.from('game_sets')
+			.insert({
+				name: `${source.name} (copy)`,
+				description: source.description,
+				team_count: source.team_count,
+				total_timer_seconds: source.total_timer_seconds,
+				expected_player_count: source.expected_player_count,
+				preset_slug: source.preset_slug,
+				powerups_enabled: source.powerups_enabled,
+				powerup_mode: source.powerup_mode,
+				powerup_config: source.powerup_config as never,
+				nfc_lock_enabled: source.nfc_lock_enabled,
+				randomizer_enabled: source.randomizer_enabled,
+				status: 'inactive',
+				play_state: 'joining',
+				started_at: null,
+				ended_at: null,
+				recap_state: 'pending',
+				recap_ranking: [] as never,
+				recap_reveal_index: 0,
+				scores_hidden: false,
+				assignment_slots: [] as never,
+				assignment_index: 0,
+				last_results: null,
+				created_by: locals.user?.id ?? null
+			})
+			.select('id')
+			.single();
+
+		if (error || !newSet) return fail(500, { error: error?.message ?? 'Could not duplicate set' });
+
+		const { data: sourceChallenges } = await db
+			.from('set_challenges')
+			.select('challenge_id, position, challenge_multiplier')
+			.eq('set_id', params.id);
+		if (sourceChallenges?.length) {
+			await db.from('set_challenges').insert(
+				sourceChallenges.map((c) => ({
+					set_id: newSet.id,
+					challenge_id: c.challenge_id,
+					position: c.position,
+					challenge_multiplier: c.challenge_multiplier,
+					created_by: locals.user?.id ?? null
+				}))
+			);
+		}
+
+		const { data: sourcePowerups } = await db
+			.from('set_powerups')
+			.select('powerup_id, enabled, cost_override, visibility_override, effect_payload_override')
+			.eq('set_id', params.id);
+		if (sourcePowerups?.length) {
+			await db.from('set_powerups').insert(
+				sourcePowerups.map((p) => ({
+					set_id: newSet.id,
+					powerup_id: p.powerup_id,
+					enabled: p.enabled,
+					cost_override: p.cost_override,
+					visibility_override: p.visibility_override,
+					effect_payload_override: p.effect_payload_override as never
+				}))
+			);
+		}
+
+		redirect(303, `/admin/sets/${newSet.id}`);
 	}
 };

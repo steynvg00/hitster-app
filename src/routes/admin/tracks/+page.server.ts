@@ -2,17 +2,70 @@ import { fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
 
-export const load: PageServerLoad = async () => {
+export const load: PageServerLoad = async ({ url }) => {
 	const db = createAdminClient();
 
+	const q = url.searchParams.get('q') ?? '';
+	const genreFilter = url.searchParams.get('genre') ?? '';
+	const hasClips = url.searchParams.get('has_clips') ?? 'all';
+	const sort = url.searchParams.get('sort') ?? 'name_asc';
+
 	const [tracksResult, clipsResult] = await Promise.all([
-		db.from('tracks').select('*').order('artist'),
+		db.from('tracks').select('*'),
 		db.from('clips').select('*').order('track_id, created_at')
 	]);
 
+	let tracks = tracksResult.data ?? [];
+	const clips = clipsResult.data ?? [];
+
+	const tracksWithClips = new Set(clips.map((c) => c.track_id));
+	const allGenres = [
+		...new Set(
+			tracks.map((t) => t.genre).filter((g): g is string => typeof g === 'string' && g.length > 0)
+		)
+	].sort();
+
+	if (q) {
+		const lower = q.toLowerCase();
+		tracks = tracks.filter(
+			(t) =>
+				t.artist.toLowerCase().includes(lower) ||
+				t.title.toLowerCase().includes(lower) ||
+				(t.genre ?? '').toLowerCase().includes(lower)
+		);
+	}
+	if (genreFilter) {
+		tracks = tracks.filter((t) => t.genre === genreFilter);
+	}
+	if (hasClips === 'yes') {
+		tracks = tracks.filter((t) => tracksWithClips.has(t.id));
+	} else if (hasClips === 'no') {
+		tracks = tracks.filter((t) => !tracksWithClips.has(t.id));
+	}
+
+	tracks = [...tracks].sort((a, b) => {
+		switch (sort) {
+			case 'name_desc':
+				return b.artist.localeCompare(a.artist);
+			case 'created_desc':
+				return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+			case 'created_asc':
+				return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+			case 'genre_asc':
+				return (a.genre ?? '').localeCompare(b.genre ?? '');
+			default:
+				return a.artist.localeCompare(b.artist);
+		}
+	});
+
 	return {
-		tracks: tracksResult.data ?? [],
-		clips: clipsResult.data ?? [],
+		tracks,
+		clips,
+		allGenres,
+		q,
+		genreFilter,
+		hasClips,
+		sort,
 		tracksError: tracksResult.error?.message ?? null,
 		clipsError: clipsResult.error?.message ?? null
 	};
@@ -36,10 +89,21 @@ export const actions: Actions = {
 			return fail(400, { error: 'Artist, title, and year are required' });
 		}
 
-		const { data: inserted, error } = await db.from('tracks').insert({
-			artist, title, year, record_label, festival, vocal_source, genre, subgenre,
-			created_by: locals.user?.id ?? null
-		}).select('id').single();
+		const { data: inserted, error } = await db
+			.from('tracks')
+			.insert({
+				artist,
+				title,
+				year,
+				record_label,
+				festival,
+				vocal_source,
+				genre,
+				subgenre,
+				created_by: locals.user?.id ?? null
+			})
+			.select('id')
+			.single();
 		if (error) return fail(500, { error: error.message });
 		return { success: true, id: inserted.id };
 	},
@@ -62,9 +126,19 @@ export const actions: Actions = {
 			return fail(400, { error: 'Artist, title, and year are required' });
 		}
 
-		const { error } = await db.from('tracks').update({
-			artist, title, year, record_label, festival, vocal_source, genre, subgenre
-		}).eq('id', id);
+		const { error } = await db
+			.from('tracks')
+			.update({
+				artist,
+				title,
+				year,
+				record_label,
+				festival,
+				vocal_source,
+				genre,
+				subgenre
+			})
+			.eq('id', id);
 		if (error) return fail(500, { error: error.message });
 		return { success: true };
 	},
@@ -77,7 +151,10 @@ export const actions: Actions = {
 
 		if (!id) return fail(400, { error: 'Missing track id' });
 
-		const accepted_titles = raw.split('\n').map((s) => s.trim()).filter(Boolean);
+		const accepted_titles = raw
+			.split('\n')
+			.map((s) => s.trim())
+			.filter(Boolean);
 		if (accepted_titles.length === 0) return fail(400, { error: 'At least one title is required' });
 
 		const { error } = await db.from('tracks').update({ accepted_titles }).eq('id', id);
@@ -91,11 +168,7 @@ export const actions: Actions = {
 		const id = data.get('id') as string;
 		if (!id) return fail(400, { error: 'Missing track id' });
 
-		// Remove any storage-hosted clips for this track
-		const { data: clips } = await db
-			.from('clips')
-			.select('storage_object_path')
-			.eq('track_id', id);
+		const { data: clips } = await db.from('clips').select('storage_object_path').eq('track_id', id);
 		const paths = (clips ?? [])
 			.map((c) => c.storage_object_path)
 			.filter((p): p is string => typeof p === 'string' && p.length > 0);
@@ -140,7 +213,8 @@ export const actions: Actions = {
 		const tempo = parseFloat(data.get('tempo') as string);
 
 		if (!id) return fail(400, { error: 'Missing clip id' });
-		if (isNaN(pitch) || pitch < -12 || pitch > 12) return fail(400, { error: 'Pitch out of range' });
+		if (isNaN(pitch) || pitch < -12 || pitch > 12)
+			return fail(400, { error: 'Pitch out of range' });
 		if (isNaN(tempo) || tempo < 0.5 || tempo > 2) return fail(400, { error: 'Tempo out of range' });
 
 		const effects: { pitch?: number; tempo?: number } = {};
@@ -158,7 +232,6 @@ export const actions: Actions = {
 		const id = data.get('id') as string;
 		if (!id) return fail(400, { error: 'Missing clip id' });
 
-		// Remove from storage if it was uploaded via the new upload path
 		const { data: clip } = await db
 			.from('clips')
 			.select('storage_object_path')

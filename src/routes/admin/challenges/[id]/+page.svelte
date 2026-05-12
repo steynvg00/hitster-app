@@ -1,41 +1,58 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import type { PageData, ActionData } from './$types';
+	import { getVariantIcon, getVariantColor } from '$lib/variants';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
-	const VARIANTS = ['normal','label','anthem','vocal','fragments','kick','mashup','battle'] as const;
+	const VARIANTS = [
+		'normal',
+		'label',
+		'anthem',
+		'vocal',
+		'fragments',
+		'kick',
+		'mashup',
+		'battle'
+	] as const;
 	const STATUS_OPTIONS = ['draft', 'active', 'completed'] as const;
-	const INPUT_MODES = ['combobox', 'multiple_choice', 'open_text', 'slider', 'typeable_number'] as const;
+	const INPUT_MODES = [
+		'combobox',
+		'multiple_choice',
+		'open_text',
+		'slider',
+		'typeable_number'
+	] as const;
 
 	type ChallengeTrack = (typeof data.challengeTracks)[number];
 
 	// Fields relevant per variant
 	const VARIANT_FIELDS: Record<string, string[]> = {
-		normal:    ['artist', 'title', 'year'],
-		label:     ['label', 'artist', 'title', 'year'],
-		anthem:    ['festival', 'artist', 'title', 'year'],
-		vocal:     ['vocal_source', 'artist', 'year'],
+		normal: ['artist', 'title', 'year'],
+		label: ['label', 'artist', 'title', 'year'],
+		anthem: ['festival', 'artist', 'title', 'year'],
+		vocal: ['vocal_source', 'artist', 'year'],
 		fragments: ['title', 'artist'],
-		kick:      ['artist'],
-		mashup:    ['artist', 'title'],
-		battle:    ['artist', 'title', 'year']
+		kick: ['artist'],
+		mashup: ['artist', 'title'],
+		battle: ['artist', 'title', 'year']
 	};
 
 	// Default input modes per variant (must stay in sync with +page.server.ts)
 	const DEFAULT_MODES: Record<string, Record<string, string>> = {
-		normal:    { artist: 'combobox', title: 'open_text', year: 'slider' },
-		label:     { label: 'combobox', artist: 'combobox', title: 'open_text', year: 'slider' },
-		anthem:    { festival: 'combobox', artist: 'combobox', title: 'open_text', year: 'slider' },
-		vocal:     { vocal_source: 'combobox', artist: 'combobox', year: 'slider' },
+		normal: { artist: 'combobox', title: 'open_text', year: 'slider' },
+		label: { label: 'combobox', artist: 'combobox', title: 'open_text', year: 'slider' },
+		anthem: { festival: 'combobox', artist: 'combobox', title: 'open_text', year: 'slider' },
+		vocal: { vocal_source: 'combobox', artist: 'combobox', year: 'slider' },
 		fragments: { title: 'open_text', artist: 'combobox' },
-		kick:      { artist: 'multiple_choice' },
-		mashup:    { artist: 'combobox', title: 'open_text' },
-		battle:    { artist: 'combobox', title: 'open_text', year: 'slider' }
+		kick: { artist: 'multiple_choice' },
+		mashup: { artist: 'combobox', title: 'open_text' },
+		battle: { artist: 'combobox', title: 'open_text', year: 'slider' }
 	};
 
 	function currentMode(field: string): string {
-		const savedModes = ((data.challenge.points_config ?? {}) as Record<string, unknown>).field_modes as Record<string, string> | undefined;
+		const savedModes = ((data.challenge.points_config ?? {}) as Record<string, unknown>)
+			.field_modes as Record<string, string> | undefined;
 		return savedModes?.[field] ?? DEFAULT_MODES[data.challenge.variant]?.[field] ?? 'open_text';
 	}
 
@@ -58,9 +75,7 @@
 	let selectedClipId = $state('');
 	// Only offer clips that aren't already attached to this challenge
 	const clipsForSelected = $derived(
-		selectedTrackId
-			? clipsFor(selectedTrackId).filter((c) => !usedClipIds.has(c.id))
-			: []
+		selectedTrackId ? clipsFor(selectedTrackId).filter((c) => !usedClipIds.has(c.id)) : []
 	);
 
 	$effect(() => {
@@ -69,7 +84,9 @@
 	});
 
 	// Difficulty star state
-	let difficulty = $state((data.challenge as unknown as { difficulty_rating?: number }).difficulty_rating ?? 3);
+	let difficulty = $state(
+		(data.challenge as unknown as { difficulty_rating?: number }).difficulty_rating ?? 3
+	);
 
 	// Points JSON editor
 	let pointsJson = $state(JSON.stringify(data.challenge.points_config ?? {}, null, 2));
@@ -100,44 +117,98 @@
 	let previewUrl = $state<string | null>(null);
 </script>
 
-<div class="p-6 max-w-4xl">
+<div class="max-w-4xl p-6">
 	<!-- Header -->
-	<div class="flex items-start justify-between mb-6">
+	<div class="mb-6 flex items-start justify-between">
 		<div>
-			<a href="/admin/challenges" class="text-zinc-500 hover:text-zinc-300 text-sm transition-colors">← Challenges</a>
-			<h1 class="text-2xl font-bold text-white mt-1">{data.challenge.title}</h1>
-			<div class="flex items-center gap-2 mt-1">
-				<span class="text-sm font-mono text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded">{data.challenge.variant}</span>
-				<span class="text-sm {statusColor[data.challenge.status] ?? 'text-zinc-400'}">{data.challenge.status}</span>
+			<a
+				href="/admin/challenges"
+				class="text-sm text-zinc-500 transition-colors hover:text-zinc-300">← Challenges</a
+			>
+			<div class="mt-1 flex items-center gap-3">
+				<div
+					class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg {getVariantColor(
+						data.challenge.variant
+					)}"
+				>
+					<svelte:component this={getVariantIcon(data.challenge.variant)} size={20} />
+				</div>
+				<h1 class="text-2xl font-bold text-white">{data.challenge.title}</h1>
+			</div>
+			<div class="mt-1 flex items-center gap-2">
+				<span class="rounded bg-zinc-800 px-2 py-0.5 font-mono text-sm text-zinc-500"
+					>{data.challenge.variant}</span
+				>
+				<span class="text-sm {statusColor[data.challenge.status] ?? 'text-zinc-400'}"
+					>{data.challenge.status}</span
+				>
 			</div>
 		</div>
 
-		<!-- Status control -->
-		<form method="POST" action="?/setStatus" use:enhance class="flex gap-2 items-center">
-			<select name="status" class="input-field w-auto text-sm">
-				{#each STATUS_OPTIONS as s}
-					<option value={s} selected={s === data.challenge.status}>{s}</option>
-				{/each}
-			</select>
-			<button type="submit" class="btn-primary text-sm">Set status</button>
-		</form>
+		<!-- Status control + Duplicate -->
+		<div class="flex items-center gap-2">
+			<form method="POST" action="?/duplicateChallenge" use:enhance>
+				<button
+					type="submit"
+					class="flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-400 transition-colors hover:border-zinc-500 hover:text-white"
+					title="Duplicate this challenge"
+				>
+					<svg
+						width="14"
+						height="14"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						aria-hidden="true"
+						><rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path
+							d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"
+						/></svg
+					>
+					Duplicate
+				</button>
+			</form>
+			<form method="POST" action="?/setStatus" use:enhance class="flex items-center gap-2">
+				<select name="status" class="input-field w-auto text-sm">
+					{#each STATUS_OPTIONS as s}
+						<option value={s} selected={s === data.challenge.status}>{s}</option>
+					{/each}
+				</select>
+				<button type="submit" class="btn-primary text-sm">Set status</button>
+			</form>
+		</div>
 	</div>
 
 	{#if form?.error}
-		<div class="bg-red-950 border border-red-800 text-red-300 text-sm rounded-lg px-4 py-3 mb-4">{form.error}</div>
+		<div class="mb-4 rounded-lg border border-red-800 bg-red-950 px-4 py-3 text-sm text-red-300">
+			{form.error}
+		</div>
 	{/if}
 
 	<!-- ── Section 1: Meta ─────────────────────────────────────────── -->
-	<section class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 mb-5">
+	<section class="mb-5 rounded-xl border border-zinc-800 bg-zinc-900 p-5">
 		<h2 class="admin-section-title">Settings</h2>
 		<form method="POST" action="?/updateMeta" use:enhance class="space-y-3">
 			<div class="grid grid-cols-2 gap-3">
-				<input name="title" value={data.challenge.title} placeholder="Name *" required class="input-field" />
-				<input name="stage_label" value={data.challenge.stage_label ?? ''} placeholder="Stage label" class="input-field" />
+				<input
+					name="title"
+					value={data.challenge.title}
+					placeholder="Name *"
+					required
+					class="input-field"
+				/>
+				<input
+					name="stage_label"
+					value={data.challenge.stage_label ?? ''}
+					placeholder="Stage label"
+					class="input-field"
+				/>
 			</div>
 			<div class="grid grid-cols-2 gap-3">
 				<div>
-					<label class="block text-xs text-zinc-400 mb-1">Variant</label>
+					<label class="mb-1 block text-xs text-zinc-400">Variant</label>
 					<select name="variant" class="input-field">
 						{#each VARIANTS as v}
 							<option value={v} selected={v === data.challenge.variant}>{v}</option>
@@ -145,41 +216,71 @@
 					</select>
 				</div>
 				<div>
-					<label class="block text-xs text-zinc-400 mb-1">Timer (seconds)</label>
-					<input name="timer_seconds" type="number" value={data.challenge.timer_seconds} min="10" max="600" class="input-field" />
+					<label class="mb-1 block text-xs text-zinc-400">Timer (seconds)</label>
+					<input
+						name="timer_seconds"
+						type="number"
+						value={data.challenge.timer_seconds}
+						min="10"
+						max="600"
+						class="input-field"
+					/>
 				</div>
 			</div>
 			<div class="grid grid-cols-2 gap-3">
 				<div>
-					<label class="block text-xs text-zinc-400 mb-1">Difficulty</label>
-					<div class="flex gap-1 items-center">
-						{#each [1,2,3,4,5] as star}
+					<label class="mb-1 block text-xs text-zinc-400">Difficulty</label>
+					<div class="flex items-center gap-1">
+						{#each [1, 2, 3, 4, 5] as star}
 							<button
 								type="button"
-								onclick={() => difficulty = star}
-								class="text-2xl leading-none transition-colors {difficulty >= star ? 'text-amber-400' : 'text-zinc-700'} hover:text-amber-300"
-								aria-label="Difficulty {star}"
-							>★</button>
+								onclick={() => (difficulty = star)}
+								class="text-2xl leading-none transition-colors {difficulty >= star
+									? 'text-amber-400'
+									: 'text-zinc-700'} hover:text-amber-300"
+								aria-label="Difficulty {star}">★</button
+							>
 						{/each}
 						<span class="ml-2 text-xs text-zinc-500">{difficulty}/5</span>
 					</div>
 					<input type="hidden" name="difficulty_rating" value={difficulty} />
 				</div>
 				<div>
-					<label class="block text-xs text-zinc-400 mb-1">Speed bonus threshold (sec, optional)</label>
-					<input name="speed_threshold_seconds" type="number" min="1" max="600" placeholder="none"
-						value={(data.challenge as unknown as { speed_threshold_seconds?: number | null }).speed_threshold_seconds ?? ''}
-						class="input-field" />
+					<label class="mb-1 block text-xs text-zinc-400"
+						>Speed bonus threshold (sec, optional)</label
+					>
+					<input
+						name="speed_threshold_seconds"
+						type="number"
+						min="1"
+						max="600"
+						placeholder="none"
+						value={(data.challenge as unknown as { speed_threshold_seconds?: number | null })
+							.speed_threshold_seconds ?? ''}
+						class="input-field"
+					/>
 				</div>
 			</div>
 			<div>
-				<label class="block text-xs text-zinc-400 mb-1">Hint text (optional — shown when team scans hint NFC tag)</label>
-				<textarea name="hint_text" rows="2" placeholder="Leave empty for no hint"
-					class="input-field text-sm">{(data.challenge as unknown as { hint_text?: string | null }).hint_text ?? ''}</textarea>
+				<label class="mb-1 block text-xs text-zinc-400"
+					>Hint text (optional — shown when team scans hint NFC tag)</label
+				>
+				<textarea
+					name="hint_text"
+					rows="2"
+					placeholder="Leave empty for no hint"
+					class="input-field text-sm"
+					>{(data.challenge as unknown as { hint_text?: string | null }).hint_text ?? ''}</textarea
+				>
 			</div>
 			<div>
-				<label class="block text-xs text-zinc-400 mb-1">Points config (JSON)</label>
-				<textarea name="points_config" bind:value={pointsJson} rows="5" class="input-field font-mono text-xs"></textarea>
+				<label class="mb-1 block text-xs text-zinc-400">Points config (JSON)</label>
+				<textarea
+					name="points_config"
+					bind:value={pointsJson}
+					rows="5"
+					class="input-field font-mono text-xs"
+				></textarea>
 			</div>
 			<div class="flex justify-end">
 				<button type="submit" class="btn-primary">Save settings</button>
@@ -188,33 +289,35 @@
 	</section>
 
 	<!-- ── Section 2: Tracks ───────────────────────────────────────── -->
-	<section class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 mb-5">
+	<section class="mb-5 rounded-xl border border-zinc-800 bg-zinc-900 p-5">
 		<h2 class="admin-section-title">Tracks ({data.challengeTracks.length})</h2>
 
 		<!-- Assigned tracks -->
 		{#if data.challengeTracks.length > 0}
-			<div class="space-y-2 mb-4">
+			<div class="mb-4 space-y-2">
 				{#each data.challengeTracks as ct, i (ct.id)}
 					{@const track = trackForCt(ct)}
 					{@const clip = clipForCt(ct)}
-					<div class="flex items-center gap-3 bg-zinc-800/60 rounded-lg px-3 py-2">
-						<span class="text-zinc-500 text-sm w-5 text-center">{i + 1}</span>
-						<div class="flex-1 min-w-0">
-							<div class="text-white text-sm font-medium truncate">
+					<div class="flex items-center gap-3 rounded-lg bg-zinc-800/60 px-3 py-2">
+						<span class="w-5 text-center text-sm text-zinc-500">{i + 1}</span>
+						<div class="min-w-0 flex-1">
+							<div class="truncate text-sm font-medium text-white">
 								{track?.artist ?? '?'} — {track?.title ?? '?'}
-								<span class="text-zinc-500 font-normal">({track?.year})</span>
+								<span class="font-normal text-zinc-500">({track?.year})</span>
 							</div>
-							<div class="text-zinc-500 text-xs">
+							<div class="text-xs text-zinc-500">
 								Clip: {clip?.type ?? '?'}
-								{#if clip?.position != null} #{clip.position}{/if}
+								{#if clip?.position != null}
+									#{clip.position}{/if}
 								· {clip?.storage_path ? clip.storage_path.slice(-40) : '—'}
 							</div>
 						</div>
 
 						{#if clip}
 							<button
-								onclick={() => previewUrl = previewUrl === clip.storage_path ? null : clip.storage_path}
-								class="text-amber-400 hover:text-amber-300 text-xs px-2 py-0.5 rounded border border-amber-400/30 transition-colors shrink-0"
+								onclick={() =>
+									(previewUrl = previewUrl === clip.storage_path ? null : clip.storage_path)}
+								class="shrink-0 rounded border border-amber-400/30 px-2 py-0.5 text-xs text-amber-400 transition-colors hover:text-amber-300"
 							>
 								{previewUrl === clip.storage_path ? '■' : '▶'}
 							</button>
@@ -224,39 +327,61 @@
 						<form method="POST" action="?/reorderTrack" use:enhance>
 							<input type="hidden" name="ct_id" value={ct.id} />
 							<input type="hidden" name="direction" value="up" />
-							<button type="submit" disabled={i === 0} class="text-zinc-500 hover:text-zinc-300 disabled:opacity-30 text-xs px-1">↑</button>
+							<button
+								type="submit"
+								disabled={i === 0}
+								class="px-1 text-xs text-zinc-500 hover:text-zinc-300 disabled:opacity-30">↑</button
+							>
 						</form>
 						<form method="POST" action="?/reorderTrack" use:enhance>
 							<input type="hidden" name="ct_id" value={ct.id} />
 							<input type="hidden" name="direction" value="down" />
-							<button type="submit" disabled={i === data.challengeTracks.length - 1} class="text-zinc-500 hover:text-zinc-300 disabled:opacity-30 text-xs px-1">↓</button>
+							<button
+								type="submit"
+								disabled={i === data.challengeTracks.length - 1}
+								class="px-1 text-xs text-zinc-500 hover:text-zinc-300 disabled:opacity-30">↓</button
+							>
 						</form>
 
 						<form method="POST" action="?/removeTrack" use:enhance>
 							<input type="hidden" name="ct_id" value={ct.id} />
 							<button
 								type="submit"
-								onclick={(e) => { if (!confirm('Remove this track from the challenge?')) e.preventDefault(); }}
-								class="text-red-700 hover:text-red-400 text-xs px-2 py-1 rounded hover:bg-zinc-700 transition-colors"
-							>✕</button>
+								onclick={(e) => {
+									if (!confirm('Remove this track from the challenge?')) e.preventDefault();
+								}}
+								class="rounded px-2 py-1 text-xs text-red-700 transition-colors hover:bg-zinc-700 hover:text-red-400"
+								>✕</button
+							>
 						</form>
 					</div>
 				{/each}
 			</div>
 		{:else}
-			<p class="text-zinc-600 text-sm mb-4">No tracks yet — add one below.</p>
+			<p class="mb-4 text-sm text-zinc-600">No tracks yet — add one below.</p>
 		{/if}
 
 		{#if previewUrl}
 			<!-- svelte-ignore a11y_media_has_caption -->
-			<audio src={previewUrl} autoplay controls class="w-full h-8 mb-4" onended={() => previewUrl = null}></audio>
+			<audio
+				src={previewUrl}
+				autoplay
+				controls
+				class="mb-4 h-8 w-full"
+				onended={() => (previewUrl = null)}
+			></audio>
 		{/if}
 
 		<!-- Add track picker -->
 		{#if data.allTracks.length > 0}
-			<form method="POST" action="?/addTrack" use:enhance class="flex gap-2 flex-wrap items-end border-t border-zinc-800 pt-4">
-				<div class="flex-1 min-w-40">
-					<label class="block text-xs text-zinc-400 mb-1">Track</label>
+			<form
+				method="POST"
+				action="?/addTrack"
+				use:enhance
+				class="flex flex-wrap items-end gap-2 border-t border-zinc-800 pt-4"
+			>
+				<div class="min-w-40 flex-1">
+					<label class="mb-1 block text-xs text-zinc-400">Track</label>
 					<select name="track_id" bind:value={selectedTrackId} required class="input-field">
 						<option value="">— choose track —</option>
 						{#each data.allTracks as t}
@@ -264,9 +389,15 @@
 						{/each}
 					</select>
 				</div>
-				<div class="flex-1 min-w-40">
-					<label class="block text-xs text-zinc-400 mb-1">Clip</label>
-					<select name="clip_id" bind:value={selectedClipId} required class="input-field" disabled={!selectedTrackId || clipsForSelected.length === 0}>
+				<div class="min-w-40 flex-1">
+					<label class="mb-1 block text-xs text-zinc-400">Clip</label>
+					<select
+						name="clip_id"
+						bind:value={selectedClipId}
+						required
+						class="input-field"
+						disabled={!selectedTrackId || clipsForSelected.length === 0}
+					>
 						{#if !selectedTrackId}
 							<option value="">— choose track first —</option>
 						{:else if clipsForSelected.length === 0}
@@ -274,30 +405,43 @@
 						{:else}
 							<option value="">— choose clip —</option>
 							{#each clipsForSelected as c}
-								<option value={c.id}>{c.type}{c.position != null ? ` #${c.position}` : ''} — {c.storage_path.slice(-30)}</option>
+								<option value={c.id}
+									>{c.type}{c.position != null ? ` #${c.position}` : ''} — {c.storage_path.slice(
+										-30
+									)}</option
+								>
 							{/each}
 						{/if}
 					</select>
 				</div>
-				<button type="submit" class="btn-primary" disabled={!selectedTrackId || !selectedClipId}>Add</button>
+				<button type="submit" class="btn-primary" disabled={!selectedTrackId || !selectedClipId}
+					>Add</button
+				>
 			</form>
 		{:else}
-			<p class="text-zinc-600 text-xs border-t border-zinc-800 pt-4">No tracks in the library yet.</p>
+			<p class="border-t border-zinc-800 pt-4 text-xs text-zinc-600">
+				No tracks in the library yet.
+			</p>
 		{/if}
 	</section>
 
 	<!-- ── Section 3: Input modes ────────────────────────────────── -->
-	<section class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 mb-5">
+	<section class="mb-5 rounded-xl border border-zinc-800 bg-zinc-900 p-5">
 		<h2 class="admin-section-title">Input Modes</h2>
-		<p class="text-zinc-500 text-xs mb-4">
+		<p class="mb-4 text-xs text-zinc-500">
 			Choose how players answer each field. Combobox = search pool; Multiple choice = buttons from
 			Answer Options; Open text = free type (fuzzy scored); Slider / Typeable = year.
 		</p>
 
 		{#each fields as field}
-			<div class="flex items-center gap-3 py-2 border-b border-zinc-800 last:border-0">
+			<div class="flex items-center gap-3 border-b border-zinc-800 py-2 last:border-0">
 				<span class="w-28 text-sm text-zinc-300 capitalize">{field.replace('_', ' ')}</span>
-				<form method="POST" action="?/saveInputMode" use:enhance class="flex items-center gap-2 flex-1">
+				<form
+					method="POST"
+					action="?/saveInputMode"
+					use:enhance
+					class="flex flex-1 items-center gap-2"
+				>
 					<input type="hidden" name="field" value={field} />
 					<select name="mode" class="input-field w-auto text-sm">
 						{#each INPUT_MODES as m}
@@ -306,47 +450,52 @@
 					</select>
 					<button type="submit" class="btn-ghost text-xs whitespace-nowrap">Set</button>
 				</form>
-				<span class="text-xs text-zinc-600 w-24 text-right">now: {currentMode(field)}</span>
+				<span class="w-24 text-right text-xs text-zinc-600">now: {currentMode(field)}</span>
 			</div>
 		{/each}
 	</section>
 
 	<!-- ── Section 4: Answer options ──────────────────────────────── -->
-	<section class="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
+	<section class="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
 		<h2 class="admin-section-title">Answer Options</h2>
-		<p class="text-zinc-500 text-xs mb-4">
-			Curate the dropdown values players see. Click "Auto-generate" to populate from the track library
-			(correct answer + up to 7 distractors). Then edit manually if needed.
+		<p class="mb-4 text-xs text-zinc-500">
+			Curate the dropdown values players see. Click "Auto-generate" to populate from the track
+			library (correct answer + up to 7 distractors). Then edit manually if needed.
 		</p>
 
 		{#if data.challengeTracks.length === 0}
-			<p class="text-zinc-600 text-sm">Add tracks first.</p>
+			<p class="text-sm text-zinc-600">Add tracks first.</p>
 		{:else}
 			{#each data.challengeTracks as ct, i (ct.id)}
 				{@const track = trackForCt(ct)}
 				<div class="mb-5">
-					<div class="text-sm font-medium text-white mb-2">
+					<div class="mb-2 text-sm font-medium text-white">
 						Track {i + 1}: {track?.artist} — {track?.title}
 					</div>
 
 					{#each fields as field}
 						{#if field !== 'year'}
 							<div class="mb-3 ml-3">
-								<div class="flex items-center gap-3 mb-1">
-									<span class="text-xs text-zinc-400 w-24 capitalize">{field.replace('_', ' ')}</span>
+								<div class="mb-1 flex items-center gap-3">
+									<span class="w-24 text-xs text-zinc-400 capitalize"
+										>{field.replace('_', ' ')}</span
+									>
 									<span class="text-xs text-zinc-600">{optionsFor(field).length} options</span>
 
 									<form method="POST" action="?/generateOptions" use:enhance>
 										<input type="hidden" name="ct_id" value={ct.id} />
 										<input type="hidden" name="field" value={field} />
-										<button type="submit" class="text-xs text-amber-400 hover:text-amber-300 transition-colors">
+										<button
+											type="submit"
+											class="text-xs text-amber-400 transition-colors hover:text-amber-300"
+										>
 											Auto-generate
 										</button>
 									</form>
 
 									<button
 										onclick={() => startEditOptions(field)}
-										class="text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
+										class="text-xs text-zinc-400 transition-colors hover:text-zinc-200"
 									>
 										Edit manually
 									</button>
@@ -360,21 +509,27 @@
 											bind:value={optionsText}
 											rows="5"
 											placeholder="One option per line"
-											class="input-field font-mono text-xs flex-1"
+											class="input-field flex-1 font-mono text-xs"
 										></textarea>
 										<div class="flex flex-col gap-1">
 											<button type="submit" class="btn-primary text-xs">Save</button>
-											<button type="button" onclick={() => editingField = null} class="btn-ghost text-xs">Cancel</button>
+											<button
+												type="button"
+												onclick={() => (editingField = null)}
+												class="btn-ghost text-xs">Cancel</button
+											>
 										</div>
 									</form>
 								{:else if optionsFor(field).length > 0}
-									<div class="flex flex-wrap gap-1 ml-0">
+									<div class="ml-0 flex flex-wrap gap-1">
 										{#each optionsFor(field) as opt}
-											<span class="text-xs bg-zinc-800 text-zinc-300 px-2 py-0.5 rounded">{opt}</span>
+											<span class="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300"
+												>{opt}</span
+											>
 										{/each}
 									</div>
 								{:else}
-									<p class="text-zinc-600 text-xs">No options yet.</p>
+									<p class="text-xs text-zinc-600">No options yet.</p>
 								{/if}
 							</div>
 						{/if}
@@ -404,18 +559,38 @@
 		width: 100%;
 		transition: border-color 0.15s;
 	}
-	:global(.input-field:focus) { outline: none; border-color: #fbbf24; }
+	:global(.input-field:focus) {
+		outline: none;
+		border-color: #fbbf24;
+	}
 	:global(.btn-primary) {
-		background: #fbbf24; color: #09090b; font-weight: 700;
-		padding: 0.4rem 1rem; border-radius: 0.5rem; font-size: 0.875rem;
+		background: #fbbf24;
+		color: #09090b;
+		font-weight: 700;
+		padding: 0.4rem 1rem;
+		border-radius: 0.5rem;
+		font-size: 0.875rem;
 		transition: background 0.15s;
 	}
-	:global(.btn-primary:hover) { background: #fcd34d; }
-	:global(.btn-primary:disabled) { opacity: 0.4; cursor: not-allowed; }
-	:global(.btn-ghost) {
-		background: transparent; border: 1px solid #3f3f46; color: #a1a1aa;
-		font-weight: 500; padding: 0.4rem 1rem; border-radius: 0.5rem;
-		font-size: 0.875rem; transition: all 0.15s;
+	:global(.btn-primary:hover) {
+		background: #fcd34d;
 	}
-	:global(.btn-ghost:hover) { border-color: #71717a; color: #f4f4f5; }
+	:global(.btn-primary:disabled) {
+		opacity: 0.4;
+		cursor: not-allowed;
+	}
+	:global(.btn-ghost) {
+		background: transparent;
+		border: 1px solid #3f3f46;
+		color: #a1a1aa;
+		font-weight: 500;
+		padding: 0.4rem 1rem;
+		border-radius: 0.5rem;
+		font-size: 0.875rem;
+		transition: all 0.15s;
+	}
+	:global(.btn-ghost:hover) {
+		border-color: #71717a;
+		color: #f4f4f5;
+	}
 </style>

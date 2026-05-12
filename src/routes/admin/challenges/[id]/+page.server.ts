@@ -1,4 +1,4 @@
-import { error, fail } from '@sveltejs/kit';
+import { error, fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
 
@@ -23,10 +23,16 @@ export const load: PageServerLoad = async ({ params }) => {
 	// Load clips for all tracks in the library (not just tracks already in this challenge)
 	// so the clip dropdown populates when the admin picks any available track.
 	const allTrackIds = allTracks.map((t) => t.id);
-	const { data: clips } = await db.from('clips').select('*').in('track_id', allTrackIds.length ? allTrackIds : ['__none__']);
+	const { data: clips } = await db
+		.from('clips')
+		.select('*')
+		.in('track_id', allTrackIds.length ? allTrackIds : ['__none__']);
 
 	// Load answer options for this challenge
-	const { data: answerOptions } = await db.from('answer_options').select('*').eq('challenge_id', params.id);
+	const { data: answerOptions } = await db
+		.from('answer_options')
+		.select('*')
+		.eq('challenge_id', params.id);
 
 	return {
 		challenge,
@@ -62,10 +68,19 @@ export const actions: Actions = {
 
 		if (!title) return fail(400, { error: 'Title is required' });
 
-		const { error: e } = await db.from('challenges').update({
-			title, stage_label, timer_seconds, variant: variant as never, points_config: points_config as never,
-			difficulty_rating, speed_threshold_seconds, hint_text
-		}).eq('id', params.id);
+		const { error: e } = await db
+			.from('challenges')
+			.update({
+				title,
+				stage_label,
+				timer_seconds,
+				variant: variant as never,
+				points_config: points_config as never,
+				difficulty_rating,
+				speed_threshold_seconds,
+				hint_text
+			})
+			.eq('id', params.id);
 		if (e) return fail(500, { error: e.message });
 		return { success: true, action: 'meta' };
 	},
@@ -74,12 +89,16 @@ export const actions: Actions = {
 		const db = createAdminClient();
 		const data = await request.formData();
 		const status = data.get('status') as string;
-		if (!['draft', 'active', 'completed'].includes(status)) return fail(400, { error: 'Invalid status' });
+		if (!['draft', 'active', 'completed'].includes(status))
+			return fail(400, { error: 'Invalid status' });
 
-		const { error: e } = await db.from('challenges').update({
-			status,
-			is_active: status === 'active'
-		}).eq('id', params.id);
+		const { error: e } = await db
+			.from('challenges')
+			.update({
+				status,
+				is_active: status === 'active'
+			})
+			.eq('id', params.id);
 		if (e) return fail(500, { error: e.message });
 		return { success: true, action: 'status' };
 	},
@@ -104,7 +123,10 @@ export const actions: Actions = {
 		const sort_order = (existing?.[0]?.sort_order ?? 0) + 1;
 
 		const { error: e } = await db.from('challenge_tracks').insert({
-			challenge_id: params.id, track_id, clip_id, sort_order,
+			challenge_id: params.id,
+			track_id,
+			clip_id,
+			sort_order,
 			created_by: locals.user?.id ?? null
 		});
 		if (e) return fail(500, { error: e.message });
@@ -160,7 +182,11 @@ export const actions: Actions = {
 		if (!ct_id || !field) return fail(400, { error: 'Missing ct_id or field' });
 
 		// Get the challenge_track with track details
-		const { data: ct } = await db.from('challenge_tracks').select('track_id').eq('id', ct_id).single();
+		const { data: ct } = await db
+			.from('challenge_tracks')
+			.select('track_id')
+			.eq('id', ct_id)
+			.single();
 		if (!ct) return fail(400, { error: 'challenge_track not found' });
 
 		const { data: track } = await db.from('tracks').select('*').eq('id', ct.track_id).single();
@@ -168,7 +194,8 @@ export const actions: Actions = {
 
 		type TrackKey = keyof typeof track;
 		const correct = track[field as TrackKey];
-		if (correct == null || correct === '') return fail(400, { error: `Track has no value for field "${field}"` });
+		if (correct == null || correct === '')
+			return fail(400, { error: `Track has no value for field "${field}"` });
 
 		// Get up to 7 distinct distractors from other tracks
 		const { data: others } = await db
@@ -187,10 +214,19 @@ export const actions: Actions = {
 		const options = [String(correct), ...distractors].sort(() => Math.random() - 0.5);
 
 		// Delete existing options for this challenge+field, then insert new ones
-		await db.from('answer_options').delete().eq('challenge_id', params.id).eq('field', field as never);
+		await db
+			.from('answer_options')
+			.delete()
+			.eq('challenge_id', params.id)
+			.eq('field', field as never);
 		if (options.length > 0) {
 			const { error: e } = await db.from('answer_options').insert(
-				options.map((value) => ({ challenge_id: params.id, field: field as never, value, created_by: locals.user?.id ?? null }))
+				options.map((value) => ({
+					challenge_id: params.id,
+					field: field as never,
+					value,
+					created_by: locals.user?.id ?? null
+				}))
 			);
 			if (e) return fail(500, { error: e.message });
 		}
@@ -205,12 +241,24 @@ export const actions: Actions = {
 
 		if (!field || raw == null) return fail(400, { error: 'Missing field or options' });
 
-		const options = raw.split('\n').map((s) => s.trim()).filter(Boolean);
+		const options = raw
+			.split('\n')
+			.map((s) => s.trim())
+			.filter(Boolean);
 
-		await db.from('answer_options').delete().eq('challenge_id', params.id).eq('field', field as never);
+		await db
+			.from('answer_options')
+			.delete()
+			.eq('challenge_id', params.id)
+			.eq('field', field as never);
 		if (options.length > 0) {
 			const { error: e } = await db.from('answer_options').insert(
-				options.map((value) => ({ challenge_id: params.id, field: field as never, value, created_by: locals.user?.id ?? null }))
+				options.map((value) => ({
+					challenge_id: params.id,
+					field: field as never,
+					value,
+					created_by: locals.user?.id ?? null
+				}))
 			);
 			if (e) return fail(500, { error: e.message });
 		}
@@ -220,6 +268,70 @@ export const actions: Actions = {
 	// Saves per-field input mode into challenge.points_config.field_modes.
 	// We store here (not answer_options.input_mode) to avoid ambiguity with
 	// the migration-default 'multiple_choice' that all existing rows carry.
+	duplicateChallenge: async ({ params, locals }) => {
+		const db = createAdminClient();
+
+		const { data: source } = await db.from('challenges').select('*').eq('id', params.id).single();
+		if (!source) return fail(404, { error: 'Challenge not found' });
+
+		const { data: newChallenge, error: insertErr } = await db
+			.from('challenges')
+			.insert({
+				title: `${source.title} (copy)`,
+				variant: source.variant,
+				stage_label: source.stage_label,
+				timer_seconds: source.timer_seconds,
+				points_config: source.points_config as never,
+				difficulty_rating: source.difficulty_rating,
+				speed_threshold_seconds: source.speed_threshold_seconds,
+				hint_text: source.hint_text,
+				status: 'draft',
+				is_active: false,
+				created_by: locals.user?.id ?? null
+			})
+			.select('id')
+			.single();
+
+		if (insertErr || !newChallenge) {
+			return fail(500, { error: insertErr?.message ?? 'Could not duplicate challenge' });
+		}
+
+		const [{ data: sourceTracks }, { data: sourceOptions }] = await Promise.all([
+			db
+				.from('challenge_tracks')
+				.select('track_id, clip_id, sort_order')
+				.eq('challenge_id', params.id)
+				.order('sort_order'),
+			db.from('answer_options').select('field, value, input_mode').eq('challenge_id', params.id)
+		]);
+
+		if (sourceTracks?.length) {
+			await db.from('challenge_tracks').insert(
+				sourceTracks.map((ct) => ({
+					challenge_id: newChallenge.id,
+					track_id: ct.track_id,
+					clip_id: ct.clip_id,
+					sort_order: ct.sort_order,
+					created_by: locals.user?.id ?? null
+				}))
+			);
+		}
+
+		if (sourceOptions?.length) {
+			await db.from('answer_options').insert(
+				sourceOptions.map((ao) => ({
+					challenge_id: newChallenge.id,
+					field: ao.field,
+					value: ao.value,
+					input_mode: ao.input_mode,
+					created_by: locals.user?.id ?? null
+				}))
+			);
+		}
+
+		redirect(303, `/admin/challenges/${newChallenge.id}`);
+	},
+
 	saveInputMode: async ({ request, params }) => {
 		const db = createAdminClient();
 		const data = await request.formData();
@@ -229,14 +341,19 @@ export const actions: Actions = {
 		const VALID_MODES = ['multiple_choice', 'combobox', 'open_text', 'typeable_number', 'slider'];
 		if (!field || !VALID_MODES.includes(mode)) return fail(400, { error: 'Invalid field or mode' });
 
-		const { data: challenge } = await db.from('challenges').select('points_config').eq('id', params.id).single();
+		const { data: challenge } = await db
+			.from('challenges')
+			.select('points_config')
+			.eq('id', params.id)
+			.single();
 		if (!challenge) return fail(404, { error: 'Challenge not found' });
 
 		const pc = (challenge.points_config ?? {}) as Record<string, unknown>;
-		const fieldModes = ((pc.field_modes ?? {}) as Record<string, string>);
+		const fieldModes = (pc.field_modes ?? {}) as Record<string, string>;
 		fieldModes[field] = mode;
 
-		const { error: e } = await db.from('challenges')
+		const { error: e } = await db
+			.from('challenges')
 			.update({ points_config: { ...pc, field_modes: fieldModes } as never })
 			.eq('id', params.id);
 		if (e) return fail(500, { error: e.message });

@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
-	import { invalidateAll } from '$app/navigation';
+	import { invalidateAll, goto } from '$app/navigation';
 	import type { PageData, ActionData } from './$types';
 	import Waveform from '$lib/components/ui/Waveform.svelte';
 	import TrimModal from '$lib/components/ui/TrimModal.svelte';
+	import { Music } from 'lucide-svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -22,18 +23,23 @@
 		error?: string;
 	};
 
-	// ── search ──────────────────────────────────────────────────────────────────
-	let searchQuery = $state('');
-	const filteredTracks = $derived(
-		searchQuery.trim()
-			? data.tracks.filter(
-					(t) =>
-						t.artist.toLowerCase().includes(searchQuery.toLowerCase()) ||
-						t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-						(t.genre ?? '').toLowerCase().includes(searchQuery.toLowerCase())
-				)
-			: data.tracks
-	);
+	// ── search / filter ─────────────────────────────────────────────────────────
+	function setParam(key: string, value: string) {
+		const u = new URL(location.href);
+		if (value) u.searchParams.set(key, value);
+		else u.searchParams.delete(key);
+		goto(`${u.pathname}${u.search}`, { replaceState: true, noScroll: true });
+	}
+
+	let searchQuery = $state(data.q);
+	let searchTimeout: ReturnType<typeof setTimeout> | null = null;
+	function onSearchInput(val: string) {
+		searchQuery = val;
+		if (searchTimeout) clearTimeout(searchTimeout);
+		searchTimeout = setTimeout(() => setParam('q', val), 300);
+	}
+
+	const hasActiveFilters = $derived(!!(data.q || data.genreFilter || data.hasClips !== 'all'));
 
 	// ── track panel state ────────────────────────────────────────────────────────
 	let expandedTrack = $state<string | null>(null);
@@ -569,18 +575,49 @@
 		</div>
 	{/if}
 
-	<!-- Search -->
-	<div class="mb-4">
+	<!-- Search / filter / sort -->
+	<div class="mb-4 flex flex-wrap items-center gap-2">
 		<input
-			bind:value={searchQuery}
+			value={searchQuery}
+			oninput={(e) => onSearchInput((e.target as HTMLInputElement).value)}
 			placeholder="Filter by artist, title, or genre…"
-			class="input-field"
+			class="min-w-[200px] flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs text-zinc-300 placeholder-zinc-600 focus:border-amber-400 focus:outline-none"
 		/>
+		<select
+			value={data.genreFilter}
+			onchange={(e) => setParam('genre', (e.target as HTMLSelectElement).value)}
+			class="rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-300 focus:border-amber-400 focus:outline-none"
+		>
+			<option value="">All genres</option>
+			{#each data.allGenres as g (g)}
+				<option value={g}>{g}</option>
+			{/each}
+		</select>
+		<select
+			value={data.hasClips}
+			onchange={(e) => setParam('has_clips', (e.target as HTMLSelectElement).value)}
+			class="rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-300 focus:border-amber-400 focus:outline-none"
+		>
+			<option value="all">Any clips</option>
+			<option value="yes">Has clips</option>
+			<option value="no">No clips</option>
+		</select>
+		<select
+			value={data.sort}
+			onchange={(e) => setParam('sort', (e.target as HTMLSelectElement).value)}
+			class="rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-300 focus:border-amber-400 focus:outline-none"
+		>
+			<option value="name_asc">Name A→Z</option>
+			<option value="name_desc">Name Z→A</option>
+			<option value="created_desc">Newest first</option>
+			<option value="created_asc">Oldest first</option>
+			<option value="genre_asc">Genre A→Z</option>
+		</select>
 	</div>
 
 	<!-- Track list -->
 	<div class="space-y-2">
-		{#each filteredTracks as track (track.id)}
+		{#each data.tracks as track (track.id)}
 			<div class="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
 				<!-- Track header row -->
 				<div class="flex items-center gap-3 px-4 py-3">
@@ -1140,9 +1177,25 @@
 				{/if}
 			</div>
 		{:else}
-			<p class="py-8 text-center text-zinc-600">
-				{searchQuery ? 'No tracks match your filter.' : 'No tracks yet.'}
-			</p>
+			{#if hasActiveFilters}
+				<div class="rounded-xl border border-zinc-800 bg-zinc-900 p-12 text-center">
+					<p class="text-sm font-semibold text-zinc-400">No tracks match the current filters</p>
+					<a
+						href="/admin/tracks"
+						class="mt-3 inline-block rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:border-zinc-500 hover:text-white"
+					>
+						Clear filters
+					</a>
+				</div>
+			{:else}
+				<div class="rounded-xl border border-zinc-800 bg-zinc-900 p-14 text-center">
+					<Music size={64} class="mx-auto mb-4 text-zinc-700" />
+					<p class="text-base font-bold text-zinc-300">No tracks yet</p>
+					<p class="mt-1 text-sm text-zinc-500">
+						Click "+ Add Track" above to add your first track
+					</p>
+				</div>
+			{/if}
 		{/each}
 	</div>
 </div>
