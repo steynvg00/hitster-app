@@ -28,7 +28,14 @@ function copyFfmpegCore(): Plugin {
 		configureServer(server) {
 			if (!existsSync(`${dest}/ffmpeg-core.wasm`)) copy();
 			server.middlewares.use((req, res, next) => {
-				if (req.url?.startsWith('/node_modules/@ffmpeg/')) {
+				const url = req.url || '';
+				if (
+					url.startsWith('/@vite/') ||
+					url.startsWith('/@fs/') ||
+					url.startsWith('/@id/') ||
+					url.startsWith('/node_modules/') ||
+					url.startsWith('/src/')
+				) {
 					res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
 					res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
 				}
