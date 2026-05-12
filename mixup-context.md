@@ -301,7 +301,7 @@ All migrations run **manually via Supabase SQL Editor** — no CLI runner. Files
 
 | #   | Bug                                    | Symptom                                                                                                                                                |
 | --- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 5   | **Audio effects not applying**         | Pitch/tempo sliders save successfully and show amber badge, but playback doesn't sound different. Tone.js audio chain likely not initialized correctly |
+| 5   | **Audio effects not applying** ✓ FIXED | Root cause: `createMediaElementSource()` threw `InvalidStateError` when called twice on the same `HTMLAudioElement`. Fixed with a module-level `WeakMap` cache in `Waveform.svelte` (`<script module>`). Pitch/tempo effects now apply correctly. |
 | 6   | **ffmpeg trim save fails**             | `failed to import ffmpeg-core.js`. Likely CORS / unpkg cross-origin                                                                                    |
 | 8   | **Duplicate slug error link wrong**    | "View existing tag →" goes to `/admin/sets` index instead of the specific set the existing tag is bound to. Partially fixed but still off              |
 | 9   | **MP4/MOV screen recordings rejected** | Upload accepts only audio MIME types; screen recordings include video container. Need audio extraction step                                            |
@@ -466,14 +466,25 @@ When/if Spotify integration ships for challenge audio (currently we use uploaded
 
 Stripes had opacity removed so colors come through. Old blurry variants (speaker rings, lava lamp blobs, disco ball, bokeh) are commented out (not deleted) in `src/lib/components/HomepageBackground.svelte`. Can be removed cleanly when sure.
 
+### Festival palette tokens (shipped)
+
+Defined in `src/routes/layout.css` under `@theme {}` (Tailwind v4). Seven tokens:
+`mixup-magenta (#ff2daa)` · `mixup-cyan (#00e5ff)` · `mixup-yellow (#ffe600)` · `mixup-violet (#7c4dff)` · `mixup-orange (#ff7f11)` · `mixup-night (#0b0b1f)` · `mixup-ice (#e5f2ff)`
+
+Use as Tailwind utility classes: `text-mixup-magenta`, `bg-mixup-night`, `text-mixup-ice/50` etc.
+
 ### Per-page treatment principle
 
-Each non-homepage surface gets its OWN treatment in future sessions, not the homepage 6-variant system:
+Each non-homepage surface gets its OWN treatment, not the homepage 6-variant system. Status:
 
-- TV podium → spectacle, max saturation
-- Waiting / lobby → atmospheric, calm
-- Active gameplay → minimal, foreground-priority
-- Admin → utility-first, single accent stripe
+| Page | Status | Treatment |
+| ---- | ------ | --------- |
+| `/sets/[id]/podium` | ✓ SHIPPED | Max-saturation spectacle. Night-sky bg + 3 ambient radials. Festival-palette glow rims per pedestal (magenta=1st, cyan=2nd, violet=3rd). Scale + shadow pulse on reveal. 3 states (pending / revealing / complete). |
+| `/play/waiting` | ✓ SHIPPED | Ceremonial suspense. 3 slow-drifting ambient blobs, festival color-cycling 3-ring pulse, team-color 1px top stripe, state-aware heading (waiting → reveal card with CSS sparkle rings → post-reveal rank badge). |
+| `/play/thanks` | ✓ SHIPPED | Reflective celebration. Single ambient gradient (calmer), team-color stripe + pill, hero score in mixup-yellow, best-moment magenta callout, challenge cards with variant icons + cyan left border, stagger-in animations. |
+| Active challenge | — | Minimal — content-first, no ambient decoration |
+| Waiting / lobby | — | Atmospheric, calm |
+| Admin | — | Utility-first, single accent stripe |
 
 ### Colors
 
@@ -533,6 +544,10 @@ Note: `recap_state` must be set to `'pending'` (not NULL) and `recap_ranking` to
 - 6 of 10 original bugs from §9 fixed
 - Admin parity Batch A: sets list overhaul, Modal.svelte, preset_slug (migration 0034), category badges, URL-bound filter/sort, empty states
 - Admin parity Batch B: duplicateSet + duplicateChallenge actions, Duplicate buttons, URL-bound filter/sort on tracks + challenges, `src/lib/variants.ts` with icon/color helpers, variant icon badges throughout, empty states
+- **Batch D — Bug 11**: deferred challenge_attempt creation; pre-game gate + `startChallenge` form action
+- **Batch E — Admin polish**: ActivityFeed.svelte on dashboard (realtime activity_log); recap Highlight Reel (fastest answers); powerup category UI (collapsible + tri-state master toggle)
+- **Path X — Bug 5 fix**: Waveform.svelte WeakMap caching; festival palette tokens in @theme; homepage wordmark polish
+- **Visual identity theming pass**: `/sets/[id]/podium` (TV spectacle), `/play/thanks` (reflective celebration), `/play/waiting` (ceremonial suspense) — all using festival palette, each with distinct visual treatment
 
 **Pushed but partially unverified (need full walk):**
 
@@ -541,18 +556,19 @@ Note: `recap_state` must be set to `'pending'` (not NULL) and `recap_ranking` to
 
 **Open from §9 bug pile:**
 
-- Bug 5: Audio pitch/tempo effects not applying (Tone.js chain)
 - Bug 6: ffmpeg trim CORS error
 - Bug 8: Duplicate slug error link goes to wrong location
 - Bug 9: MP4/MOV screen recordings rejected on upload
+- (Bug 5 fixed — see above)
 
 **Highest-priority next moves:**
 
-1. Walk Tier 2+3 verification for the mechanics work (catch anything broken before piling on)
-2. Host whitelist / closed access (BLOCKER for August event)
-3. Address open §9 bugs OR start game mode rollout
-4. Visual identity pass (logo, palette, glassmorphic dashboard) — dedicated session
+1. Host whitelist / closed access (BLOCKER for August event)
+2. Walk Tier 2+3 verification for mechanics work
+3. Address remaining §9 bugs (6, 8, 9)
+4. Game mode rollout (Imposter / Battle / Relay — see §10 creative session items)
+5. Dashboard glassmorphic composition pass (deferred from visual identity session)
 
 ---
 
-## Pick up here — Verification walk + planning next direction
+## Pick up here — Host whitelist + verification walk

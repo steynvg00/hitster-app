@@ -159,10 +159,16 @@ src/
     play/teams/        ← static routes under teams (higher priority than [mode])
       sets/            ← active game set picker → runs assignTeam → randomizing
       randomizing/     ← CSS animation: rolling → reveal → continue → /team
+    sets/
+      [id]/
+        podium/        ← TV-display olympic podium (no auth gate); realtime recap reveals
     api/
       player/
         leave/         ← DELETE player session + photo
         sweep/         ← admin-only: delete expired player sessions
+    play/
+      waiting/         ← player holds phone during recap; realtime reveal subscription; 3 states (waiting/reveal/post-reveal)
+      thanks/          ← player end-of-night summary; challenges played + best moment; accessible after set inactive
 ```
 
 ## NFC flow
@@ -214,8 +220,57 @@ src/
 | 2026-05-11 | Timer expiry final fix: /api/auto-submit early-return guard removed, NFC lock toggle always-visible with own action, $effect 10s polling while playing                                                                                                                                                                                                                                                                                          |
 | 2026-05-12 | Admin parity Batch A: migration 0034 (preset_slug on game_sets), sets list overhaul — "+ Create new gameset" button opens Modal.svelte, category badge per row using preset_slug, URL-bound filter/sort (?preset, ?status, ?sort), empty states (true empty vs filtered empty)                                                                                                                                                                  |
 | 2026-05-12 | Admin parity Batch B: duplicateSet action (copies config + set_challenges + set_powerups), duplicateChallenge action (copies config + challenge_tracks + answer_options), Duplicate buttons on /admin/sets/[id] and /admin/challenges/[id], URL-bound filter/sort on /admin/tracks and /admin/challenges, new src/lib/variants.ts (getVariantIcon/getVariantColor), variant icon badges in challenge lists/picker/header, empty states           |
+| 2026-05-12 | Batch D — Bug 11: deferred challenge_attempt creation to explicit "Start challenge" button; pre-game gate shows tutorial + variant icon; `startChallenge` form action (admin client, ignoreDuplicates); `window.location.reload()` on success so onMount timer re-runs with new timerEndsAt |
+| 2026-05-12 | Batch E — Admin polish: ActivityFeed.svelte with realtime activity_log subscription on dashboard; recap Highlight Reel (fastest correct answer per challenge in /admin/sets/[id]/recap); powerup category UI (collapsible sections, tri-state master toggle per category with localStorage persistence) |
+| 2026-05-12 | Path X — Bug 5 fix: Waveform.svelte WeakMap caching for MediaElementAudioSourceNode in `<script module>` prevents double-createMediaElementSource InvalidStateError; festival palette tokens in Tailwind v4 @theme (7 tokens: magenta, cyan, yellow, violet, orange, night, ice); homepage wordmark + tagline polish |
+| 2026-05-12 | Visual identity theming pass: /sets/[id]/podium (TV spectacle — night-sky bg, ambient radial gradients, festival-palette glow per pedestal position, bounceIn + scale reveal animations, 3 recap states); /play/thanks (reflective celebration — team color stripe, hero score in mixup-yellow, challenge cards with variant icons, best-moment callout, stagger animations); /play/waiting (ceremonial suspense — 3 slow-drifting ambient gradients, festival color-cycling 3-ring pulse, reveal card CSS sparkle rings, post-reveal rank badge) |
 
 ## Technical notes
+
+### Festival palette tokens
+
+Defined in `src/routes/layout.css` under `@theme {}` (Tailwind v4 — NOT `tailwind.config.js`). Use as utility classes `text-mixup-magenta`, `bg-mixup-cyan`, `text-mixup-ice/50` etc.:
+
+| Token               | Hex       | Role                                    |
+| ------------------- | --------- | --------------------------------------- |
+| `--color-mixup-magenta` | `#ff2daa` | Primary accent, wordmark, badges        |
+| `--color-mixup-cyan`    | `#00e5ff` | Secondary accent, borders, pulse        |
+| `--color-mixup-yellow`  | `#ffe600` | Score numbers, highlight callouts       |
+| `--color-mixup-violet`  | `#7c4dff` | Tertiary accent, 3rd-place podium glow  |
+| `--color-mixup-orange`  | `#ff7f11` | Warm accent                             |
+| `--color-mixup-night`   | `#0b0b1f` | Page background for all festival pages  |
+| `--color-mixup-ice`     | `#e5f2ff` | Primary body text on dark backgrounds   |
+
+Pages using this palette: `/` (homepage), `/sets/[id]/podium`, `/play/thanks`, `/play/waiting`.
+
+### Per-page visual treatment
+
+Each player-facing and TV-display surface has its own visual identity — NOT the homepage 6-variant random background system:
+
+| Page | Treatment |
+| ---- | --------- |
+| `/sets/[id]/podium` | Max-saturation spectacle. Night-sky bg, three ambient radial gradients, festival-palette glow rims per pedestal (magenta=1st, cyan=2nd, violet=3rd), bounceIn reveal with scale + box-shadow pulse, pending/revealing/complete states |
+| `/play/waiting` | Ceremonial suspense. Three slow-drifting ambient blobs (10–13s breathe), festival color-cycling 3-ring pulse element, team-color 1px top stripe, state-dependent heading (waiting / post-reveal rank badge), carousel with cyan accent, CSS sparkle rings on reveal card |
+| `/play/thanks` | Reflective celebration. Single ambient gradient (calmer), team-color stripe + identity pill, hero score in mixup-yellow, best-moment magenta callout, challenge cards with variant icons + cyan left border, stagger animations |
+| `/leaderboard` | Realtime TV scores |
+| Active challenge | Minimal — content-first, no ambient decoration |
+| Admin | Utility-first — single accent stripe |
+
+### Challenge start gate (Bug 11)
+
+`challenge_attempts` rows are **not** created in the load function. On first arrival without an existing attempt, the player sees a pre-game gate (variant icon, tutorial text if set, "Start challenge →" button). The button fires `?/startChallenge` (admin client, `onConflict: 'challenge_id,team_id', ignoreDuplicates: true`). On success, `window.location.reload()` forces a full mount so `onMount` re-initialises the countdown timer from the new `timerEndsAt`.
+
+Template guard order in the challenge page:
+```
+{#if result}           → results screen
+{:else if !data.attempt && data.challenge.status !== 'active'} → challenge ended
+{:else if !data.attempt}                                        → pre-game gate
+{:else}                                                         → in-game form
+```
+
+### Waveform audio source caching
+
+`src/lib/components/ui/Waveform.svelte` uses a module-level `WeakMap<HTMLAudioElement, MediaElementAudioSourceNode>` (in `<script module>`) to cache audio source nodes. The Web Audio API throws `InvalidStateError` if `createMediaElementSource()` is called twice on the same element — even after `disconnect()` — because the browser marks the element as "captured". The `getOrCreateMediaElementSource()` helper prevents this from the `$effect` / WaveSurfer `ready` callback race.
 
 ### Variant helpers
 
@@ -391,7 +446,7 @@ DELETE FROM players;
 - **Future — Solo + sets**: allow solo players to also pick a set so their scores group with other solos in the same set.
 - **Session 8d — Solo mode polish**: solo group leaderboard, solo private mode, host preview mode.
 - **Future — Persistent player accounts**: optional registration so regulars can keep stats across visits.
-- **Session 11 — The Recap polish**: `/admin/sets/[id]/recap` exists; needs podium animation improvements, fastest-answer callouts, and player-side celebrations.
+- **Session 11 — The Recap polish**: `/admin/sets/[id]/recap` now has fastest-answer Highlight Reel. TV podium (`/sets/[id]/podium`) has festival-palette theming with reveal animations. Player-side celebrations (`/play/waiting` reveal card) have sparkle rings + rank badge. Remaining: deeper podium animation polish, confetti on complete state.
 
 ### Game sets — key data relationships (added 8c)
 
