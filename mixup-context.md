@@ -530,7 +530,7 @@ Note: `recap_state` must be set to `'pending'` (not NULL) and `recap_ranking` to
 
 ---
 
-## 13. Where we left off (May 12, 2026)
+## 13. Where we left off (May 13, 2026)
 
 **Recently shipped (verified):**
 
@@ -548,6 +548,7 @@ Note: `recap_state` must be set to `'pending'` (not NULL) and `recap_ranking` to
 - **Batch E — Admin polish**: ActivityFeed.svelte on dashboard (realtime activity_log); recap Highlight Reel (fastest answers); powerup category UI (collapsible + tri-state master toggle)
 - **Path X — Bug 5 fix**: Waveform.svelte WeakMap caching; festival palette tokens in @theme; homepage wordmark polish
 - **Visual identity theming pass**: `/sets/[id]/podium` (TV spectacle), `/play/thanks` (reflective celebration), `/play/waiting` (ceremonial suspense) — all using festival palette, each with distinct visual treatment
+- **DevNav**: floating dev-only navigation drawer (`src/lib/components/DevNav.svelte`), mounted in root layout behind `import.meta.env.DEV`; `/api/dev/state` GET endpoint (403 in prod); 6 route sections; active-set context block; search + arrow-key nav; localStorage persistence; terminal aesthetic (mono, dark, lime)
 
 **Pushed but partially unverified (need full walk):**
 

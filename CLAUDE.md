@@ -224,6 +224,7 @@ src/
 | 2026-05-12 | Batch E — Admin polish: ActivityFeed.svelte with realtime activity_log subscription on dashboard; recap Highlight Reel (fastest correct answer per challenge in /admin/sets/[id]/recap); powerup category UI (collapsible sections, tri-state master toggle per category with localStorage persistence) |
 | 2026-05-12 | Path X — Bug 5 fix: Waveform.svelte WeakMap caching for MediaElementAudioSourceNode in `<script module>` prevents double-createMediaElementSource InvalidStateError; festival palette tokens in Tailwind v4 @theme (7 tokens: magenta, cyan, yellow, violet, orange, night, ice); homepage wordmark + tagline polish |
 | 2026-05-12 | Visual identity theming pass: /sets/[id]/podium (TV spectacle — night-sky bg, ambient radial gradients, festival-palette glow per pedestal position, bounceIn + scale reveal animations, 3 recap states); /play/thanks (reflective celebration — team color stripe, hero score in mixup-yellow, challenge cards with variant icons, best-moment callout, stagger animations); /play/waiting (ceremonial suspense — 3 slow-drifting ambient gradients, festival color-cycling 3-ring pulse, reveal card CSS sparkle rings, post-reveal rank badge) |
+| 2026-05-13 | DevNav: floating dev-only navigation drawer (src/lib/components/DevNav.svelte) mounted in +layout.svelte behind import.meta.env.DEV guard; /api/dev/state GET endpoint (403 in prod); terminal aesthetic (mono, dark, lime); 6 collapsible route sections; active-set context block with quick links; dynamic [id] routes resolved via active set or recent-items dropdown; search filter; Cmd+K / Esc / arrow-key nav; localStorage persistence |
 
 ## Technical notes
 
@@ -279,6 +280,14 @@ Template guard order in the challenge page:
 ### game_sets.preset_slug
 
 `preset_slug text` (nullable, migration 0034) — stores a short slug like `'quick_fire'`, `'deep_cuts'`, etc. when a set was created from a preset template. NULL or `'custom'` both mean "no preset / hand-configured". Used in the sets list to show a category badge and for filtering via `?preset=custom`.
+
+### DevNav — dev-only floating navigation
+
+`src/lib/components/DevNav.svelte` is mounted in the root layout behind `{#if import.meta.env.DEV}`. It **never renders in production** — Vite eliminates the conditional at build time. Do not add production logic to this component.
+
+`/api/dev/state` (GET) returns `{ user, team_cookie, active_set, recent_sets, recent_challenges }` for the panel's context block. It returns 403 immediately if `!import.meta.env.DEV`. Uses `createAdminClient()` to bypass RLS. Do not add auth guards beyond that check — it is dev-only by design.
+
+The panel's `activeSetId` resolves as `devState?.active_set?.id ?? setIdOverride` — active Supabase set takes precedence, manual UUID paste is the fallback. All set-based route links derive from this single value.
 
 ### Input mode storage
 
