@@ -2,6 +2,7 @@
 	import './layout.css';
 	import favicon from '$lib/assets/favicon.svg';
 	import Toast from '$lib/components/ui/Toast.svelte';
+	import DevNav from '$lib/components/DevNav.svelte';
 
 	let { children } = $props();
 </script>
@@ -9,3 +10,6 @@
 <svelte:head><link rel="icon" href={favicon} /></svelte:head>
 {@render children()}
 <Toast />
+{#if import.meta.env.DEV}
+	<DevNav />
+{/if}
