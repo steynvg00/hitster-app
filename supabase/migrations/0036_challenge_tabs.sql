@@ -1,20 +1,6 @@
--- Migration 0036: challenge_tabs — replaces challenge_tracks with per-tab multi-source-clip model
---
--- New tables:
---   challenge_tabs              — one row per playable tab in a challenge
---   challenge_tab_source_tracks — source tracks per tab (N for mashup/fragments, 1 for others)
---   challenge_tab_clips         — clips per tab (M numbered clips for fragments, 1 for others)
---
--- Data migration:
---   Maps existing challenge_tracks rows → challenge_tabs + source_tracks + clips
---   Rewrites submissions.answers JSONB from old AnswerArrayEntry[] to new TabAnswer[] shape
---   Updates variant values: normal/vocal/kick/battle → standard
---   Updates variant_defaults: delete vocal/kick/battle; rename normal → standard
---
--- Drops: challenge_tracks (CASCADE)
+-- Migration 0036: challenge_tabs (FIXED ORDER — both CHECK constraints)
 
 -- ─── New tables ───────────────────────────────────────────────────────────────
-
 CREATE TABLE IF NOT EXISTS challenge_tabs (
     id           uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
     challenge_id uuid        NOT NULL REFERENCES challenges(id) ON DELETE CASCADE,
@@ -34,41 +20,45 @@ CREATE TABLE IF NOT EXISTS challenge_tab_clips (
     id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     tab_id          uuid NOT NULL REFERENCES challenge_tabs(id) ON DELETE CASCADE,
     clip_id         uuid NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
-    fragment_number int  NULL,   -- NULL = non-fragment; 1,2,3... = numbered fragment
+    fragment_number int  NULL,
     sort_order      int  NOT NULL DEFAULT 0
 );
 
 -- ─── RLS ─────────────────────────────────────────────────────────────────────
-
 ALTER TABLE challenge_tabs              ENABLE ROW LEVEL SECURITY;
 ALTER TABLE challenge_tab_source_tracks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE challenge_tab_clips         ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "anon_select_challenge_tabs"
     ON challenge_tabs FOR SELECT TO anon USING (true);
-
 CREATE POLICY "anon_select_challenge_tab_source_tracks"
     ON challenge_tab_source_tracks FOR SELECT TO anon USING (true);
-
 CREATE POLICY "anon_select_challenge_tab_clips"
     ON challenge_tab_clips FOR SELECT TO anon USING (true);
 
 -- ─── Realtime publication ─────────────────────────────────────────────────────
+DO $$ BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE challenge_tabs;              EXCEPTION WHEN others THEN null; END $$;
+DO $$ BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE challenge_tab_source_tracks; EXCEPTION WHEN others THEN null; END $$;
+DO $$ BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE challenge_tab_clips;         EXCEPTION WHEN others THEN null; END $$;
 
+-- ─── Widen BOTH CHECK constraints (challenges + variant_defaults) ─────────────
 DO $$ BEGIN
-    ALTER PUBLICATION supabase_realtime ADD TABLE challenge_tabs;
+    ALTER TABLE challenges DROP CONSTRAINT challenges_variant_check;
 EXCEPTION WHEN others THEN null; END $$;
 
-DO $$ BEGIN
-    ALTER PUBLICATION supabase_realtime ADD TABLE challenge_tab_source_tracks;
-EXCEPTION WHEN others THEN null; END $$;
+ALTER TABLE challenges
+    ADD CONSTRAINT challenges_variant_check
+    CHECK (variant IN ('standard','anthem','label','mashup','fragments','normal','vocal','kick','battle'));
 
 DO $$ BEGIN
-    ALTER PUBLICATION supabase_realtime ADD TABLE challenge_tab_clips;
+    ALTER TABLE variant_defaults DROP CONSTRAINT variant_defaults_variant_check;
 EXCEPTION WHEN others THEN null; END $$;
+
+ALTER TABLE variant_defaults
+    ADD CONSTRAINT variant_defaults_variant_check
+    CHECK (variant IN ('standard','anthem','label','mashup','fragments','normal','vocal','kick','battle'));
 
 -- ─── Data migration block ─────────────────────────────────────────────────────
-
 DO $$
 DECLARE
     ct_row          RECORD;
@@ -83,7 +73,6 @@ DECLARE
     lowest_clip_id  uuid;
     tab_pos         int;
 BEGIN
-    -- 1. For each challenge_tracks row → challenge_tab + source_track + clip
     FOR ct_row IN
         SELECT id, challenge_id, track_id, clip_id, sort_order
         FROM challenge_tracks
@@ -113,14 +102,10 @@ BEGIN
         END IF;
     END LOOP;
 
-    -- 2. Migrate variant values: normal/vocal/kick/battle → standard
     UPDATE challenges
     SET variant = 'standard'
     WHERE variant IN ('normal', 'vocal', 'kick', 'battle');
 
-    -- 3. Rewrite submissions.answers JSONB to new TabAnswer[] shape
-    --    Old: [{track_id, field_values, scored, total, breakdown?}]
-    --    New: [{tab_position, source_answers:[{slot_index, matched_source_track_id, field_values, scored, total}], breakdown?}]
     FOR sub_row IN
         SELECT id, challenge_id, answers
         FROM submissions
@@ -132,7 +117,6 @@ BEGIN
 
         FOR old_entry IN SELECT jsonb_array_elements(sub_row.answers)
         LOOP
-            -- Find the tab_position via the new challenge_tabs + source_tracks
             SELECT ct.position INTO tab_pos
             FROM challenge_tabs ct
             JOIN challenge_tab_source_tracks ctst ON ctst.tab_id = ct.id
@@ -140,9 +124,7 @@ BEGIN
               AND ctst.track_id::text = (old_entry->>'track_id')
             LIMIT 1;
 
-            IF tab_pos IS NULL THEN
-                tab_pos := entry_idx;
-            END IF;
+            IF tab_pos IS NULL THEN tab_pos := entry_idx; END IF;
 
             source_ans := jsonb_build_object(
                 'slot_index',              0,
@@ -170,11 +152,9 @@ BEGIN
         UPDATE submissions SET answers = new_answers WHERE id = sub_row.id;
     END LOOP;
 
-    -- 4. Update variant_defaults
     UPDATE variant_defaults SET variant = 'standard' WHERE variant = 'normal';
     DELETE FROM variant_defaults WHERE variant IN ('vocal', 'kick', 'battle');
 
-    -- 5. Ensure all 5 types have default rows
     INSERT INTO variant_defaults (variant, points_config)
     VALUES
         ('standard', '{"field_points":{"artist":10,"title":10,"year":10}}'::jsonb),
@@ -185,17 +165,16 @@ BEGIN
     ON CONFLICT (variant) DO NOTHING;
 END $$;
 
--- ─── Update challenges.variant CHECK constraint ───────────────────────────────
-
-DO $$ BEGIN
-    ALTER TABLE challenges DROP CONSTRAINT challenges_variant_check;
-EXCEPTION WHEN others THEN null; END $$;
-
+-- ─── Tighten BOTH CHECK constraints to new values only ────────────────────────
+ALTER TABLE challenges DROP CONSTRAINT challenges_variant_check;
 ALTER TABLE challenges
     ADD CONSTRAINT challenges_variant_check
-    CHECK (variant IN ('standard', 'anthem', 'label', 'mashup', 'fragments'));
+    CHECK (variant IN ('standard','anthem','label','mashup','fragments'));
+
+ALTER TABLE variant_defaults DROP CONSTRAINT variant_defaults_variant_check;
+ALTER TABLE variant_defaults
+    ADD CONSTRAINT variant_defaults_variant_check
+    CHECK (variant IN ('standard','anthem','label','mashup','fragments'));
 
 -- ─── Drop challenge_tracks ────────────────────────────────────────────────────
--- CASCADE removes all FK constraints referencing this table.
--- Inspect first with: SELECT viewname FROM pg_views WHERE definition ILIKE '%challenge_tracks%'
 DROP TABLE IF EXISTS challenge_tracks CASCADE;
