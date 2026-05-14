@@ -113,8 +113,11 @@
 
 	onMount(() => {
 		import('wavesurfer.js').then(({ default: WaveSurfer }) => {
+			const mediaEl = document.createElement('audio');
+			mediaEl.crossOrigin = 'anonymous';
 			ws = WaveSurfer.create({
 				container,
+				media: mediaEl,
 				waveColor,
 				progressColor,
 				height,

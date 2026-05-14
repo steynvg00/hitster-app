@@ -120,7 +120,7 @@
 								storage_object_path: mashupClip.storage_object_path,
 								resolved_url: mashupClip.storage_path
 							})}
-							<audio controls src={mashupClip.storage_path} class="mt-2 h-8 w-full rounded"></audio>
+							<audio controls crossorigin="anonymous" src={mashupClip.storage_path} class="mt-2 h-8 w-full rounded"></audio>
 						{/if}
 					</div>
 

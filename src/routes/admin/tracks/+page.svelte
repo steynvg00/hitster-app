@@ -1262,7 +1262,7 @@
 								<div class="flex items-center justify-between">
 									<div>
 										{#if primaryClip}
-											<audio controls src={primaryClip.storage_path} class="h-8 w-full rounded"
+											<audio controls crossorigin="anonymous" src={primaryClip.storage_path} class="h-8 w-full rounded"
 											></audio>
 										{/if}
 									</div>

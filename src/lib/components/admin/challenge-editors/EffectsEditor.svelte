@@ -207,7 +207,7 @@
 											storage_object_path: previewClip.storage_object_path,
 											resolved_url: previewClip.storage_path
 										})}
-										<audio controls src={previewClip.storage_path} class="mt-2 h-8 w-full rounded"
+										<audio controls crossorigin="anonymous" src={previewClip.storage_path} class="mt-2 h-8 w-full rounded"
 										></audio>
 									{/if}
 								{/if}
