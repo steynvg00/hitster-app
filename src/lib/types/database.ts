@@ -9,7 +9,7 @@ type PowerupCategory = 'offensive' | 'defensive' | 'information' | 'social' | 's
 type PowerupVisibility = 'public' | 'target_only' | 'hidden' | 'silent';
 type PowerupTargetType = 'self' | 'team' | 'all_others' | 'none';
 type ClipType = 'snippet' | 'fragment' | 'kick' | 'vocal' | 'mashup';
-type ChallengeType = 'standard' | 'anthem' | 'label' | 'mashup' | 'fragments';
+type ChallengeType = 'standard' | 'anthem' | 'label' | 'mashup' | 'fragments' | 'effects';
 type AnswerField = 'artist' | 'title' | 'year' | 'label' | 'festival' | 'vocal_source' | 'grouping';
 type NfcTagPurpose =
 	| 'team_identity'
@@ -278,6 +278,8 @@ export type Database = {
 					position: number;
 					created_at: string;
 					created_by: string | null;
+					effects: Json | null;
+					mashup_id: string | null;
 				};
 				Insert: {
 					id?: string;
@@ -285,6 +287,8 @@ export type Database = {
 					position?: number;
 					created_at?: string;
 					created_by?: string | null;
+					effects?: Json | null;
+					mashup_id?: string | null;
 				};
 				Update: {
 					id?: string;
@@ -292,6 +296,53 @@ export type Database = {
 					position?: number;
 					created_at?: string;
 					created_by?: string | null;
+					effects?: Json | null;
+					mashup_id?: string | null;
+				};
+				Relationships: [];
+			};
+			mashups: {
+				Row: {
+					id: string;
+					name: string;
+					primary_clip_id: string;
+					created_at: string;
+					created_by: string | null;
+				};
+				Insert: {
+					id?: string;
+					name: string;
+					primary_clip_id: string;
+					created_at?: string;
+					created_by?: string | null;
+				};
+				Update: {
+					id?: string;
+					name?: string;
+					primary_clip_id?: string;
+					created_at?: string;
+					created_by?: string | null;
+				};
+				Relationships: [];
+			};
+			mashup_sources: {
+				Row: {
+					id: string;
+					mashup_id: string;
+					track_id: string;
+					sort_order: number;
+				};
+				Insert: {
+					id?: string;
+					mashup_id: string;
+					track_id: string;
+					sort_order?: number;
+				};
+				Update: {
+					id?: string;
+					mashup_id?: string;
+					track_id?: string;
+					sort_order?: number;
 				};
 				Relationships: [];
 			};
@@ -836,6 +887,8 @@ export type ChallengeTabRow = Database['public']['Tables']['challenge_tabs']['Ro
 export type ChallengeTabSourceTrackRow =
 	Database['public']['Tables']['challenge_tab_source_tracks']['Row'];
 export type ChallengeTabClipRow = Database['public']['Tables']['challenge_tab_clips']['Row'];
+export type MashupRow = Database['public']['Tables']['mashups']['Row'];
+export type MashupSourceRow = Database['public']['Tables']['mashup_sources']['Row'];
 export type AttemptRow = Database['public']['Tables']['challenge_attempts']['Row'];
 export type AnswerOptionRow = Database['public']['Tables']['answer_options']['Row'];
 export type SubmissionRow = Database['public']['Tables']['submissions']['Row'];

@@ -34,7 +34,7 @@ export interface Clip {
 
 // ─── Challenge types ──────────────────────────────────────────────────────────
 
-export type ChallengeType = 'standard' | 'anthem' | 'label' | 'mashup' | 'fragments';
+export type ChallengeType = 'standard' | 'anthem' | 'label' | 'mashup' | 'fragments' | 'effects';
 
 export interface Challenge {
 	id: string;
@@ -45,6 +45,34 @@ export interface Challenge {
 	is_active: boolean;
 }
 
+// ─── Effects chain config (stored as challenge_tabs.effects JSONB) ───────────
+
+export interface EffectsConfig {
+	pitch?: { enabled: boolean; semitones: number }; // -12 to +12
+	tempo?: { enabled: boolean; rate: number }; // 0.5 to 2.0
+	lowpass?: { enabled: boolean; cutoff_hz: number }; // 20 to 20000
+	highpass?: { enabled: boolean; cutoff_hz: number }; // 20 to 20000
+	bandpass?: { enabled: boolean; freq_hz: number; q: number };
+	phaser?: { enabled: boolean; rate_hz: number; depth: number }; // depth 0–1
+	flanger?: { enabled: boolean; rate_hz: number; depth: number };
+}
+
+// ─── Mashup library ──────────────────────────────────────────────────────────
+
+export interface Mashup {
+	id: string;
+	name: string;
+	primary_clip_id: string;
+	created_at: string;
+}
+
+export interface MashupSource {
+	id: string;
+	mashup_id: string;
+	track_id: string;
+	sort_order: number;
+}
+
 // ─── Challenge tabs (replaces challenge_tracks) ───────────────────────────────
 
 export interface ChallengeTab {
@@ -52,6 +80,8 @@ export interface ChallengeTab {
 	challenge_id: string;
 	position: number;
 	created_at: string;
+	effects: EffectsConfig | null; // effects variant only
+	mashup_id: string | null; // mashup variant only
 }
 
 export interface ChallengeTabSourceTrack {

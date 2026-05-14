@@ -6,7 +6,8 @@ export const CHALLENGE_TYPES = [
 	'anthem',
 	'label',
 	'mashup',
-	'fragments'
+	'fragments',
+	'effects'
 ] as const satisfies readonly ChallengeType[];
 
 // Keep VARIANTS as an alias for callers that haven't migrated yet
@@ -19,7 +20,8 @@ const TYPE_ICON: Record<ChallengeType, string> = {
 	anthem: 'Flag',
 	label: 'Tag',
 	mashup: 'Blend',
-	fragments: 'Puzzle'
+	fragments: 'Puzzle',
+	effects: 'Sliders'
 };
 
 const TYPE_COLOR: Record<ChallengeType, string> = {
@@ -27,15 +29,17 @@ const TYPE_COLOR: Record<ChallengeType, string> = {
 	anthem: 'bg-mixup-magenta/10 text-mixup-magenta',
 	label: 'bg-mixup-yellow/10 text-mixup-yellow',
 	mashup: 'bg-mixup-violet/10 text-mixup-violet',
-	fragments: 'bg-mixup-orange/10 text-mixup-orange'
+	fragments: 'bg-mixup-orange/10 text-mixup-orange',
+	effects: 'bg-green-900/20 text-green-400'
 };
 
 const TYPE_DESCRIPTION: Record<ChallengeType, string> = {
 	standard: 'Artist · Title · Year',
 	anthem: 'Festival · Artist · Title · Year',
 	label: 'Label · Artist · Title · Year',
-	mashup: 'N source tracks + 1 clip per tab',
-	fragments: 'N source tracks + numbered clips per tab'
+	mashup: 'Pick a mashup; players identify source tracks',
+	fragments: 'Numbered clips; players name each source track',
+	effects: 'Audio FX chain per tab — artist · title · year'
 };
 
 export const TYPE_FIELDS: Record<ChallengeType, string[]> = {
@@ -43,7 +47,8 @@ export const TYPE_FIELDS: Record<ChallengeType, string[]> = {
 	anthem: ['festival', 'artist', 'title', 'year'],
 	label: ['label', 'artist', 'title', 'year'],
 	mashup: ['artist', 'title', 'year'],
-	fragments: ['artist', 'title', 'year', 'grouping']
+	fragments: ['artist', 'title', 'year', 'grouping'],
+	effects: ['artist', 'title', 'year']
 };
 
 export function getTypeIcon(type: string): typeof LucideIcons.Music {

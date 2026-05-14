@@ -30,7 +30,8 @@ export const TYPE_FIELDS: Record<string, AnswerField[]> = {
 	anthem: ['festival', 'artist', 'title', 'year'],
 	label: ['label', 'artist', 'title', 'year'],
 	mashup: ['artist', 'title', 'year'],
-	fragments: ['artist', 'title', 'year', 'grouping']
+	fragments: ['artist', 'title', 'year', 'grouping'],
+	effects: ['artist', 'title', 'year']
 };
 
 // Keep VARIANT_FIELDS as an alias pointing at the same data
@@ -41,7 +42,8 @@ export const DEFAULT_INPUT_MODES: Record<string, Partial<Record<AnswerField, Inp
 	anthem: { festival: 'combobox', artist: 'combobox', title: 'open_text', year: 'slider' },
 	label: { label: 'combobox', artist: 'combobox', title: 'open_text', year: 'slider' },
 	mashup: { artist: 'combobox', title: 'open_text', year: 'slider' },
-	fragments: { artist: 'combobox', title: 'open_text', year: 'slider', grouping: 'open_text' }
+	fragments: { artist: 'combobox', title: 'open_text', year: 'slider', grouping: 'open_text' },
+	effects: { artist: 'combobox', title: 'open_text', year: 'slider' }
 };
 
 export const FIELD_POOL_TABLE: Partial<Record<AnswerField, string>> = {
