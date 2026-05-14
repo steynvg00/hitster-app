@@ -235,8 +235,8 @@
 		{:else if isMashup}
 			<MashupEditor
 				tabs={data.tabs}
-				sourceTracksByTab={data.sourceTracksByTab}
-				clipsByTab={data.clipsByTab}
+				mashups={data.mashups}
+				mashupSources={data.mashupSources}
 				allTracks={data.allTracks}
 				clips={data.clips}
 				{pointsConfig}

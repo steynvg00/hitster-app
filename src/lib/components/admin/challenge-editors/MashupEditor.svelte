@@ -5,27 +5,22 @@
 
 	type Track = { id: string; artist: string; title: string; year: number };
 	type Clip = { id: string; track_id: string; type: string; storage_path: string };
-	type Tab = { id: string; position: number };
-	type Src = { id: string; tab_id: string; track_id: string; sort_order: number };
-	type TabClip = {
-		id: string;
-		tab_id: string;
-		clip_id: string;
-		fragment_number: number | null;
-		sort_order: number;
-	};
+	type Tab = { id: string; position: number; mashup_id?: string | null };
+	type Mashup = { id: string; name: string; primary_clip_id: string };
+	type MashupSource = { id: string; mashup_id: string; track_id: string; sort_order: number };
+
 	let {
 		tabs,
-		sourceTracksByTab,
-		clipsByTab,
+		mashups,
+		mashupSources,
 		allTracks,
 		clips,
 		pointsConfig,
 		fieldModes: savedFieldModes
 	}: {
 		tabs: Tab[];
-		sourceTracksByTab: Src[];
-		clipsByTab: TabClip[];
+		mashups: Mashup[];
+		mashupSources: MashupSource[];
 		allTracks: Track[];
 		clips: Clip[];
 		pointsConfig: Record<string, number>;
@@ -41,14 +36,10 @@
 	] as const;
 	const fields = TYPE_FIELDS['mashup'];
 
-	function srcsForTab(tabId: string): Src[] {
-		return sourceTracksByTab
-			.filter((s) => s.tab_id === tabId)
+	function sourcesForMashup(mashupId: string): MashupSource[] {
+		return mashupSources
+			.filter((s) => s.mashup_id === mashupId)
 			.sort((a, b) => a.sort_order - b.sort_order);
-	}
-
-	function clipsForTab(tabId: string): TabClip[] {
-		return clipsByTab.filter((c) => c.tab_id === tabId).sort((a, b) => a.sort_order - b.sort_order);
 	}
 
 	function currentMode(field: string): string {
@@ -70,7 +61,8 @@
 		</form>
 	</div>
 	<p class="mb-4 text-xs text-zinc-500">
-		Each tab has one mashup clip and N source tracks. Players identify all source tracks.
+		Each tab is a mashup. Pick a pre-configured mashup — its clip and source tracks are set in the
+		Mashup manager.
 	</p>
 
 	{#if tabs.length === 0}
@@ -82,9 +74,9 @@
 	{:else}
 		<div class="space-y-6">
 			{#each tabs as tab, tabIdx (tab.id)}
-				{@const srcs = srcsForTab(tab.id)}
-				{@const tabClips = clipsForTab(tab.id)}
-				{@const mashupClip = tabClips[0]}
+				{@const mashup = mashups.find((m) => m.id === tab.mashup_id)}
+				{@const mashupClip = mashup ? clips.find((c) => c.id === mashup.primary_clip_id) : null}
+				{@const sources = tab.mashup_id ? sourcesForMashup(tab.mashup_id) : []}
 
 				<div class="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
 					<div class="mb-3 flex items-center justify-between">
@@ -103,86 +95,46 @@
 						</form>
 					</div>
 
-					<!-- Mashup clip (any clip in library) -->
+					<!-- Mashup picker -->
 					<div class="mb-4">
-						<label class="mb-1 block text-xs text-zinc-400">Mashup clip</label>
-						<form method="POST" action="?/setTabClip" use:enhance>
+						<label class="mb-1 block text-xs text-zinc-400">Mashup</label>
+						<form method="POST" action="?/setTabMashup" use:enhance>
 							<input type="hidden" name="tab_id" value={tab.id} />
-							<input type="hidden" name="existing_clip_id" value={mashupClip?.id ?? ''} />
 							<SearchablePicker
-								name="clip_id"
-								items={clips.map((c) => {
-									const t = allTracks.find((t) => t.id === c.track_id);
-									return {
-										id: c.id,
-										label: t ? `${t.artist} — ${t.title}` : c.track_id.slice(0, 8),
-										subtitle: `[${c.type}]`
-									};
-								})}
-								value={mashupClip?.clip_id ?? ''}
-								placeholder="Search clips…"
-								emptyLabel="— no clip —"
+								name="mashup_id"
+								items={mashups.map((m) => ({ id: m.id, label: m.name }))}
+								value={tab.mashup_id ?? ''}
+								placeholder="Search mashups…"
+								emptyLabel="— no mashup —"
 							/>
 						</form>
-						{#if mashupClip?.clip_id}
-							{@const previewClip = clips.find((c) => c.id === mashupClip.clip_id)}
-							{#if previewClip}
-								<audio controls src={previewClip.storage_path} class="mt-2 h-8 w-full rounded"
-								></audio>
-							{/if}
+						{#if mashupClip}
+							<audio controls src={mashupClip.storage_path} class="mt-2 h-8 w-full rounded"></audio>
 						{/if}
 					</div>
 
-					<!-- Source tracks list -->
-					<div class="mb-3">
-						<div class="mb-2 flex items-center justify-between">
-							<span class="text-xs font-semibold text-zinc-400">Source Tracks ({srcs.length})</span>
-						</div>
-
-						{#if srcs.length === 0}
-							<p class="text-xs text-zinc-600 italic">No source tracks yet — add at least 2.</p>
-						{:else}
-							<div class="mb-2 space-y-1">
-								{#each srcs as src (src.id)}
-									{@const t = allTracks.find((t) => t.id === src.track_id)}
-									<div
-										class="flex items-center justify-between rounded bg-zinc-800 px-3 py-1.5 text-xs text-zinc-300"
-									>
-										<span
-											>{t ? `${t.artist} — ${t.title} (${t.year})` : src.track_id.slice(0, 8)}</span
-										>
-										<form method="POST" action="?/removeTabSourceTrack" use:enhance class="inline">
-											<input type="hidden" name="src_id" value={src.id} />
-											<button type="submit" class="ml-2 text-red-700 hover:text-red-400">✕</button>
-										</form>
-									</div>
-								{/each}
-							</div>
-						{/if}
-
-						<!-- Add another source track -->
-						<form method="POST" action="?/addTabSourceTrack" use:enhance class="flex gap-2">
-							<input type="hidden" name="tab_id" value={tab.id} />
-							<div class="flex-1">
-								<SearchablePicker
-									name="track_id"
-									items={allTracks.map((t) => ({
-										id: t.id,
-										label: `${t.artist} — ${t.title}`,
-										subtitle: String(t.year)
-									}))}
-									placeholder="+ Add source track…"
-									emptyLabel="— none —"
-								/>
-							</div>
-							<button
-								type="submit"
-								class="rounded-lg bg-zinc-700 px-3 py-1 text-xs font-semibold text-zinc-200 hover:bg-zinc-600"
+					<!-- Source tracks (read-only, derived from mashup) -->
+					{#if mashup}
+						<div>
+							<span class="mb-2 block text-xs font-semibold text-zinc-400"
+								>Source tracks ({sources.length})</span
 							>
-								Add
-							</button>
-						</form>
-					</div>
+							{#if sources.length === 0}
+								<p class="text-xs text-zinc-600 italic">
+									No sources configured — edit in Mashup manager.
+								</p>
+							{:else}
+								<div class="flex flex-wrap gap-1.5">
+									{#each sources as src (src.id)}
+										{@const t = allTracks.find((t) => t.id === src.track_id)}
+										<span class="rounded-full bg-zinc-800 px-2.5 py-0.5 text-xs text-zinc-300">
+											{t ? `${t.artist} — ${t.title} (${t.year})` : src.track_id.slice(0, 8)}
+										</span>
+									{/each}
+								</div>
+							{/if}
+						</div>
+					{/if}
 				</div>
 			{/each}
 		</div>

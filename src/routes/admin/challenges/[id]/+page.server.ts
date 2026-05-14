@@ -22,21 +22,25 @@ export const load: PageServerLoad = async ({ params }) => {
 
 	const tabIds = (tabs ?? []).map((t) => t.id);
 
-	const [sourceTracksResult, tabClipsResult, allTracksResult, answerOptionsResult] =
-		await Promise.all([
-			tabIds.length
-				? db
-						.from('challenge_tab_source_tracks')
-						.select('*')
-						.in('tab_id', tabIds)
-						.order('sort_order')
-				: Promise.resolve({ data: [] }),
-			tabIds.length
-				? db.from('challenge_tab_clips').select('*').in('tab_id', tabIds).order('sort_order')
-				: Promise.resolve({ data: [] }),
-			db.from('tracks').select('*').order('artist'),
-			db.from('answer_options').select('*').eq('challenge_id', params.id)
-		]);
+	const [
+		sourceTracksResult,
+		tabClipsResult,
+		allTracksResult,
+		answerOptionsResult,
+		mashupsResult,
+		mashupSourcesResult
+	] = await Promise.all([
+		tabIds.length
+			? db.from('challenge_tab_source_tracks').select('*').in('tab_id', tabIds).order('sort_order')
+			: Promise.resolve({ data: [] }),
+		tabIds.length
+			? db.from('challenge_tab_clips').select('*').in('tab_id', tabIds).order('sort_order')
+			: Promise.resolve({ data: [] }),
+		db.from('tracks').select('*').order('artist'),
+		db.from('answer_options').select('*').eq('challenge_id', params.id),
+		db.from('mashups').select('*').order('name'),
+		db.from('mashup_sources').select('*').order('sort_order')
+	]);
 
 	const allTracks = allTracksResult.data ?? [];
 	const allTrackIds = allTracks.map((t) => t.id);
@@ -53,7 +57,9 @@ export const load: PageServerLoad = async ({ params }) => {
 		clipsByTab: tabClipsResult.data ?? [],
 		allTracks,
 		clips: clips ?? [],
-		answerOptions: answerOptionsResult.data ?? []
+		answerOptions: answerOptionsResult.data ?? [],
+		mashups: mashupsResult.data ?? [],
+		mashupSources: mashupSourcesResult.data ?? []
 	};
 };
 
@@ -273,6 +279,17 @@ export const actions: Actions = {
 		const { error: e } = await db.from('challenge_tab_clips').delete().eq('id', tc_id);
 		if (e) return fail(500, { error: e.message });
 		return { success: true, action: 'removeTabClip' };
+	},
+
+	setTabMashup: async ({ request }) => {
+		const db = createAdminClient();
+		const data = await request.formData();
+		const tab_id = data.get('tab_id') as string;
+		const mashup_id = (data.get('mashup_id') as string) || null;
+		if (!tab_id) return fail(400, { error: 'Missing tab_id' });
+		const { error: e } = await db.from('challenge_tabs').update({ mashup_id }).eq('id', tab_id);
+		if (e) return fail(500, { error: e.message });
+		return { success: true, action: 'setTabMashup' };
 	},
 
 	// ── Answer options / input modes ────────────────────────────────────────────
