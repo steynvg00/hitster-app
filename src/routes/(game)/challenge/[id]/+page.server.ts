@@ -180,14 +180,16 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 					? clip.storage_path
 					: supabase.storage.from('clips').getPublicUrl(clip.storage_path).data.publicUrl
 				: '';
-			// For effects variant: use tab-level effects; otherwise use clip-level effects
+			// Gate Tone.js effects to effects variant only. Old clips may carry
+			// stale clip-level {pitch, tempo} data that would incorrectly trigger
+			// Tone.js on non-effects challenges.
 			const effects =
 				challenge.variant === 'effects'
 					? {
 							pitch: tabEffects?.pitch?.enabled ? tabEffects.pitch.semitones : 0,
 							tempo: tabEffects?.tempo?.enabled ? tabEffects.tempo.rate : 1
 						}
-					: ((clip?.effects as { pitch?: number; tempo?: number } | null) ?? {});
+					: {};
 			return {
 				id: tc.id,
 				clipId: tc.clip_id,
