@@ -180,24 +180,15 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 					? clip.storage_path
 					: supabase.storage.from('clips').getPublicUrl(clip.storage_path).data.publicUrl
 				: '';
-			// Gate Tone.js effects to effects variant only. Old clips may carry
-			// stale clip-level {pitch, tempo} data that would incorrectly trigger
-			// Tone.js on non-effects challenges.
-			const effects =
-				challenge.variant === 'effects'
-					? {
-							pitch: tabEffects?.pitch?.enabled ? tabEffects.pitch.semitones : 0,
-							tempo: tabEffects?.tempo?.enabled ? tabEffects.tempo.rate : 1
-						}
-					: {};
 			return {
 				id: tc.id,
 				clipId: tc.clip_id,
 				fragmentNumber: tc.fragment_number,
 				sortOrder: tc.sort_order,
 				clipUrl,
-				effects,
-				tabEffects: challenge.variant === 'effects' ? tabEffects : undefined
+				// Pass full EffectsConfig — Waveform handles all 7 effects.
+				// null for non-effects variants so Waveform skips the Web Audio chain.
+				effects: challenge.variant === 'effects' ? tabEffects : null
 			};
 		});
 

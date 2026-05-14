@@ -365,6 +365,18 @@
 		}
 	});
 
+	onMount(() => {
+		if (data.challenge.variant === 'effects') {
+			console.log('[FX]', {
+				variant: data.challenge.variant,
+				tabEffects: data.tabs.map((t) => ({
+					tabId: t.id,
+					clips: t.clips.map((c) => ({ clipId: c.clipId, effects: c.effects }))
+				}))
+			});
+		}
+	});
+
 	$effect(() => {
 		if (
 			!data.attempt &&
@@ -906,7 +918,7 @@
 							progressColor={teamHex}
 							effects={activeTab?.clips[activeClipIndex]?.effects ??
 								activeTab?.primaryClipEffects ??
-								{}}
+								undefined}
 							onPlayStateChange={(p) => (isPlaying = p)}
 							onTimeUpdate={(t, d) => {
 								currentTime = t;

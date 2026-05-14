@@ -21,18 +21,14 @@
 
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-
-	export interface ClipEffects {
-		pitch?: number; // semitones, -12 to +12
-		tempo?: number; // multiplier, 0.5 to 2.0
-	}
+	import type { EffectsConfig } from '$lib/types/index.js';
 
 	interface Props {
 		src: string;
 		height?: number;
 		progressColor?: string;
 		waveColor?: string;
-		effects?: ClipEffects;
+		effects?: EffectsConfig | null;
 		onPlayStateChange?: (isPlaying: boolean) => void;
 		onTimeUpdate?: (currentTime: number, duration: number) => void;
 	}
@@ -51,67 +47,173 @@
 	let ws: import('wavesurfer.js').default | null = null;
 	let isReady = $state(false);
 
-	// Tone.js nodes — created lazily when effects are applied
+	// Stored AudioContext — set when the Web Audio chain is first established.
+	// Accessed synchronously in playPause() so the user gesture can resume it.
+	let audioCtx: AudioContext | null = null;
+
+	// Tone.js nodes
 	let toneSourceNode: MediaElementAudioSourceNode | null = null;
 	let tonePitchShift: import('tone').PitchShift | null = null;
+	let tonePhaser: import('tone').Phaser | null = null;
+	let toneLowpass: import('tone').Filter | null = null;
+	let toneHighpass: import('tone').Filter | null = null;
+	let toneBandpass: import('tone').Filter | null = null;
+
+	function disposeToneNodes() {
+		tonePitchShift?.dispose();
+		tonePitchShift = null;
+		tonePhaser?.dispose();
+		tonePhaser = null;
+		toneLowpass?.dispose();
+		toneLowpass = null;
+		toneHighpass?.dispose();
+		toneHighpass = null;
+		toneBandpass?.dispose();
+		toneBandpass = null;
+	}
 
 	export function playPause() {
+		// Resume AudioContext synchronously from user gesture.
+		// iOS/Safari keeps AudioContext suspended until audioContext.resume() is called
+		// from within a user-gesture event handler. The play button click is that gesture.
+		if (audioCtx && audioCtx.state !== 'running') {
+			audioCtx.resume();
+			console.log('[FX] AudioContext resuming from playPause, was:', audioCtx.state);
+		}
 		ws?.playPause();
 	}
+
 	export function pause() {
 		ws?.pause();
 	}
+
 	export function getIsPlaying(): boolean {
 		return ws?.isPlaying() ?? false;
 	}
 
-	// Apply effects to the Tone.js chain whenever effects prop changes
+	// Run applyEffects whenever the component is ready and effects change.
+	// Only the $effect drives this — NOT the 'ready' callback — to avoid
+	// a double-call race between the async applyEffects and the sync isReady setter.
 	$effect(() => {
 		if (!isReady || !ws) return;
 		applyEffects(effects);
 	});
 
-	async function applyEffects(fx: ClipEffects | undefined) {
-		const pitch = fx?.pitch ?? 0;
-		const tempo = fx?.tempo ?? 1;
-		const hasEffects = pitch !== 0 || tempo !== 1;
+	async function applyEffects(fx: EffectsConfig | null | undefined) {
+		console.log('[FX] effects config received', fx);
 
-		const mediaEl = ws?.getMediaElement();
-		if (!mediaEl) return;
-
-		if (!hasEffects) {
-			// Reset to defaults — clean up Tone.js chain if set up
-			mediaEl.playbackRate = 1;
-			if (tonePitchShift) {
-				tonePitchShift.pitch = 0;
-			}
+		const mediaEl = ws?.getMediaElement() as HTMLAudioElement | null;
+		console.log('[FX] audioEl', mediaEl);
+		if (!mediaEl) {
+			console.log('[FX] getMediaElement returned null — cannot apply effects');
 			return;
 		}
 
-		const Tone = await import('tone');
-		await Tone.start();
-		const ctx = Tone.context.rawContext as AudioContext;
-
-		// Retrieve or create the cached source node (never call createMediaElementSource twice)
-		const source = getOrCreateMediaElementSource(mediaEl as HTMLAudioElement, ctx);
-
-		if (!tonePitchShift) {
-			tonePitchShift = new Tone.PitchShift();
-			tonePitchShift.toDestination();
+		// ── Tempo (no Web Audio needed — just playbackRate) ───────────────────
+		if (fx?.tempo?.enabled && fx.tempo.rate !== 1) {
+			mediaEl.playbackRate = fx.tempo.rate;
+			console.log('[FX] applying tempo', fx.tempo.rate, '— playbackRate now', mediaEl.playbackRate);
+		} else {
+			mediaEl.playbackRate = 1;
 		}
 
-		// Disconnect before re-wiring so stale connections don't persist
-		source.disconnect();
-		source.connect(tonePitchShift.input as unknown as AudioNode);
-		toneSourceNode = source;
+		if (fx?.flanger?.enabled) {
+			console.log('[FX] flanger is enabled but not implemented (stub — audio passes through unmodified)');
+		}
 
-		// tempo changes pitch by log2(tempo)*12 semitones; correct for it
-		const tempoCorrection = -Math.log2(tempo) * 12;
-		mediaEl.playbackRate = tempo;
-		tonePitchShift.pitch = pitch + tempoCorrection;
+		// ── Decide if we need the Web Audio chain ─────────────────────────────
+		const needsWebAudio =
+			fx?.pitch?.enabled ||
+			fx?.lowpass?.enabled ||
+			fx?.highpass?.enabled ||
+			fx?.bandpass?.enabled ||
+			fx?.phaser?.enabled;
+
+		if (!needsWebAudio) {
+			// If a chain was previously built, route source directly to destination
+			if (toneSourceNode && audioCtx) {
+				toneSourceNode.disconnect();
+				toneSourceNode.connect(audioCtx.destination);
+				console.log('[FX] no Web Audio effects active — source routed to destination directly');
+			}
+			disposeToneNodes();
+			return;
+		}
+
+		// ── Build Web Audio chain ─────────────────────────────────────────────
+		const Tone = await import('tone');
+		// Tone.start() will resolve immediately if the context is already running,
+		// or queue a resume for the next user gesture. We also call audioCtx.resume()
+		// in playPause() (synchronously on the click) to handle iOS/Safari strictly.
+		await Tone.start();
+		const ctx = Tone.context.rawContext as AudioContext;
+		audioCtx = ctx;
+		console.log('[FX] audio context state', ctx.state);
+
+		const source = getOrCreateMediaElementSource(mediaEl, ctx);
+		toneSourceNode = source;
+		console.log('[FX] media source node', source);
+
+		// Disconnect existing chain before rebuilding
+		source.disconnect();
+		disposeToneNodes();
+
+		// Tempo correction: changing playbackRate also shifts pitch by log2(rate)*12 st.
+		// PitchShift at the end of the chain cancels this side-effect.
+		const tempoRate = fx?.tempo?.enabled && fx.tempo.rate ? fx.tempo.rate : 1;
+		const tempoCorrection = tempoRate !== 1 ? -Math.log2(tempoRate) * 12 : 0;
+		const pitchSemitones = fx?.pitch?.enabled && fx.pitch ? fx.pitch.semitones : 0;
+
+		// Build ordered chain of Tone nodes
+		type TN = import('tone').ToneAudioNode;
+		const chain: TN[] = [];
+
+		if (fx?.lowpass?.enabled) {
+			toneLowpass = new Tone.Filter(fx.lowpass.cutoff_hz, 'lowpass');
+			chain.push(toneLowpass);
+		}
+		if (fx?.highpass?.enabled) {
+			toneHighpass = new Tone.Filter(fx.highpass.cutoff_hz, 'highpass');
+			chain.push(toneHighpass);
+		}
+		if (fx?.bandpass?.enabled) {
+			toneBandpass = new Tone.Filter({ type: 'bandpass', frequency: fx.bandpass.freq_hz, Q: fx.bandpass.q });
+			chain.push(toneBandpass);
+		}
+		if (fx?.phaser?.enabled) {
+			tonePhaser = new Tone.Phaser({
+				frequency: fx.phaser.rate_hz,
+				octaves: fx.phaser.depth * 5,
+				baseFrequency: 350
+			});
+			chain.push(tonePhaser);
+		}
+
+		// PitchShift always terminates the chain — handles pitch shift and tempo correction.
+		// With pitch=0 and tempoCorrection=0 it is effectively a pass-through.
+		tonePitchShift = new Tone.PitchShift(pitchSemitones + tempoCorrection);
+		chain.push(tonePitchShift);
+
+		// source (native) → chain[0] → chain[1] → … → chain[n-1] → Tone destination
+		// Tone.js patches AudioNode.prototype.connect so native nodes can connect to Tone nodes.
+		source.connect(chain[0].input as unknown as AudioNode);
+		for (let i = 0; i < chain.length - 1; i++) {
+			chain[i].connect(chain[i + 1]);
+		}
+		chain[chain.length - 1].toDestination();
+
+		console.log('[FX] chain connected', {
+			nodeCount: chain.length,
+			pitchSemitones,
+			tempoRate,
+			tempoCorrection: tempoCorrection.toFixed(2),
+			terminalNode: 'PitchShift→destination'
+		});
 	}
 
 	onMount(() => {
+		console.log('[FX] Waveform mounted', { src, effects });
+
 		import('wavesurfer.js').then(({ default: WaveSurfer }) => {
 			const mediaEl = document.createElement('audio');
 			mediaEl.crossOrigin = 'anonymous';
@@ -129,8 +231,8 @@
 
 			ws.on('ready', () => {
 				isReady = true;
-				// Apply any initial effects
-				applyEffects(effects);
+				console.log('[FX] WaveSurfer ready', { mediaEl: ws?.getMediaElement(), effects });
+				// applyEffects is driven by the $effect above — do not call it here
 			});
 			ws.on('play', () => onPlayStateChange?.(true));
 			ws.on('pause', () => onPlayStateChange?.(false));
@@ -140,10 +242,12 @@
 	});
 
 	onDestroy(() => {
-		tonePitchShift?.dispose();
-		tonePitchShift = null;
-		toneSourceNode?.disconnect();
-		toneSourceNode = null;
+		disposeToneNodes();
+		if (toneSourceNode) {
+			toneSourceNode.disconnect();
+			toneSourceNode = null;
+		}
+		audioCtx = null;
 		ws?.destroy();
 		ws = null;
 	});

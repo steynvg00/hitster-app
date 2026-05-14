@@ -779,7 +779,7 @@
 														bind:this={waveformRefs[clip.id]}
 														src={clip.storage_path}
 														height={32}
-														effects={clip.effects ?? {}}
+														effects={undefined}
 														onPlayStateChange={(p) => (clipPlaying[clip.id] = p)}
 													/>
 												</div>
