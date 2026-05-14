@@ -27,7 +27,7 @@ export const load: PageServerLoad = async ({ cookies }) => {
 
 	// Enrich each set with current player count
 	const setIds = (sets ?? []).map((s) => s.id);
-	let playerCounts: Record<string, number> = {};
+	const playerCounts: Record<string, number> = {};
 
 	if (setIds.length > 0) {
 		const { data: counts } = await db
@@ -58,11 +58,7 @@ export const actions: Actions = {
 
 		const db = createAdminClient();
 
-		const { data: gameSet } = await db
-			.from('game_sets')
-			.select('*')
-			.eq('id', set_id)
-			.maybeSingle();
+		const { data: gameSet } = await db.from('game_sets').select('*').eq('id', set_id).maybeSingle();
 
 		if (!gameSet || gameSet.status !== 'active') {
 			return fail(400, { error: 'Set is not active' });

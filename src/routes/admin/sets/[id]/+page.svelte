@@ -27,6 +27,7 @@
 		data.teamProgress ?? []
 	);
 	// Track which player IDs are already counted (prevents double-counting on UPDATE events)
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
 	const knownPlayerIds = new Set<string>(data.playerIds ?? []);
 
 	onMount(() => {
@@ -119,9 +120,6 @@
 	let selected = $state<string[]>(data.setChallenges.map((sc) => sc.challenge_id));
 	const available = $derived(data.allChallenges.filter((c) => !selected.includes(c.id)));
 
-	function add(id: string) {
-		if (!selected.includes(id)) selected = [...selected, id];
-	}
 	function remove(id: string) {
 		selected = selected.filter((s) => s !== id);
 	}
@@ -318,14 +316,6 @@
 	);
 
 	const VISIBILITY_OPTIONS: PowerupVisibility[] = ['public', 'target_only', 'hidden', 'silent'];
-
-	const CATEGORY_COLORS: Record<string, string> = {
-		offensive: 'bg-red-900/60 text-red-300',
-		defensive: 'bg-blue-900/60 text-blue-300',
-		information: 'bg-purple-900/60 text-purple-300',
-		social: 'bg-green-900/60 text-green-300',
-		self: 'bg-zinc-700 text-zinc-300'
-	};
 
 	const CATEGORY_ORDER = ['offensive', 'defensive', 'information', 'social', 'self'] as const;
 

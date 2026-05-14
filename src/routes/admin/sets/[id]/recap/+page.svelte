@@ -19,7 +19,7 @@
 
 	const totalTeams = $derived(data.rankedTeams.length);
 	const allRevealed = $derived(revealIndex >= totalTeams);
-	const isPodiumPhase = $derived(
+	const _isPodiumPhase = $derived(
 		revealIndex >= totalTeams - Math.min(3, totalTeams) && revealIndex < totalTeams
 	);
 
@@ -112,7 +112,7 @@
 					<form
 						method="POST"
 						action="?/reveal"
-						use:enhance={({ cancel }) => {
+						use:enhance={({ cancel: _cancel }) => {
 							return async ({ update }) => {
 								await update({ reset: false });
 							};
@@ -232,7 +232,7 @@
 				{@const justRevealed = justRevealedId === team.id}
 				{@const pos = revealed ? rankPosition(team.id) : null}
 				{@const tc = teamColors[team.color] ?? { bg: '#27272a', text: '#fff' }}
-				{@const teamPlayers = data.playersByTeam[team.id] ?? []}
+				{@const _teamPlayers = data.playersByTeam[team.id] ?? []}
 				<div
 					class="overflow-hidden rounded-2xl border transition-all duration-700
 					{revealed ? 'border-transparent' : 'border-zinc-700'}

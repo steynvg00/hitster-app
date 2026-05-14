@@ -10,13 +10,17 @@ export const load: PageServerLoad = async ({ url }) => {
 	const hasClips = url.searchParams.get('has_clips') ?? 'all';
 	const sort = url.searchParams.get('sort') ?? 'name_asc';
 
-	const [tracksResult, clipsResult] = await Promise.all([
+	const [tracksResult, clipsResult, mashupsResult, mashupSourcesResult] = await Promise.all([
 		db.from('tracks').select('*'),
-		db.from('clips').select('*').order('track_id, created_at')
+		db.from('clips').select('*').order('track_id, created_at'),
+		db.from('mashups').select('*').order('name'),
+		db.from('mashup_sources').select('*').order('sort_order')
 	]);
 
 	let tracks = tracksResult.data ?? [];
 	const clips = clipsResult.data ?? [];
+	const mashups = mashupsResult.data ?? [];
+	const mashupSources = mashupSourcesResult.data ?? [];
 
 	const tracksWithClips = new Set(clips.map((c) => c.track_id));
 	const allGenres = [
@@ -61,6 +65,8 @@ export const load: PageServerLoad = async ({ url }) => {
 	return {
 		tracks,
 		clips,
+		mashups,
+		mashupSources,
 		allGenres,
 		q,
 		genreFilter,
@@ -205,25 +211,75 @@ export const actions: Actions = {
 		return { success: true };
 	},
 
-	updateClipEffects: async ({ request }) => {
+	createMashup: async ({ request, locals }) => {
 		const db = createAdminClient();
 		const data = await request.formData();
-		const id = data.get('id') as string;
-		const pitch = parseFloat(data.get('pitch') as string);
-		const tempo = parseFloat(data.get('tempo') as string);
-
-		if (!id) return fail(400, { error: 'Missing clip id' });
-		if (isNaN(pitch) || pitch < -12 || pitch > 12)
-			return fail(400, { error: 'Pitch out of range' });
-		if (isNaN(tempo) || tempo < 0.5 || tempo > 2) return fail(400, { error: 'Tempo out of range' });
-
-		const effects: { pitch?: number; tempo?: number } = {};
-		if (pitch !== 0) effects.pitch = pitch;
-		if (tempo !== 1) effects.tempo = tempo;
-
-		const { error } = await db.from('clips').update({ effects }).eq('id', id);
+		const name = (data.get('name') as string)?.trim();
+		const primary_clip_id = (data.get('primary_clip_id') as string)?.trim();
+		if (!name) return fail(400, { error: 'Name is required' });
+		if (!primary_clip_id) return fail(400, { error: 'Primary clip is required' });
+		const { data: inserted, error } = await db
+			.from('mashups')
+			.insert({ name, primary_clip_id, created_by: locals.user?.id ?? null })
+			.select('id')
+			.single();
 		if (error) return fail(500, { error: error.message });
-		return { success: true };
+		return { success: true, action: 'createMashup', id: inserted.id };
+	},
+
+	updateMashup: async ({ request }) => {
+		const db = createAdminClient();
+		const data = await request.formData();
+		const id = (data.get('id') as string)?.trim();
+		const name = (data.get('name') as string)?.trim();
+		const primary_clip_id = (data.get('primary_clip_id') as string)?.trim();
+		if (!id) return fail(400, { error: 'Missing id' });
+		if (!name) return fail(400, { error: 'Name is required' });
+		if (!primary_clip_id) return fail(400, { error: 'Primary clip is required' });
+		const { error } = await db.from('mashups').update({ name, primary_clip_id }).eq('id', id);
+		if (error) return fail(500, { error: error.message });
+		return { success: true, action: 'updateMashup' };
+	},
+
+	addMashupSource: async ({ request }) => {
+		const db = createAdminClient();
+		const data = await request.formData();
+		const mashup_id = (data.get('mashup_id') as string)?.trim();
+		const track_id = (data.get('track_id') as string)?.trim();
+		if (!mashup_id || !track_id) return fail(400, { error: 'Missing mashup_id or track_id' });
+		const { data: existing } = await db
+			.from('mashup_sources')
+			.select('sort_order')
+			.eq('mashup_id', mashup_id)
+			.order('sort_order', { ascending: false })
+			.limit(1);
+		const sort_order = (existing?.[0]?.sort_order ?? -1) + 1;
+		const { error } = await db
+			.from('mashup_sources')
+			.insert({ mashup_id, track_id, sort_order })
+			.single();
+		if (error) return fail(500, { error: error.message });
+		return { success: true, action: 'addMashupSource' };
+	},
+
+	removeMashupSource: async ({ request }) => {
+		const db = createAdminClient();
+		const data = await request.formData();
+		const id = (data.get('id') as string)?.trim();
+		if (!id) return fail(400, { error: 'Missing id' });
+		const { error } = await db.from('mashup_sources').delete().eq('id', id);
+		if (error) return fail(500, { error: error.message });
+		return { success: true, action: 'removeMashupSource' };
+	},
+
+	deleteMashup: async ({ request }) => {
+		const db = createAdminClient();
+		const data = await request.formData();
+		const id = (data.get('id') as string)?.trim();
+		if (!id) return fail(400, { error: 'Missing id' });
+		const { error } = await db.from('mashups').delete().eq('id', id);
+		if (error) return fail(500, { error: error.message });
+		return { success: true, action: 'deleteMashup' };
 	},
 
 	deleteClip: async ({ request }) => {

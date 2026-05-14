@@ -10,8 +10,12 @@
 	const f = $derived(form as any);
 
 	const teamColors: Record<string, string> = {
-		blue: '#3b82f6', yellow: '#eab308', green: '#22c55e',
-		red: '#ef4444', indigo: '#6366f1', black: '#1e293b'
+		blue: '#3b82f6',
+		yellow: '#eab308',
+		green: '#22c55e',
+		red: '#ef4444',
+		indigo: '#6366f1',
+		black: '#1e293b'
 	};
 
 	// Realtime: reload page when review_requests change
@@ -23,7 +27,9 @@
 			})
 			.subscribe();
 
-		return () => { supabaseBrowser.removeChannel(channel); };
+		return () => {
+			supabaseBrowser.removeChannel(channel);
+		};
 	});
 
 	// Per-request award points (host can adjust before approving)
@@ -35,7 +41,7 @@
 	}
 </script>
 
-<div class="p-6 max-w-3xl">
+<div class="max-w-3xl p-6">
 	<div class="mb-6">
 		<h1 class="text-2xl font-bold text-white">Review Queue</h1>
 		<p class="mt-0.5 text-sm text-zinc-400">
@@ -61,14 +67,14 @@
 		<div class="space-y-4">
 			{#each data.requests as rr (rr.id)}
 				{@const hex = teamColors[rr.teamColor] ?? '#71717a'}
-				{() => initAward(rr)}
+				{@const _award = initAward(rr)}
 
 				<div class="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
 					<!-- Header -->
 					<div class="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
 						<div class="flex items-center gap-2">
 							<span
-								class="rounded-full px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide text-white"
+								class="rounded-full px-2.5 py-0.5 text-xs font-bold tracking-wide text-white uppercase"
 								style="background-color: {hex};"
 							>
 								{rr.teamName}
@@ -84,22 +90,32 @@
 					<div class="px-5 py-4">
 						<div class="mb-4 grid grid-cols-3 gap-4 text-sm">
 							<div>
-								<div class="mb-0.5 text-xs font-semibold uppercase tracking-wide text-zinc-500">Field</div>
-								<div class="font-medium text-white capitalize">{rr.field_name.replace('_', ' ')}</div>
+								<div class="mb-0.5 text-xs font-semibold tracking-wide text-zinc-500 uppercase">
+									Field
+								</div>
+								<div class="font-medium text-white capitalize">
+									{rr.field_name.replace('_', ' ')}
+								</div>
 							</div>
 							<div>
-								<div class="mb-0.5 text-xs font-semibold uppercase tracking-wide text-zinc-500">They answered</div>
+								<div class="mb-0.5 text-xs font-semibold tracking-wide text-zinc-500 uppercase">
+									They answered
+								</div>
 								<div class="font-medium text-white">{rr.submitted}</div>
 							</div>
 							<div>
-								<div class="mb-0.5 text-xs font-semibold uppercase tracking-wide text-zinc-500">Current score</div>
+								<div class="mb-0.5 text-xs font-semibold tracking-wide text-zinc-500 uppercase">
+									Current score
+								</div>
 								<div class="font-medium text-white">{rr.currentScore} pts</div>
 							</div>
 						</div>
 
 						{#if rr.player_message}
 							<div class="mb-4 rounded-lg border border-zinc-700 bg-zinc-800/60 px-3 py-2">
-								<div class="mb-0.5 text-xs font-semibold uppercase tracking-wide text-zinc-500">Message</div>
+								<div class="mb-0.5 text-xs font-semibold tracking-wide text-zinc-500 uppercase">
+									Message
+								</div>
 								<p class="text-sm text-zinc-300 italic">"{rr.player_message}"</p>
 							</div>
 						{/if}

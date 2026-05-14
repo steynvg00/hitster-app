@@ -80,7 +80,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 };
 
 export const actions: Actions = {
-	runLastSet: async ({ locals }) => {
+	runLastSet: async () => {
 		const db = createAdminClient();
 
 		const { data: sets } = await db

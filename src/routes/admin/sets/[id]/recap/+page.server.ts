@@ -23,7 +23,7 @@ export const load: PageServerLoad = async ({ params }) => {
 	const challengeIds = (setChallenges ?? []).map((sc) => sc.challenge_id);
 
 	// Per-set scores + fastest-answer data — load in parallel
-	let teamSetScores = new Map<string, number>();
+	const teamSetScores = new Map<string, number>();
 	type FastestAnswer = {
 		challenge_id: string;
 		challenge_name: string;
@@ -32,7 +32,7 @@ export const load: PageServerLoad = async ({ params }) => {
 		team_display_name: string;
 		elapsed_seconds: number;
 	};
-	let fastestAnswers: FastestAnswer[] = [];
+	const fastestAnswers: FastestAnswer[] = [];
 
 	if (challengeIds.length > 0) {
 		const [{ data: subs }, { data: challenges }, { data: attempts }] = await Promise.all([

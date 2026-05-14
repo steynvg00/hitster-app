@@ -649,11 +649,11 @@
 				</button>
 
 				{#if avatarMenuOpen}
-					<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
 					<div
 						class="absolute top-11 right-0 z-50 w-48 rounded-xl border border-zinc-800 bg-zinc-900 py-1 shadow-xl"
 						onclick={(e) => e.stopPropagation()}
 						onkeydown={(e) => e.stopPropagation()}
+						role="menu"
 					>
 						<div class="border-b border-zinc-800 px-4 py-2.5">
 							<div class="text-sm font-medium text-zinc-200">{data.user.displayName}</div>

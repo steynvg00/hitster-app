@@ -32,7 +32,7 @@
 	// ── region / trim state ────────────────────────────────────────────────────
 	let regionStart = $state(0);
 	let regionEnd = $state(0);
-	let audioDuration = $state(0);
+	let _audioDuration = $state(0);
 
 	const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 	const selectionLabel = $derived(
@@ -53,12 +53,13 @@
 	async function loadFfmpeg() {
 		if (ffmpegInstance) return ffmpegInstance;
 		const { FFmpeg } = await import('@ffmpeg/ffmpeg');
-		const { toBlobURL } = await import('@ffmpeg/util');
-		const base = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
 		const ff = new FFmpeg();
+		// Core files are copied from node_modules/@ffmpeg/core to /static/ffmpeg/ by the
+		// Vite plugin in vite.config.ts. Same-origin load avoids CDN CORS and works with
+		// the COOP/COEP headers set for /admin/* in hooks.server.ts.
 		await ff.load({
-			coreURL: await toBlobURL(`${base}/ffmpeg-core.js`, 'text/javascript'),
-			wasmURL: await toBlobURL(`${base}/ffmpeg-core.wasm`, 'application/wasm')
+			coreURL: '/ffmpeg/ffmpeg-core.js',
+			wasmURL: '/ffmpeg/ffmpeg-core.wasm'
 		});
 		ffmpegInstance = ff;
 		return ff;
@@ -86,7 +87,7 @@
 			});
 
 			ws.on('ready', (dur: number) => {
-				audioDuration = dur;
+				_audioDuration = dur;
 				regionStart = 0;
 				regionEnd = dur;
 				wsReady = true;
@@ -169,10 +170,14 @@
 
 			await ff.writeFile(inputName, await fetchFile(file));
 			await ff.exec([
-				'-i', inputName,
-				'-ss', String(regionStart.toFixed(3)),
-				'-to', String(regionEnd.toFixed(3)),
-				'-c', 'copy',
+				'-i',
+				inputName,
+				'-ss',
+				String(regionStart.toFixed(3)),
+				'-to',
+				String(regionEnd.toFixed(3)),
+				'-c',
+				'copy',
 				outputName
 			]);
 
@@ -213,19 +218,23 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
 	class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
-	onclick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-	onkeydown={(e) => { if (e.key === 'Escape') onClose(); }}
+	onclick={(e) => {
+		if (e.target === e.currentTarget) onClose();
+	}}
+	onkeydown={(e) => {
+		if (e.key === 'Escape') onClose();
+	}}
 >
 	<div class="w-full max-w-2xl rounded-2xl border border-zinc-700 bg-zinc-900 p-6 shadow-2xl">
 		<!-- Header -->
 		<div class="mb-4 flex items-center justify-between">
 			<div>
 				<h2 class="text-lg font-black text-white">Trim Clip</h2>
-				<p class="mt-0.5 text-xs text-zinc-500 truncate max-w-sm">{file.name}</p>
+				<p class="mt-0.5 max-w-sm truncate text-xs text-zinc-500">{file.name}</p>
 			</div>
 			<button
 				onclick={onClose}
-				class="rounded-lg p-2 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 transition-colors"
+				class="rounded-lg p-2 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
 				aria-label="Close"
 			>
 				✕
@@ -244,7 +253,7 @@
 
 		{#if wsReady}
 			<!-- Selection info -->
-			<div class="mb-4 rounded-lg bg-zinc-800 px-4 py-2 text-sm font-mono text-amber-400">
+			<div class="mb-4 rounded-lg bg-zinc-800 px-4 py-2 font-mono text-sm text-amber-400">
 				{selectionLabel}
 			</div>
 
@@ -254,15 +263,15 @@
 					onclick={toggleLoopPlay}
 					class="rounded-lg px-4 py-2 text-sm font-semibold transition-colors
 						{isLooping && isPlaying
-							? 'bg-amber-400 text-zinc-950'
-							: 'border border-zinc-600 text-zinc-300 hover:border-zinc-400 hover:text-white'}"
+						? 'bg-amber-400 text-zinc-950'
+						: 'border border-zinc-600 text-zinc-300 hover:border-zinc-400 hover:text-white'}"
 				>
 					{isLooping && isPlaying ? '⏸ Pause' : '▶ Play selection'}
 				</button>
 				{#if isPlaying}
 					<button
 						onclick={stopPlayback}
-						class="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-200 transition-colors"
+						class="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200"
 					>
 						■ Stop
 					</button>
@@ -271,7 +280,7 @@
 
 			<!-- Clip type -->
 			<div class="mb-4">
-				<label class="mb-1 block text-xs font-semibold uppercase tracking-widest text-zinc-500">
+				<label class="mb-1 block text-xs font-semibold tracking-widest text-zinc-500 uppercase">
 					Clip type
 				</label>
 				<div class="flex flex-wrap gap-2">
@@ -281,8 +290,8 @@
 							onclick={() => (clipType = ct)}
 							class="rounded-lg px-3 py-1 text-xs font-medium transition-colors
 								{clipType === ct
-									? 'bg-amber-400 text-zinc-950'
-									: 'border border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'}"
+								? 'bg-amber-400 text-zinc-950'
+								: 'border border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'}"
 						>
 							{ct}
 						</button>
@@ -293,23 +302,33 @@
 
 		<!-- Status / error -->
 		{#if phase === 'loadingFfmpeg'}
-			<div class="mb-4 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-3 text-sm text-zinc-400">
+			<div
+				class="mb-4 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-3 text-sm text-zinc-400"
+			>
 				Loading ffmpeg.wasm (~30 MB, once per session)…
 			</div>
 		{:else if phase === 'trimming'}
-			<div class="mb-4 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-3 text-sm text-zinc-400">
+			<div
+				class="mb-4 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-3 text-sm text-zinc-400"
+			>
 				Trimming audio…
 			</div>
 		{:else if phase === 'uploading'}
-			<div class="mb-4 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-3 text-sm text-zinc-400">
+			<div
+				class="mb-4 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-3 text-sm text-zinc-400"
+			>
 				Uploading clip…
 			</div>
 		{:else if phase === 'done'}
-			<div class="mb-4 rounded-lg border border-green-800 bg-green-950/40 px-4 py-3 text-sm text-green-400">
+			<div
+				class="mb-4 rounded-lg border border-green-800 bg-green-950/40 px-4 py-3 text-sm text-green-400"
+			>
 				Clip saved successfully!
 			</div>
 		{:else if phase === 'error'}
-			<div class="mb-4 rounded-lg border border-red-800 bg-red-950/40 px-4 py-3 text-sm text-red-400">
+			<div
+				class="mb-4 rounded-lg border border-red-800 bg-red-950/40 px-4 py-3 text-sm text-red-400"
+			>
 				{errorMsg}
 			</div>
 		{/if}
@@ -318,7 +337,7 @@
 		<div class="flex justify-end gap-2">
 			<button
 				onclick={onClose}
-				class="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-200 transition-colors"
+				class="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200"
 			>
 				{phase === 'done' ? 'Close' : 'Cancel'}
 			</button>
@@ -326,7 +345,7 @@
 				<button
 					onclick={saveTrimmed}
 					disabled={!wsReady || regionEnd <= regionStart}
-					class="rounded-lg bg-amber-400 px-4 py-2 text-sm font-bold text-zinc-950 hover:bg-amber-300 disabled:opacity-50 transition-colors"
+					class="rounded-lg bg-amber-400 px-4 py-2 text-sm font-bold text-zinc-950 transition-colors hover:bg-amber-300 disabled:opacity-50"
 				>
 					Save trimmed clip
 				</button>

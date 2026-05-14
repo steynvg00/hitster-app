@@ -6,6 +6,7 @@
 	import TrimModal from '$lib/components/ui/TrimModal.svelte';
 	import { Music } from 'lucide-svelte';
 	import HelpTooltip from '$lib/components/ui/HelpTooltip.svelte';
+	import SearchablePicker from '$lib/components/admin/SearchablePicker.svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -67,6 +68,7 @@
 
 	function toggleExpand(id: string) {
 		expandedTrack = expandedTrack === id ? null : id;
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity
 		selectedClips = new Set();
 	}
 
@@ -214,15 +216,11 @@
 	let waveformRefs = $state<Record<string, Waveform>>({});
 	let clipPlaying = $state<Record<string, boolean>>({});
 
-	// Per-clip effects editing state
-	type EffectsEdit = { pitch: number; tempo: number };
-	let effectsOpen = $state<Record<string, boolean>>({});
-	let effectsEdit = $state<Record<string, EffectsEdit>>({});
-
-	function openEffects(clipId: string, current: { pitch?: number; tempo?: number }) {
-		effectsEdit[clipId] = { pitch: current.pitch ?? 0, tempo: current.tempo ?? 1 };
-		effectsOpen[clipId] = true;
-	}
+	// Mashup section state
+	let expandedMashup = $state<string | null>(null);
+	let editingMashup = $state<string | null>(null);
+	let showCreateMashup = $state(false);
+	let mashupAddTrack = $state<Record<string, string>>({});
 
 	// Trim modal state
 	type TrimState = { file: File; trackId: string; orderIndex: number | null } | null;
@@ -232,7 +230,7 @@
 		trimModal = { file, trackId, orderIndex };
 	}
 
-	async function onTrimUploaded(trackId: string) {
+	async function onTrimUploaded(_trackId: string) {
 		trimModal = null;
 		await invalidateAll();
 	}
@@ -417,7 +415,6 @@
 					<div class="mb-1 text-xs font-semibold tracking-widest text-zinc-500 uppercase">
 						Clips (optional)
 					</div>
-					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<div
 						role="region"
 						aria-label="Drop audio files here"
@@ -768,16 +765,6 @@
 											{#if clip.duration != null}
 												<span class="text-xs text-zinc-600">{formatDuration(clip.duration)}</span>
 											{/if}
-											{#if (clip.effects?.pitch ?? 0) !== 0 || (clip.effects?.tempo ?? 1) !== 1}
-												<span
-													class="rounded bg-amber-400/15 px-1.5 py-0.5 font-mono text-xs text-amber-400"
-												>
-													{(clip.effects?.pitch ?? 0) !== 0
-														? `${clip.effects!.pitch! > 0 ? '+' : ''}${clip.effects!.pitch}st`
-														: ''}
-													{(clip.effects?.tempo ?? 1) !== 1 ? `${clip.effects!.tempo}×` : ''}
-												</span>
-											{/if}
 											<div class="flex min-w-0 flex-1 items-center gap-1.5">
 												<button
 													type="button"
@@ -797,14 +784,6 @@
 													/>
 												</div>
 											</div>
-											<button
-												type="button"
-												onclick={() => openEffects(clip.id, clip.effects ?? {})}
-												class="rounded px-1.5 py-0.5 text-xs text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
-												title="Effects"
-											>
-												⚙
-											</button>
 											<form method="POST" action="?/deleteClip" use:enhance class="shrink-0">
 												<input type="hidden" name="id" value={clip.id} />
 												<button
@@ -818,110 +797,6 @@
 												</button>
 											</form>
 										</div>
-
-										<!-- Effects panel -->
-										{#if effectsOpen[clip.id]}
-											<div class="border-t border-zinc-800 px-3 py-3">
-												<div
-													class="mb-2 text-xs font-semibold tracking-widest text-zinc-500 uppercase"
-												>
-													Effects
-												</div>
-												<div class="space-y-3">
-													<div>
-														<div class="mb-1 flex items-center justify-between">
-															<label class="text-xs text-zinc-400" for="pitch-{clip.id}">
-																Pitch: {(effectsEdit[clip.id]?.pitch ?? 0 > 0)
-																	? '+'
-																	: ''}{effectsEdit[clip.id]?.pitch ?? 0} semitones
-															</label>
-															<button
-																type="button"
-																onclick={() => {
-																	if (effectsEdit[clip.id]) effectsEdit[clip.id].pitch = 0;
-																}}
-																class="text-xs text-zinc-600 transition-colors hover:text-zinc-400"
-																>Reset</button
-															>
-														</div>
-														<input
-															id="pitch-{clip.id}"
-															type="range"
-															min="-12"
-															max="12"
-															step="1"
-															bind:value={effectsEdit[clip.id].pitch}
-															oninput={() => {
-																if (waveformRefs[clip.id]) {
-																	// live preview
-																}
-															}}
-															class="w-full accent-amber-400"
-														/>
-													</div>
-													<div>
-														<div class="mb-1 flex items-center justify-between">
-															<label class="text-xs text-zinc-400" for="tempo-{clip.id}">
-																Tempo: {effectsEdit[clip.id]?.tempo ?? 1}×
-															</label>
-															<button
-																type="button"
-																onclick={() => {
-																	if (effectsEdit[clip.id]) effectsEdit[clip.id].tempo = 1;
-																}}
-																class="text-xs text-zinc-600 transition-colors hover:text-zinc-400"
-																>Reset</button
-															>
-														</div>
-														<input
-															id="tempo-{clip.id}"
-															type="range"
-															min="0.5"
-															max="2"
-															step="0.05"
-															bind:value={effectsEdit[clip.id].tempo}
-															class="w-full accent-amber-400"
-														/>
-													</div>
-												</div>
-												<div class="mt-3 flex justify-end gap-2">
-													<button
-														type="button"
-														onclick={() => (effectsOpen[clip.id] = false)}
-														class="rounded px-3 py-1 text-xs text-zinc-500 transition-colors hover:text-zinc-300"
-													>
-														Cancel
-													</button>
-													<form
-														method="POST"
-														action="?/updateClipEffects"
-														use:enhance={() =>
-															async ({ update }) => {
-																await update({ reset: false });
-																effectsOpen[clip.id] = false;
-															}}
-													>
-														<input type="hidden" name="id" value={clip.id} />
-														<input
-															type="hidden"
-															name="pitch"
-															value={effectsEdit[clip.id]?.pitch ?? 0}
-														/>
-														<input
-															type="hidden"
-															name="tempo"
-															value={effectsEdit[clip.id]?.tempo ?? 1}
-														/>
-														<button
-															type="submit"
-															class="rounded bg-amber-400 px-3 py-1 text-xs font-bold text-zinc-950 transition-colors hover:bg-amber-300"
-														>
-															Save Effects
-														</button>
-													</form>
-												</div>
-											</div>
-										{/if}
 									</div>
 								{/each}
 							</div>
@@ -951,7 +826,6 @@
 							</div>
 
 							<!-- Drop target (quick upload — pre-trimmed files) -->
-							<!-- svelte-ignore a11y_no_static_element_interactions -->
 							<div
 								role="region"
 								aria-label="Drop audio files here"
@@ -1207,6 +1081,262 @@
 			{/if}
 		{/each}
 	</div>
+</div>
+
+<!-- ── Mashups ──────────────────────────────────────────────────────────────── -->
+<div class="mt-8 px-6">
+	<div class="mb-4 flex items-center justify-between">
+		<h2 class="text-sm font-bold tracking-widest text-amber-400 uppercase">Mashups</h2>
+		<button
+			type="button"
+			onclick={() => (showCreateMashup = !showCreateMashup)}
+			class="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-300 hover:bg-zinc-700"
+		>
+			+ Create Mashup
+		</button>
+	</div>
+
+	{#if showCreateMashup}
+		<form
+			method="POST"
+			action="?/createMashup"
+			use:enhance={() =>
+				async ({ update }) => {
+					await update({ reset: true });
+					showCreateMashup = false;
+				}}
+			class="mb-4 rounded-xl border border-zinc-700 bg-zinc-900 p-4"
+		>
+			<div class="mb-3 grid grid-cols-2 gap-3">
+				<div>
+					<label class="mb-1 block text-xs text-zinc-400">Name</label>
+					<input
+						type="text"
+						name="name"
+						required
+						placeholder="e.g. Hardstyle Megamix Vol. 1"
+						class="input-field"
+					/>
+				</div>
+				<div>
+					<label class="mb-1 block text-xs text-zinc-400">Primary clip</label>
+					<SearchablePicker
+						name="primary_clip_id"
+						items={data.clips.map((c) => {
+							const t = data.tracks.find((t) => t.id === c.track_id);
+							return {
+								id: c.id,
+								label: t ? `${t.artist} — ${t.title}` : c.track_id.slice(0, 8),
+								subtitle: `[${c.type}]`
+							};
+						})}
+						placeholder="Search clips…"
+						emptyLabel="— select a clip —"
+					/>
+				</div>
+			</div>
+			<div class="flex justify-end gap-2">
+				<button
+					type="button"
+					onclick={() => (showCreateMashup = false)}
+					class="rounded px-3 py-1.5 text-xs text-zinc-500 hover:text-zinc-300"
+				>
+					Cancel
+				</button>
+				<button
+					type="submit"
+					class="rounded-lg bg-amber-400 px-4 py-1.5 text-xs font-bold text-zinc-950 hover:bg-amber-300"
+				>
+					Create
+				</button>
+			</div>
+		</form>
+	{/if}
+
+	{#if data.mashups.length === 0 && !showCreateMashup}
+		<div
+			class="rounded-xl border border-dashed border-zinc-700 bg-zinc-900 p-8 text-center text-sm text-zinc-500"
+		>
+			No mashups yet — create one above to use in mashup-type challenges.
+		</div>
+	{:else}
+		<div class="space-y-2">
+			{#each data.mashups as mashup (mashup.id)}
+				{@const sources = data.mashupSources.filter((s) => s.mashup_id === mashup.id)}
+				{@const primaryClip = data.clips.find((c) => c.id === mashup.primary_clip_id)}
+				{@const primaryTrack = primaryClip
+					? data.tracks.find((t) => t.id === primaryClip.track_id)
+					: null}
+
+				<div class="rounded-xl border border-zinc-800 bg-zinc-900">
+					<!-- Header row -->
+					<div class="flex items-center gap-3 px-4 py-3">
+						<button
+							type="button"
+							onclick={() => (expandedMashup = expandedMashup === mashup.id ? null : mashup.id)}
+							class="flex flex-1 items-center gap-3 text-left"
+						>
+							<span class="font-semibold text-zinc-200">{mashup.name}</span>
+							<span class="text-xs text-zinc-500">
+								{#if primaryTrack}
+									clip: {primaryTrack.artist} — {primaryTrack.title}
+								{:else}
+									no primary clip
+								{/if}
+							</span>
+							<span class="rounded bg-zinc-800 px-1.5 py-0.5 text-xs text-zinc-400">
+								{sources.length} source{sources.length === 1 ? '' : 's'}
+							</span>
+						</button>
+						<form method="POST" action="?/deleteMashup" use:enhance class="shrink-0">
+							<input type="hidden" name="id" value={mashup.id} />
+							<button
+								type="submit"
+								onclick={(e) => {
+									if (!confirm('Delete this mashup?')) e.preventDefault();
+								}}
+								class="rounded px-1.5 py-0.5 text-xs text-red-700 hover:text-red-400">✕</button
+							>
+						</form>
+					</div>
+
+					{#if expandedMashup === mashup.id}
+						<div class="space-y-4 border-t border-zinc-800 px-4 py-4">
+							<!-- Edit name / primary clip -->
+							{#if editingMashup === mashup.id}
+								<form
+									method="POST"
+									action="?/updateMashup"
+									use:enhance={() =>
+										async ({ update }) => {
+											await update({ reset: false });
+											editingMashup = null;
+										}}
+									class="grid grid-cols-2 gap-3"
+								>
+									<input type="hidden" name="id" value={mashup.id} />
+									<div>
+										<label class="mb-1 block text-xs text-zinc-400">Name</label>
+										<input
+											type="text"
+											name="name"
+											value={mashup.name}
+											required
+											class="input-field"
+										/>
+									</div>
+									<div>
+										<label class="mb-1 block text-xs text-zinc-400">Primary clip</label>
+										<SearchablePicker
+											name="primary_clip_id"
+											items={data.clips.map((c) => {
+												const t = data.tracks.find((t) => t.id === c.track_id);
+												return {
+													id: c.id,
+													label: t ? `${t.artist} — ${t.title}` : c.track_id.slice(0, 8),
+													subtitle: `[${c.type}]`
+												};
+											})}
+											value={mashup.primary_clip_id}
+											placeholder="Search clips…"
+											emptyLabel="— select a clip —"
+										/>
+									</div>
+									<div class="col-span-2 flex justify-end gap-2">
+										<button
+											type="button"
+											onclick={() => (editingMashup = null)}
+											class="rounded px-3 py-1 text-xs text-zinc-500 hover:text-zinc-300"
+										>
+											Cancel
+										</button>
+										<button
+											type="submit"
+											class="rounded bg-amber-400 px-3 py-1 text-xs font-bold text-zinc-950 hover:bg-amber-300"
+										>
+											Save
+										</button>
+									</div>
+								</form>
+							{:else}
+								<div class="flex items-center justify-between">
+									<div>
+										{#if primaryClip}
+											<audio controls src={primaryClip.storage_path} class="h-8 w-full rounded"
+											></audio>
+										{/if}
+									</div>
+									<button
+										type="button"
+										onclick={() => (editingMashup = mashup.id)}
+										class="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
+									>
+										Edit
+									</button>
+								</div>
+							{/if}
+
+							<!-- Source tracks -->
+							<div>
+								<span class="mb-2 block text-xs font-semibold text-zinc-400">Source Tracks</span>
+								{#if sources.length === 0}
+									<p class="mb-2 text-xs text-zinc-600 italic">No source tracks yet.</p>
+								{:else}
+									<div class="mb-2 space-y-1">
+										{#each sources as src (src.id)}
+											{@const srcTrack = data.tracks.find((t) => t.id === src.track_id)}
+											<div
+												class="flex items-center justify-between rounded bg-zinc-800 px-3 py-1.5 text-xs text-zinc-300"
+											>
+												<span>
+													{srcTrack
+														? `${srcTrack.artist} — ${srcTrack.title} (${srcTrack.year})`
+														: src.track_id.slice(0, 8)}
+												</span>
+												<form
+													method="POST"
+													action="?/removeMashupSource"
+													use:enhance
+													class="inline"
+												>
+													<input type="hidden" name="id" value={src.id} />
+													<button type="submit" class="ml-2 text-red-700 hover:text-red-400"
+														>✕</button
+													>
+												</form>
+											</div>
+										{/each}
+									</div>
+								{/if}
+								<form method="POST" action="?/addMashupSource" use:enhance class="flex gap-2">
+									<input type="hidden" name="mashup_id" value={mashup.id} />
+									<div class="flex-1">
+										<SearchablePicker
+											name="track_id"
+											items={data.tracks.map((t) => ({
+												id: t.id,
+												label: `${t.artist} — ${t.title}`,
+												subtitle: String(t.year)
+											}))}
+											bind:value={mashupAddTrack[mashup.id]}
+											placeholder="+ Add source track…"
+											emptyLabel="— none —"
+										/>
+									</div>
+									<button
+										type="submit"
+										class="rounded-lg bg-zinc-700 px-3 py-1 text-xs font-semibold text-zinc-200 hover:bg-zinc-600"
+									>
+										Add
+									</button>
+								</form>
+							</div>
+						</div>
+					{/if}
+				</div>
+			{/each}
+		</div>
+	{/if}
 </div>
 
 {#if trimModal}
