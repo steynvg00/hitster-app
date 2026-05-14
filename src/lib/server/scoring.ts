@@ -401,6 +401,83 @@ export function scoreTab(
 	return { slotResults, tabTotal, tabMaxTotal, sourceAnswers };
 }
 
+// ─── Source-track resolver ────────────────────────────────────────────────────
+// Derives ordered TabSourceTrackData[] for a tab based on challenge type.
+
+export type TabSourceTrackRaw = {
+	id: string;
+	tab_id: string;
+	track_id: string;
+	sort_order: number;
+};
+
+export type MashupSourceRaw = {
+	id: string;
+	mashup_id: string;
+	track_id: string;
+	sort_order: number;
+};
+
+export type ClipRaw = {
+	id: string;
+	track_id: string;
+};
+
+export function getSourceTracksForTab(
+	challengeType: string,
+	tab: { id: string; mashup_id?: string | null },
+	explicitSources: TabSourceTrackRaw[],
+	mashupSources: MashupSourceRaw[],
+	tabClips: TabClipData[],
+	clips: ClipRaw[],
+	trackMap: Map<string, TrackData>
+): TabSourceTrackData[] {
+	if (challengeType === 'mashup') {
+		if (!tab.mashup_id) return [];
+		return mashupSources
+			.filter((s) => s.mashup_id === tab.mashup_id)
+			.sort((a, b) => a.sort_order - b.sort_order)
+			.flatMap((s) => {
+				const track = trackMap.get(s.track_id);
+				if (!track) return [];
+				return [{ id: s.id, tabId: tab.id, trackId: s.track_id, sortOrder: s.sort_order, track }];
+			});
+	}
+
+	if (challengeType === 'fragments') {
+		const seen = new Set<string>();
+		const result: TabSourceTrackData[] = [];
+		let sortOrder = 0;
+		for (const tc of tabClips
+			.filter((c) => c.tabId === tab.id)
+			.sort((a, b) => a.sortOrder - b.sortOrder)) {
+			const clip = clips.find((c) => c.id === tc.clipId);
+			if (!clip || seen.has(clip.track_id)) continue;
+			seen.add(clip.track_id);
+			const track = trackMap.get(clip.track_id);
+			if (!track) continue;
+			result.push({
+				id: `${tab.id}_${clip.track_id}`,
+				tabId: tab.id,
+				trackId: clip.track_id,
+				sortOrder: sortOrder++,
+				track
+			});
+		}
+		return result;
+	}
+
+	// standard / anthem / label / effects — use explicit source tracks
+	return explicitSources
+		.filter((s) => s.tab_id === tab.id)
+		.sort((a, b) => a.sort_order - b.sort_order)
+		.flatMap((s) => {
+			const track = trackMap.get(s.track_id);
+			if (!track) return [];
+			return [{ id: s.id, tabId: tab.id, trackId: s.track_id, sortOrder: s.sort_order, track }];
+		});
+}
+
 // ─── Bonus scoring ────────────────────────────────────────────────────────────
 
 export function computeBreakdown(base: number, bonus: BonusParams): ScoreBreakdown {
