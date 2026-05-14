@@ -5,6 +5,7 @@
 	import StandardEditor from '$lib/components/admin/challenge-editors/StandardEditor.svelte';
 	import MashupEditor from '$lib/components/admin/challenge-editors/MashupEditor.svelte';
 	import FragmentsEditor from '$lib/components/admin/challenge-editors/FragmentsEditor.svelte';
+	import EffectsEditor from '$lib/components/admin/challenge-editors/EffectsEditor.svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -15,7 +16,8 @@
 		anthem: 'Anthem',
 		label: 'Label',
 		mashup: 'Mashup',
-		fragments: 'Fragments'
+		fragments: 'Fragments',
+		effects: 'Effects'
 	};
 
 	// Difficulty star state
@@ -45,6 +47,7 @@
 	);
 	const isMashup = $derived(data.challenge.variant === 'mashup');
 	const isFragments = $derived(data.challenge.variant === 'fragments');
+	const isEffects = $derived(data.challenge.variant === 'effects');
 
 	const statusColor: Record<string, string> = {
 		draft: 'text-zinc-400 bg-zinc-800',
@@ -249,6 +252,8 @@
 				{pointsConfig}
 				fieldModes={savedFieldModes}
 			/>
+		{:else if isEffects}
+			<EffectsEditor tabs={data.tabs} {pointsConfig} fieldModes={savedFieldModes} />
 		{/if}
 	</div>
 </div>

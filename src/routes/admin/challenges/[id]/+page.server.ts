@@ -426,6 +426,26 @@ export const actions: Actions = {
 		return { success: true, action: 'saveFieldPoints' };
 	},
 
+	saveTabEffects: async ({ request }) => {
+		const db = createAdminClient();
+		const data = await request.formData();
+		const tab_id = data.get('tab_id') as string;
+		const effects_json = data.get('effects_json') as string;
+		if (!tab_id) return fail(400, { error: 'Missing tab_id' });
+		let effects: unknown;
+		try {
+			effects = JSON.parse(effects_json);
+		} catch {
+			return fail(400, { error: 'Invalid effects JSON' });
+		}
+		const { error: e } = await db
+			.from('challenge_tabs')
+			.update({ effects: effects as never })
+			.eq('id', tab_id);
+		if (e) return fail(500, { error: e.message });
+		return { success: true, action: 'saveTabEffects' };
+	},
+
 	duplicateChallenge: async ({ params, locals }) => {
 		const db = createAdminClient();
 
