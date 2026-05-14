@@ -45,7 +45,7 @@ The admin client is server-only. It must never be imported from `.svelte` files 
 
 ### Authentication
 
-Host auth uses **Supabase Auth** (email magic link + Google OAuth), added in Session A. The admin layout guard (`/admin/+layout.server.ts`) checks `locals.user` (set by `hooks.server.ts` from the Supabase session) and redirects to `/admin/login` if absent.
+Host auth uses **Supabase Auth** (email magic link + Google OAuth). The admin layout guard (`/admin/+layout.server.ts`) checks `locals.user` (set by `hooks.server.ts` from the Supabase session) and redirects to `/admin/login` if absent.
 
 Player and team identity still use custom HMAC-SHA256 signed cookies:
 
@@ -123,7 +123,7 @@ Default: deny all. Explicit policies for each permitted operation. All host writ
 src/
   lib/
     components/ui/     ← Combobox, MultipleChoice, OpenText, YearInput, Modal
-    components/game/   ← (game-specific components)
+    components/game/   ← game-specific components
     server/            ← supabase.ts, team.ts, admin.ts — server-only
     supabase-browser.ts ← singleton browser client
     variants.ts        ← VARIANTS const, getVariantIcon(), getVariantColor() helpers
@@ -137,38 +137,36 @@ src/
       join/            ← manual team picker
     admin/             ← host admin (auth-guarded by layout.server.ts)
       sets/            ← game set CRUD (list, create)
-        [id]/          ← Gameset Console — inline-editable fields, challenge picker, NFC cards, play-state controls
-          lobby/       ← realtime lobby grid (one column per team)
+        [id]/          ← Gameset Console — challenge picker, NFC cards, play-state controls
+          lobby/       ← realtime lobby grid
           recap/       ← host-controlled podium reveal sequence
       challenges/[id]/ ← challenge editor (tracks, answer options, input mode picker)
-      live/            ← realtime game console (polls /api/auto-submit + /api/player/sweep every 10s)
+      live/            ← realtime game console (polls /api/auto-submit every 10s)
       review/          ← manual review queue
       pools/           ← combobox answer pool management
       teams/           ← score adjustments + team photo upload
       tracks/          ← track + clip CRUD
-      variant-defaults/[variant]/ ← Tier 1 point defaults + streak config per variant
+      variant-defaults/[variant]/ ← point defaults + streak config per variant
     leaderboard/       ← TV display (realtime)
     nfc/[tag]/         ← NFC tap handler (server route only)
-    nfc/randomize/[set_id]/ ← randomizer entry point: joining→assign team, playing→game-in-progress, recap→game-over
-    nfc/hint/[challenge_id]/ ← records challenge_hints_used row → redirect to /challenge/[id]?hint=1
-    nfc/unlock/[challenge_id]/ ← records challenge_unlocks row (nfc_lock guard) → redirect to /challenge/[id]
-    nfc/game-in-progress/[set_id]/ ← placeholder: "game already started" page
-    nfc/game-over/[set_id]/ ← placeholder: "game over, view leaderboard" page
+    nfc/randomize/[set_id]/ ← randomizer: joining→assign team, playing→game-in-progress, recap→game-over
+    nfc/hint/[challenge_id]/ ← records challenge_hints_used → redirect to /challenge/[id]?hint=1
+    nfc/unlock/[challenge_id]/ ← records challenge_unlocks (nfc_lock guard) → redirect to /challenge/[id]
+    nfc/game-in-progress/[set_id]/ ← "game already started" page
+    nfc/game-over/[set_id]/        ← "game over, view leaderboard" page
     play/[mode]/       ← player onboarding (mode = solo | teams)
-      lobby/           ← lobby stub (solo mode only; teams mode goes to /sets)
-    play/teams/        ← static routes under teams (higher priority than [mode])
-      sets/            ← active game set picker → runs assignTeam → randomizing
+      lobby/           ← lobby stub (solo mode only)
+    play/teams/        ← static routes (higher priority than [mode])
+      sets/            ← active game set picker → assignTeam → randomizing
       randomizing/     ← CSS animation: rolling → reveal → continue → /team
-    sets/
-      [id]/
-        podium/        ← TV-display olympic podium (no auth gate); realtime recap reveals
+    sets/[id]/podium/  ← TV-display podium (no auth gate); realtime recap reveals
     api/
       player/
         leave/         ← DELETE player session + photo
         sweep/         ← admin-only: delete expired player sessions
     play/
-      waiting/         ← player holds phone during recap; realtime reveal subscription; 3 states (waiting/reveal/post-reveal)
-      thanks/          ← player end-of-night summary; challenges played + best moment; accessible after set inactive
+      waiting/         ← player holds phone during recap; 3 states (waiting/reveal/post-reveal)
+      thanks/          ← player end-of-night summary; accessible after set inactive
 ```
 
 ## NFC flow
@@ -186,6 +184,11 @@ src/
 - `challenge.points_config` (JSONB) — stores `field_modes` (per-field input mode overrides) and `field_points` (per-field max point overrides)
 - `submissions.answers` (JSONB) — player answers keyed by field name
 - `review_requests` — linked to `submission_id` + `field_name`; `resolved = false` = pending queue
+- `game_sets` — a named round/game with status (draft/active/completed), team_count (2–6), optional total_timer_seconds
+- `set_challenges` — ordered (position) many-to-many: which challenges belong to a set
+- `players.set_id` / `players.team_id` — current set + team assignment (nullable; cleared on set end)
+- `nfc_tags.purpose = 'randomizer'` + `nfc_tags.set_id` — NFC card that auto-assigns player to a set
+- `assignTeam()` in `src/lib/server/randomize.ts` — lowest-count snake-order; scoped to set's team_count teams
 
 ## Cookie names
 
@@ -195,36 +198,13 @@ src/
 
 ## Session log
 
-| Date       | Done                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-04-26 | SvelteKit scaffold, Supabase schema, Vercel link                                                                                                                                                                                                                                                                                                                                                                                                |
-| 2026-04-26 | Session 3: vertical slice (challenge page, leaderboard, dark theme)                                                                                                                                                                                                                                                                                                                                                                             |
-| 2026-04-26 | Session 4: NFC handler, team cookie, /join, /team home                                                                                                                                                                                                                                                                                                                                                                                          |
-| 2026-04-29 | Session 5: host admin (login, challenges, tracks, teams, live console)                                                                                                                                                                                                                                                                                                                                                                          |
-| 2026-04-29 | Session 5b: display_name on teams (migration 0004), input_mode column (0005)                                                                                                                                                                                                                                                                                                                                                                    |
-| 2026-04-29 | Session 6: combobox + open_text input modes, fuzzy scoring, review queue, /admin/pools, /admin/review, accepted_titles                                                                                                                                                                                                                                                                                                                          |
-| 2026-04-30 | Session 6b: realtime audit — fixed review_requests/activity_log RLS + publication (migration 0010), results screen live, team home live                                                                                                                                                                                                                                                                                                         |
-| 2026-04-30 | Session 7a: multi-track challenges, variant defaults UI, scoring.ts, auto-submit timer (migrations 0011–0013)                                                                                                                                                                                                                                                                                                                                   |
-| 2026-05-01 | Session 7a cleanup: per-team challenge attempts replace challenges.started_at (migration 0014); per-attempt admin reset                                                                                                                                                                                                                                                                                                                         |
-| 2026-05-02 | Session 8a: audio upload UI — drag-and-drop clip uploader, storage bucket (migrations 0015–0016), search/filter, HTML5 audio players, bulk-delete clips                                                                                                                                                                                                                                                                                         |
-| 2026-05-02 | Session 8b: landing page + player identity — three-mode landing (Host/Solo/Teams), player onboarding with name + optional photo, hitster_player cookie, lobby stub, leave/sweep endpoints (migration 0017)                                                                                                                                                                                                                                      |
-| 2026-05-02 | Session 8c: game sets + randomizer — game_sets/set_challenges tables (migration 0018), /admin/sets CRUD + challenge picker + NFC card management, /admin/sets/[id]/lobby realtime grid with move-player modal, /play/teams/sets picker, /play/teams/randomizing animation, NFC randomizer tag routing, assignTeam snake-order util                                                                                                              |
-| 2026-05-08 | Session A: Supabase Auth (email magic link + Google OAuth), dev test-login bypass, ownership migration (0024, created_by on 8 tables), minimal host dashboard (/admin), host login UI moved to main page (HostAuthForm component), NFC Tags added to sidebar, active/inactive toggle in sets list, Session C polish (collapsible sidebar with localStorage, icons on dashboard tiles, removed stats line)                                       |
-| 2026-05-09 | Session B (Game lifecycle): play_state field (joining/playing/recap), Start the game action, status panel 4 states, NFC randomizer split, migration 0025                                                                                                                                                                                                                                                                                        |
-| 2026-05-09 | Session B Bug Fixes: panel reactivity (Bug A), end-and-reset clears play_state (Bug B), reactivate set resets scores+attempts (Bug C), tab UI jitter (Bug D), challenges panel compress                                                                                                                                                                                                                                                         |
-| 2026-05-10 | Theme system: 4 themes (tactical, led_stage, sound_reactive, max_defqon) + 2 stage themes (mainstage, showtime) + classic = 7 total, switchable via /admin/settings                                                                                                                                                                                                                                                                             |
-| 2026-05-10 | Bug pile pass: Classic theme, mobile sidebar drawer (Bug 7), NFC ?next= preservation (Bug 2), inactive-set NFC page (Bug 10), player redirect on game end (Bug 3), TV podium new tab (Bug 4)                                                                                                                                                                                                                                                    |
-| 2026-05-10 | Mechanics mega-session: migration 0026 (difficulty_rating, speed_threshold_seconds, hint_text, current_streak, scores_hidden, streak_config, challenge_multiplier), 0027 (team_photos), 0028 (challenge_hints_used). Scoring cascade rewrite. Live bonus tracker, results breakdown animation, leaderboard redesign with photos + streak badge + rank deltas. Team photo upload, collab artist input, waiting room carousel, NFC hint scan flow |
-| 2026-05-11 | Set page rebuild: migration 0029 (tutorial_text, nfc_lock_enabled, randomizer_enabled, last_results, challenge_unlocks table). Player state machine (Lobby/Team Console). Tutorial system. NFC lock per challenge. Gameset Console with state-adaptive UI. Reset Game action + Last Results panel. Inline-editable name/description, blur-to-save fields                                                                                        |
-| 2026-05-11 | Set page polish: migration 0030 (NFC purpose constraint), Team Console set-scoping, button styling, timer expiry transition, realtime gaps, merged details into console, copy buttons for NFC tag URLs                                                                                                                                                                                                                                          |
-| 2026-05-11 | Timer expiry final fix: /api/auto-submit early-return guard removed, NFC lock toggle always-visible with own action, $effect 10s polling while playing                                                                                                                                                                                                                                                                                          |
-| 2026-05-12 | Admin parity Batch A: migration 0034 (preset_slug on game_sets), sets list overhaul — "+ Create new gameset" button opens Modal.svelte, category badge per row using preset_slug, URL-bound filter/sort (?preset, ?status, ?sort), empty states (true empty vs filtered empty)                                                                                                                                                                  |
-| 2026-05-12 | Admin parity Batch B: duplicateSet action (copies config + set_challenges + set_powerups), duplicateChallenge action (copies config + challenge_tracks + answer_options), Duplicate buttons on /admin/sets/[id] and /admin/challenges/[id], URL-bound filter/sort on /admin/tracks and /admin/challenges, new src/lib/variants.ts (getVariantIcon/getVariantColor), variant icon badges in challenge lists/picker/header, empty states           |
-| 2026-05-12 | Batch D — Bug 11: deferred challenge_attempt creation to explicit "Start challenge" button; pre-game gate shows tutorial + variant icon; `startChallenge` form action (admin client, ignoreDuplicates); `window.location.reload()` on success so onMount timer re-runs with new timerEndsAt |
-| 2026-05-12 | Batch E — Admin polish: ActivityFeed.svelte with realtime activity_log subscription on dashboard; recap Highlight Reel (fastest correct answer per challenge in /admin/sets/[id]/recap); powerup category UI (collapsible sections, tri-state master toggle per category with localStorage persistence) |
+| Date       | Done                                                                    |
+| ---------- | ----------------------------------------------------------------------- |
 | 2026-05-12 | Path X — Bug 5 fix: Waveform.svelte WeakMap caching for MediaElementAudioSourceNode in `<script module>` prevents double-createMediaElementSource InvalidStateError; festival palette tokens in Tailwind v4 @theme (7 tokens: magenta, cyan, yellow, violet, orange, night, ice); homepage wordmark + tagline polish |
 | 2026-05-12 | Visual identity theming pass: /sets/[id]/podium (TV spectacle — night-sky bg, ambient radial gradients, festival-palette glow per pedestal position, bounceIn + scale reveal animations, 3 recap states); /play/thanks (reflective celebration — team color stripe, hero score in mixup-yellow, challenge cards with variant icons, best-moment callout, stagger animations); /play/waiting (ceremonial suspense — 3 slow-drifting ambient gradients, festival color-cycling 3-ring pulse, reveal card CSS sparkle rings, post-reveal rank badge) |
 | 2026-05-13 | DevNav: floating dev-only navigation drawer (src/lib/components/DevNav.svelte) mounted in +layout.svelte behind import.meta.env.DEV guard; /api/dev/state GET endpoint (403 in prod); terminal aesthetic (mono, dark, lime); 6 collapsible route sections; active-set context block with quick links; dynamic [id] routes resolved via active set or recent-items dropdown; search filter; Cmd+K / Esc / arrow-key nav; localStorage persistence |
+| 2026-05-14 | Challenge-types redesign (feature/challenge-types-redesign): variant-specific admin editors (StandardEditor, MashupEditor, FragmentsEditor, EffectsEditor) in src/lib/components/admin/challenge-editors/; challenge_tabs multi-tab architecture with challenge_tab_source_tracks + challenge_tab_clips + mashups + mashup_sources; EffectsEditor per-tab FX chain (7 effects — pitch/tempo/lowpass/highpass/bandpass/phaser/flanger, 600 ms debounce fetch auto-save); getSourceTracksForTab() in scoring.ts centralises source-track resolution across all variants; effects variant intro text on player challenge page |
+| 2026-05-14 | SearchablePicker Svelte 5 timing fix: imperative hidden-input update before requestSubmit() — Svelte 5 defers signal-to-DOM effects as microtasks, so FormData would read the stale value; fix queries the hidden input by name and sets .value directly before the form fires. Affects all SearchablePicker usages (standard/mashup/fragments/effects editors). |
 
 ## Technical notes
 
@@ -232,15 +212,15 @@ src/
 
 Defined in `src/routes/layout.css` under `@theme {}` (Tailwind v4 — NOT `tailwind.config.js`). Use as utility classes `text-mixup-magenta`, `bg-mixup-cyan`, `text-mixup-ice/50` etc.:
 
-| Token               | Hex       | Role                                    |
-| ------------------- | --------- | --------------------------------------- |
-| `--color-mixup-magenta` | `#ff2daa` | Primary accent, wordmark, badges        |
-| `--color-mixup-cyan`    | `#00e5ff` | Secondary accent, borders, pulse        |
-| `--color-mixup-yellow`  | `#ffe600` | Score numbers, highlight callouts       |
-| `--color-mixup-violet`  | `#7c4dff` | Tertiary accent, 3rd-place podium glow  |
-| `--color-mixup-orange`  | `#ff7f11` | Warm accent                             |
-| `--color-mixup-night`   | `#0b0b1f` | Page background for all festival pages  |
-| `--color-mixup-ice`     | `#e5f2ff` | Primary body text on dark backgrounds   |
+| Token                   | Hex       | Role                                   |
+| ----------------------- | --------- | -------------------------------------- |
+| `--color-mixup-magenta` | `#ff2daa` | Primary accent, wordmark, badges       |
+| `--color-mixup-cyan`    | `#00e5ff` | Secondary accent, borders, pulse       |
+| `--color-mixup-yellow`  | `#ffe600` | Score numbers, highlight callouts      |
+| `--color-mixup-violet`  | `#7c4dff` | Tertiary accent, 3rd-place podium glow |
+| `--color-mixup-orange`  | `#ff7f11` | Warm accent                            |
+| `--color-mixup-night`   | `#0b0b1f` | Page background for all festival pages |
+| `--color-mixup-ice`     | `#e5f2ff` | Primary body text on dark backgrounds  |
 
 Pages using this palette: `/` (homepage), `/sets/[id]/podium`, `/play/thanks`, `/play/waiting`.
 
@@ -248,20 +228,19 @@ Pages using this palette: `/` (homepage), `/sets/[id]/podium`, `/play/thanks`, `
 
 Each player-facing and TV-display surface has its own visual identity — NOT the homepage 6-variant random background system:
 
-| Page | Treatment |
-| ---- | --------- |
-| `/sets/[id]/podium` | Max-saturation spectacle. Night-sky bg, three ambient radial gradients, festival-palette glow rims per pedestal (magenta=1st, cyan=2nd, violet=3rd), bounceIn reveal with scale + box-shadow pulse, pending/revealing/complete states |
-| `/play/waiting` | Ceremonial suspense. Three slow-drifting ambient blobs (10–13s breathe), festival color-cycling 3-ring pulse element, team-color 1px top stripe, state-dependent heading (waiting / post-reveal rank badge), carousel with cyan accent, CSS sparkle rings on reveal card |
-| `/play/thanks` | Reflective celebration. Single ambient gradient (calmer), team-color stripe + identity pill, hero score in mixup-yellow, best-moment magenta callout, challenge cards with variant icons + cyan left border, stagger animations |
-| `/leaderboard` | Realtime TV scores |
-| Active challenge | Minimal — content-first, no ambient decoration |
-| Admin | Utility-first — single accent stripe |
+- `/sets/[id]/podium` — Night-sky bg, festival-palette glow rims per pedestal (magenta=1st, cyan=2nd, violet=3rd), bounceIn reveal, 3 recap states
+- `/play/waiting` — 3 slow-drifting ambient blobs, color-cycling 3-ring pulse, CSS sparkle rings on reveal card, rank badge post-reveal
+- `/play/thanks` — Single ambient gradient, team-color stripe, hero score in mixup-yellow, challenge cards with variant icons + stagger animations
+- `/leaderboard` — Realtime TV scores
+- Active challenge — Minimal, content-first
+- Admin — Utility-first, single accent stripe
 
 ### Challenge start gate (Bug 11)
 
 `challenge_attempts` rows are **not** created in the load function. On first arrival without an existing attempt, the player sees a pre-game gate (variant icon, tutorial text if set, "Start challenge →" button). The button fires `?/startChallenge` (admin client, `onConflict: 'challenge_id,team_id', ignoreDuplicates: true`). On success, `window.location.reload()` forces a full mount so `onMount` re-initialises the countdown timer from the new `timerEndsAt`.
 
 Template guard order in the challenge page:
+
 ```
 {#if result}           → results screen
 {:else if !data.attempt && data.challenge.status !== 'active'} → challenge ended
@@ -277,17 +256,46 @@ Template guard order in the challenge page:
 
 `src/lib/variants.ts` exports: `VARIANTS` (readonly tuple of all 8 variant names), `getVariantIcon(variant)` (returns the lucide-svelte component for that variant), `getVariantColor(variant)` (returns Tailwind classes for a colored badge background/text). Import from `$lib/variants` in any `.svelte` file that needs variant icons or colors.
 
-### game_sets.preset_slug
-
-`preset_slug text` (nullable, migration 0034) — stores a short slug like `'quick_fire'`, `'deep_cuts'`, etc. when a set was created from a preset template. NULL or `'custom'` both mean "no preset / hand-configured". Used in the sets list to show a category badge and for filtering via `?preset=custom`.
-
 ### DevNav — dev-only floating navigation
 
 `src/lib/components/DevNav.svelte` is mounted in the root layout behind `{#if import.meta.env.DEV}`. It **never renders in production** — Vite eliminates the conditional at build time. Do not add production logic to this component.
 
-`/api/dev/state` (GET) returns `{ user, team_cookie, active_set, recent_sets, recent_challenges }` for the panel's context block. It returns 403 immediately if `!import.meta.env.DEV`. Uses `createAdminClient()` to bypass RLS. Do not add auth guards beyond that check — it is dev-only by design.
+`/api/dev/state` (GET) returns `{ user, team_cookie, active_set, recent_sets, recent_challenges }`. Returns 403 immediately if `!import.meta.env.DEV`. Uses `createAdminClient()` to bypass RLS.
 
-The panel's `activeSetId` resolves as `devState?.active_set?.id ?? setIdOverride` — active Supabase set takes precedence, manual UUID paste is the fallback. All set-based route links derive from this single value.
+### SearchablePicker — imperative hidden-input sync
+
+`src/lib/components/admin/SearchablePicker.svelte`'s `select()` function sets the `$bindable` `value` signal and immediately calls `form.requestSubmit()`. In Svelte 5 the signal-to-DOM effect is deferred (microtask), so `new FormData(form)` inside SvelteKit's `use:enhance` submit handler would read the stale hidden-input value if we relied on Svelte's scheduler.
+
+Fix: before calling `requestSubmit()`, imperatively do:
+
+```javascript
+const hiddenEl = form.querySelector(`input[type="hidden"][name="${name}"]`) as HTMLInputElement | null;
+if (hiddenEl) hiddenEl.value = id;
+```
+
+This bypasses the scheduler and ensures FormData always sees the correct value. The form reference is also captured before any state mutations.
+
+### Challenge-tabs architecture (feature/challenge-types-redesign branch)
+
+Admin challenge editor (`/admin/challenges/[id]`) uses a multi-tab model:
+
+- `challenge_tabs` — one row per "slot" in a challenge (position, effects JSONB, mashup_id FK)
+- `challenge_tab_source_tracks` — one row per (tab, track) for standard/anthem/label/effects variants
+- `challenge_tab_clips` — one row per (tab, clip) for standard/effects; fragment clips use sort_order
+- `mashups` + `mashup_sources` — pre-configured mashup objects; mashup tabs reference a mashup by FK
+
+Variant-specific editors live in `src/lib/components/admin/challenge-editors/`:
+
+| Editor | Variant(s) | Source of truth for track |
+| --- | --- | --- |
+| `StandardEditor` | standard, anthem, label | challenge_tab_source_tracks |
+| `MashupEditor` | mashup | challenge_tabs.mashup_id → mashups → mashup_sources |
+| `FragmentsEditor` | fragments | challenge_tab_clips (derived — no explicit source_tracks row) |
+| `EffectsEditor` | effects | challenge_tab_source_tracks (same as standard) |
+
+`getSourceTracksForTab(variant, tab, explicitSources, mashupSources, tabClips, clips, trackMap)` in `src/lib/server/scoring.ts` centralises resolution: mashup → via mashup_sources; fragments → derives from sorted clips; others → from explicitSources filtered by tab_id.
+
+EffectsEditor's FX chain (7 effect cards per tab) auto-saves via `fetch('?/saveTabEffects', ...)` with a 600 ms debounce — NOT a form element, to avoid interfering with the source-track/clip picker forms.
 
 ### Input mode storage
 
@@ -308,25 +316,17 @@ The old early return `if (!challenges?.length) return` was the bug: it prevented
 
 ### NFC lock toggle
 
-Saved via its own `?/toggleNfcLock` action (same pattern as `toggleRandomizer`). NOT part of `setChallenges`. The toggle lives outside the collapsible challenges body so it's always visible regardless of section state or set status. Per-challenge slug inputs (shown when toggle is ON) remain inside the challenges form — they're challenge-level data saved via `setChallenges`.
+Saved via its own `?/toggleNfcLock` action (same pattern as `toggleRandomizer`). NOT part of `setChallenges`. The toggle lives outside the collapsible challenges body so it's always visible regardless of section state or set status.
 
 ### Players realtime subscription pattern (set console)
 
 Players are **inserted** without `set_id` (set during `/play/[mode]` onboarding), then **updated** when they join a set. The INSERT subscription filter `set_id=eq.{id}` therefore never fires for new joiners. The correct approach: subscribe to UPDATE with the same filter (Supabase realtime filters on NEW row values, so this fires when `set_id` is assigned). In the UPDATE handler, check the player ID against a `knownPlayerIds` Set (seeded from server-loaded player IDs) to avoid double-counting profile-update events.
 
-### Fuzzy scoring threshold
-
-90% Levenshtein similarity for open_text fields. Configure via `/admin/tracks` accepted_titles if a title variant should pass.
-
-### Pool loading
-
-Combobox pool data is fetched server-side (admin client) in the challenge load function → `data.pools`. Not exposed as a public endpoint.
-
 ### submissions.answers format
 
 New format (migration 0012): array of `AnswerArrayEntry` objects `[{ track_id, field_values: {field: value}, scored: {field: score}, total }]`. Old submissions migrated to single-element arrays. Any code reading `answers` must handle both array (new) and plain object (pre-migration).
 
-`answers[0]` also carries an optional `breakdown: ScoreBreakdown` with keys `base, difficulty_multiplier, round_multiplier, comeback_multiplier, streak_bonus, speed_bonus, final` — present on all scored submissions since the Mega Session.
+`answers[0]` also carries an optional `breakdown: ScoreBreakdown` with keys `base, difficulty_multiplier, round_multiplier, comeback_multiplier, streak_bonus, speed_bonus, final` — present on all scored submissions.
 
 ### Multi-track draft state
 
@@ -334,17 +334,15 @@ Player draft stored in `localStorage` keyed `hitster_draft_${teamId}_${challenge
 
 ### Per-team challenge attempts
 
-`challenge_attempts` (migration 0014) tracks each team's independent timer start. When a team first lands on `/challenge/[id]` (via NFC or direct URL), the server creates an attempt row for that team if the challenge is `status='active'` and no attempt exists yet. The timer deadline is `attempt.started_at + challenge.timer_seconds * 1000`. Client counts down from that; at zero it auto-submits the form.
+`challenge_attempts` (migration 0014) tracks each team's independent timer start. The timer deadline is `attempt.started_at + challenge.timer_seconds * 1000`. Client counts down from that; at zero it auto-submits the form.
 
-Admin `/admin/live` polls `/api/auto-submit` every 10s. The endpoint finds attempts where `ended_at IS NULL` and `started_at + timer_seconds < now`, creates empty `is_final=true` submissions for those teams, and sets `attempt.ended_at = now()`. Both normal submission and auto-submit set `ended_at`.
-
-Hosts can reset an individual team's attempt from `/admin/live` (deletes attempt + submission, deducts score). `/admin/teams` "Reset Everything" also clears all attempts.
+Admin `/admin/live` polls `/api/auto-submit` every 10s. The endpoint finds attempts where `ended_at IS NULL` and `started_at + timer_seconds < now`, creates empty `is_final=true` submissions, and sets `attempt.ended_at = now()`. Both normal submission and auto-submit set `ended_at`.
 
 ### is_final flag
 
 `submissions.is_final = true` means no further changes. Set on all submissions (both player-submitted and auto-submitted). Server rejects duplicate submissions with 409.
 
-### Bonus scoring formula (migrations 0026–0028)
+### Bonus scoring formula
 
 `final = round(base × difficulty_multiplier × round_multiplier × comeback_multiplier) + streak_bonus + speed_bonus`
 
@@ -354,19 +352,15 @@ Hosts can reset an individual team's attempt from `/admin/live` (deletes attempt
 - `streak_bonus` — flat pts from highest met threshold in `variant_defaults.streak_config.thresholds` array
 - `speed_bonus = 5` if `elapsed_seconds <= challenge.speed_threshold_seconds` (and base > 0)
 
-`computeBreakdown(base, bonusParams)` in `src/lib/server/scoring.ts` returns a `ScoreBreakdown` interface. The breakdown is persisted in `submissions.answers[0].breakdown` and surfaced to the player via the `BonusTracker` component. All bonus params are fetched at submit time in `+page.server.ts` submit action.
+`computeBreakdown(base, bonusParams)` in `src/lib/server/scoring.ts` returns a `ScoreBreakdown` interface. The breakdown is persisted in `submissions.answers[0].breakdown` and surfaced via the `BonusTracker` component.
 
-### NFC hint scan flow (migration 0028)
+### NFC hint scan flow
 
-`challenge_hints_used(challenge_id, team_id, used_at)` — unique on (challenge_id, team_id). NFC tags with `purpose = 'hint'` route through `/nfc/hint/[challenge_id]` which upserts a hint-used row then redirects to `/challenge/[id]?hint=1`. The challenge page opens a bottom-sheet modal showing `challenge.hint_text` on `?hint=1` arrival. Teams that have scanned see a persistent 💡 Hint button to re-open the modal.
+`challenge_hints_used(challenge_id, team_id, used_at)` — unique on (challenge_id, team_id). NFC tags with `purpose = 'hint'` route through `/nfc/hint/[challenge_id]` which upserts a hint-used row then redirects to `/challenge/[id]?hint=1`. The challenge page opens a bottom-sheet modal showing `challenge.hint_text` on `?hint=1`. Teams that have scanned see a persistent Hint button to re-open the modal.
 
-### Team photos
+### play_state lifecycle
 
-`teams.photo_url` (migration 0027) stores a public URL. Admins upload via `/admin/teams` — uploaded to the `team-photos` Supabase Storage bucket as `{teamId}.{ext}` (max 2 MB, upsert). Photos are shown in the admin teams list, both leaderboard views, and the waiting-room reveal card.
-
-### play_state lifecycle (migration 0025)
-
-`game_sets.play_state` is a text column with CHECK constraint: `joining | playing | recap`. It tracks the sub-phase of an active set independently of `status`:
+`game_sets.play_state` is a text column with CHECK constraint: `joining | playing | recap`.
 
 | play_state | Meaning                                                                   |
 | ---------- | ------------------------------------------------------------------------- |
@@ -374,53 +368,17 @@ Hosts can reset an individual team's attempt from `/admin/live` (deletes attempt
 | `playing`  | Host clicked "Start the game"; no new NFC joins, challenge timers can run |
 | `recap`    | Host started recap; podium reveal in progress                             |
 
-Key transitions:
+Key transitions: activate → `joining`; `?/startGame` → `playing`; `?/startRecap` → `recap`; deactivate → `joining`.
 
-- Toggle activate → `play_state = 'joining'`
-- Toggle deactivate → `play_state = 'joining'` (reset for next activation)
-- `?/startGame` action → `play_state = 'playing'`
-- `?/startRecap` action → `play_state = 'recap'`
+NFC randomizer (`/nfc/randomize/[set_id]`) checks play_state **before** player auth: `playing` → `/nfc/game-in-progress/[set_id]`; `recap` → `/nfc/game-over/[set_id]`.
 
-NFC randomizer (`/nfc/randomize/[set_id]`) checks play_state **before** player auth: `playing` → redirects to `/nfc/game-in-progress/[set_id]`; `recap` → `/nfc/game-over/[set_id]`.
-
-Dashboard status panel and set page both subscribe to `game_sets` realtime updates and update the UI when play_state changes without a full reload.
+Dashboard status panel and set page both subscribe to `game_sets` realtime updates.
 
 ### Reset SQL
 
-Two distinct resets — run manually in Supabase SQL Editor.
-
-**Soft reset** — preserves game_sets, set_challenges, challenges, tracks, NFC cards. Use to re-run the same set or start a fresh round without rebuilding configuration.
+Run manually in Supabase SQL Editor. **Soft reset** — preserves game_sets, set_challenges, challenges, tracks, NFC cards:
 
 ```sql
--- Clear player sessions
-UPDATE players SET set_id = NULL, team_id = NULL WHERE set_id IS NOT NULL;
--- Clear game state
-DELETE FROM challenge_attempts;
-DELETE FROM challenge_hints_used;
-DELETE FROM challenge_unlocks;
-DELETE FROM submissions;
-DELETE FROM review_requests;
-DELETE FROM activity_log;
--- Reset team scores and streaks
-UPDATE teams SET score = 0, current_streak = 0;
--- Return sets to joining state (recap_state must use 'pending', not NULL — NULL violates the CHECK)
-UPDATE game_sets
-SET status = 'inactive',
-    play_state = 'joining',
-    started_at = NULL,
-    ended_at = NULL,
-    recap_ranking = '[]'::jsonb,
-    recap_reveal_index = 0,
-    recap_state = 'pending',
-    scores_hidden = false,
-    assignment_slots = '[]'::jsonb,
-    assignment_index = 0;
-```
-
-**Hard reset** — same as soft reset, but also removes randomizer + challenge_unlock NFC cards and all player records. Use when tearing down after an event. Does NOT delete game_sets or set_challenges — configuration is preserved.
-
-```sql
--- Same as soft reset
 UPDATE players SET set_id = NULL, team_id = NULL WHERE set_id IS NOT NULL;
 DELETE FROM challenge_attempts;
 DELETE FROM challenge_hints_used;
@@ -440,28 +398,6 @@ SET status = 'inactive',
     scores_hidden = false,
     assignment_slots = '[]'::jsonb,
     assignment_index = 0;
--- Additionally: remove randomizer and challenge_unlock NFC cards (challenge/team cards are permanent)
-DELETE FROM nfc_tags WHERE purpose IN ('randomizer', 'challenge_unlock');
--- Remove all player records
-DELETE FROM players;
 ```
 
-## Roadmap (not yet built)
-
-- **Session 7c**: host visibility of in-progress challenges (per-team current activity panel)
-- **Session 7d**: team device coordination (realtime sync of draft state, last-writer-wins per field)
-- **Session 8b — In-app trim**: upload a longer source (audio/video, screen recording, file or URL), waveform UI to scrub and pick a segment, ffmpeg.wasm to trim client-side, save as clip. Used for: host trimming Spotify recordings, players uploading their own clips for variant 7.
-- **Session 8d — Set lifecycle polish**: per-set leaderboard, "set starting" countdown, completed-set archive view, host preview mode for testing. (auto-end set on timer expiry is now done via /api/auto-submit)
-- **Future — Solo + sets**: allow solo players to also pick a set so their scores group with other solos in the same set.
-- **Session 8d — Solo mode polish**: solo group leaderboard, solo private mode, host preview mode.
-- **Future — Persistent player accounts**: optional registration so regulars can keep stats across visits.
-- **Session 11 — The Recap polish**: `/admin/sets/[id]/recap` now has fastest-answer Highlight Reel. TV podium (`/sets/[id]/podium`) has festival-palette theming with reveal animations. Player-side celebrations (`/play/waiting` reveal card) have sparkle rings + rank badge. Remaining: deeper podium animation polish, confetti on complete state.
-
-### Game sets — key data relationships (added 8c)
-
-- `game_sets` — a named round/game with status (draft/active/completed), team_count (2–6), optional total_timer_seconds
-- `set_challenges` — ordered (position) many-to-many: which challenges belong to a set
-- `players.set_id` — current set a player is assigned to (nullable; cleared on set end)
-- `players.team_id` — team within the set (cleared alongside set_id on end)
-- `nfc_tags.purpose = 'randomizer'` + `nfc_tags.set_id` — NFC card that auto-assigns player to a set
-- `assignTeam()` in `src/lib/server/randomize.ts` — lowest-count snake-order; scoped to set's team_count teams
+Hard reset additionally: `DELETE FROM nfc_tags WHERE purpose IN ('randomizer', 'challenge_unlock'); DELETE FROM players;`
