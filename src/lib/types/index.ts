@@ -32,38 +32,53 @@ export interface Clip {
 	position?: number;
 }
 
-// ─── Challenges ──────────────────────────────────────────────────────────────
+// ─── Challenge types ──────────────────────────────────────────────────────────
 
-export type ChallengeVariant =
-	| 'normal'
-	| 'label'
-	| 'anthem'
-	| 'vocal'
-	| 'fragments'
-	| 'kick'
-	| 'mashup'
-	| 'battle';
+export type ChallengeType = 'standard' | 'anthem' | 'label' | 'mashup' | 'fragments';
 
 export interface Challenge {
 	id: string;
-	variant: ChallengeVariant;
+	variant: ChallengeType;
 	title: string;
 	nfc_tag_id?: string;
 	timer_seconds: number;
 	is_active: boolean;
 }
 
-export interface ChallengeTrack {
+// ─── Challenge tabs (replaces challenge_tracks) ───────────────────────────────
+
+export interface ChallengeTab {
 	id: string;
 	challenge_id: string;
+	position: number;
+	created_at: string;
+}
+
+export interface ChallengeTabSourceTrack {
+	id: string;
+	tab_id: string;
 	track_id: string;
+	sort_order: number;
+}
+
+export interface ChallengeTabClip {
+	id: string;
+	tab_id: string;
 	clip_id: string;
+	fragment_number: number | null; // null = non-fragment; 1,2,3... = numbered fragment
 	sort_order: number;
 }
 
 // ─── Answer options (host-curated dropdowns) ─────────────────────────────────
 
-export type AnswerField = 'artist' | 'title' | 'year' | 'label' | 'festival' | 'vocal_source';
+export type AnswerField =
+	| 'artist'
+	| 'title'
+	| 'year'
+	| 'label'
+	| 'festival'
+	| 'vocal_source'
+	| 'grouping';
 
 export type InputMode = 'multiple_choice' | 'combobox' | 'open_text' | 'typeable_number' | 'slider';
 
@@ -101,7 +116,6 @@ export type SubmissionStatus =
 	| 'review_approved'
 	| 'review_rejected';
 
-// Breakdown of how a submission's final score was derived
 export interface ScoreBreakdown {
 	base: number;
 	difficulty_multiplier: number;
@@ -112,20 +126,37 @@ export interface ScoreBreakdown {
 	final: number;
 }
 
-// One element of submissions.answers JSONB array (new multi-track format)
+// Per-slot answer within a tab (new multi-source shape)
+export interface SourceAnswer {
+	slot_index: number;
+	matched_source_track_id?: string; // set by scorer during scoring
+	field_values: Record<string, string | number>;
+	fragments?: number[]; // fragments type only — which fragment numbers the player assigned
+	scored: Record<string, number>;
+	total: number;
+}
+
+// Per-tab answer entry in submissions.answers (new shape post-migration-0036)
+export interface TabAnswer {
+	tab_position: number;
+	source_answers: SourceAnswer[];
+	breakdown?: ScoreBreakdown; // only on answers[0]
+}
+
+// Legacy shape (pre-0036) — kept for graceful read fallback
 export interface AnswerArrayEntry {
 	track_id: string | null;
 	field_values: Record<string, string>;
 	scored: Record<string, number>;
 	total: number;
-	breakdown?: ScoreBreakdown; // present on answers[0] of scored submissions
+	breakdown?: ScoreBreakdown;
 }
 
 export interface Submission {
 	id: string;
 	challenge_id: string;
 	team_id: string;
-	answers: AnswerArrayEntry[];
+	answers: TabAnswer[];
 	score?: number;
 	status: SubmissionStatus;
 	is_final: boolean;
@@ -150,14 +181,31 @@ export interface FieldResult {
 	correct: string;
 	score: number;
 	maxScore: number;
-	fuzzyScore?: number; // 0–1 similarity for open_text fields
+	fuzzyScore?: number;
 }
 
-// ─── Per-track scoring result (new multi-track shape) ────────────────────────
+// Per-slot scoring result (one slot = one source track assignment)
+export interface SlotFieldResult {
+	slotIndex: number;
+	matchedTrackId: string | null;
+	fields: FieldResult[];
+	total: number;
+	maxTotal: number;
+}
 
+// Per-tab scoring result (replaces TrackFieldResult)
+export interface TabFieldResult {
+	tabPosition: number;
+	tabIndex: number; // 1-based display number
+	slots: SlotFieldResult[];
+	total: number;
+	maxTotal: number;
+}
+
+// Legacy alias kept for backward compat with existing result-screen references
 export interface TrackFieldResult {
 	trackId: string;
-	trackIndex: number; // 1-based display number
+	trackIndex: number;
 	fields: FieldResult[];
 	total: number;
 	maxTotal: number;
@@ -165,13 +213,14 @@ export interface TrackFieldResult {
 
 // Challenge result returned by submit action + stored as priorResult in load()
 export interface ChallengeResult {
-	total: number; // base field-score sum
+	total: number;
 	maxTotal: number;
-	tracks: TrackFieldResult[]; // one entry per challenge_track
+	tabs: TabFieldResult[]; // per-tab breakdown (new)
+	tracks: TrackFieldResult[]; // legacy flat list for simple result display
 	status: SubmissionStatus;
 	submissionId: string;
 	isFinal: boolean;
-	breakdown?: ScoreBreakdown; // present after bonus scoring
+	breakdown?: ScoreBreakdown;
 }
 
 // ─── NFC ─────────────────────────────────────────────────────────────────────
@@ -245,7 +294,6 @@ export interface SetPowerup {
 	effect_payload_override: Record<string, unknown>;
 }
 
-// Merged view: powerup defaults overlaid with any per-set override
 export interface PowerupConfig extends Powerup {
 	set_powerup_id: string | null;
 	effective_enabled: boolean;

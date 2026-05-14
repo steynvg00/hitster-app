@@ -9,16 +9,8 @@ type PowerupCategory = 'offensive' | 'defensive' | 'information' | 'social' | 's
 type PowerupVisibility = 'public' | 'target_only' | 'hidden' | 'silent';
 type PowerupTargetType = 'self' | 'team' | 'all_others' | 'none';
 type ClipType = 'snippet' | 'fragment' | 'kick' | 'vocal' | 'mashup';
-type ChallengeVariant =
-	| 'normal'
-	| 'label'
-	| 'anthem'
-	| 'vocal'
-	| 'fragments'
-	| 'kick'
-	| 'mashup'
-	| 'battle';
-type AnswerField = 'artist' | 'title' | 'year' | 'label' | 'festival' | 'vocal_source';
+type ChallengeType = 'standard' | 'anthem' | 'label' | 'mashup' | 'fragments';
+type AnswerField = 'artist' | 'title' | 'year' | 'label' | 'festival' | 'vocal_source' | 'grouping';
 type NfcTagPurpose =
 	| 'team_identity'
 	| 'team_entry'
@@ -204,7 +196,7 @@ export type Database = {
 			challenges: {
 				Row: {
 					id: string;
-					variant: ChallengeVariant;
+					variant: ChallengeType;
 					title: string;
 					timer_seconds: number;
 					is_active: boolean;
@@ -220,7 +212,7 @@ export type Database = {
 				};
 				Insert: {
 					id?: string;
-					variant: ChallengeVariant;
+					variant: ChallengeType;
 					title: string;
 					timer_seconds?: number;
 					is_active?: boolean;
@@ -236,7 +228,7 @@ export type Database = {
 				};
 				Update: {
 					id?: string;
-					variant?: ChallengeVariant;
+					variant?: ChallengeType;
 					title?: string;
 					timer_seconds?: number;
 					is_active?: boolean;
@@ -279,33 +271,72 @@ export type Database = {
 				};
 				Relationships: [];
 			};
-			challenge_tracks: {
+			challenge_tabs: {
 				Row: {
 					id: string;
 					challenge_id: string;
-					track_id: string;
-					clip_id: string;
-					sort_order: number;
-					created_by: string | null;
+					position: number;
 					created_at: string;
+					created_by: string | null;
 				};
 				Insert: {
 					id?: string;
 					challenge_id: string;
-					track_id: string;
-					clip_id: string;
-					sort_order?: number;
-					created_by?: string | null;
+					position?: number;
 					created_at?: string;
+					created_by?: string | null;
 				};
 				Update: {
 					id?: string;
 					challenge_id?: string;
-					track_id?: string;
-					clip_id?: string;
-					sort_order?: number;
-					created_by?: string | null;
+					position?: number;
 					created_at?: string;
+					created_by?: string | null;
+				};
+				Relationships: [];
+			};
+			challenge_tab_source_tracks: {
+				Row: {
+					id: string;
+					tab_id: string;
+					track_id: string;
+					sort_order: number;
+				};
+				Insert: {
+					id?: string;
+					tab_id: string;
+					track_id: string;
+					sort_order?: number;
+				};
+				Update: {
+					id?: string;
+					tab_id?: string;
+					track_id?: string;
+					sort_order?: number;
+				};
+				Relationships: [];
+			};
+			challenge_tab_clips: {
+				Row: {
+					id: string;
+					tab_id: string;
+					clip_id: string;
+					fragment_number: number | null;
+					sort_order: number;
+				};
+				Insert: {
+					id?: string;
+					tab_id: string;
+					clip_id: string;
+					fragment_number?: number | null;
+					sort_order?: number;
+				};
+				Update: {
+					id?: string;
+					tab_id?: string;
+					clip_id?: string;
+					fragment_number?: number | null;
+					sort_order?: number;
 				};
 				Relationships: [];
 			};
@@ -801,7 +832,10 @@ export type TeamRow = Database['public']['Tables']['teams']['Row'];
 export type TrackRow = Database['public']['Tables']['tracks']['Row'];
 export type ClipRow = Database['public']['Tables']['clips']['Row'];
 export type ChallengeRow = Database['public']['Tables']['challenges']['Row'];
-export type ChallengeTrackRow = Database['public']['Tables']['challenge_tracks']['Row'];
+export type ChallengeTabRow = Database['public']['Tables']['challenge_tabs']['Row'];
+export type ChallengeTabSourceTrackRow =
+	Database['public']['Tables']['challenge_tab_source_tracks']['Row'];
+export type ChallengeTabClipRow = Database['public']['Tables']['challenge_tab_clips']['Row'];
 export type AttemptRow = Database['public']['Tables']['challenge_attempts']['Row'];
 export type AnswerOptionRow = Database['public']['Tables']['answer_options']['Row'];
 export type SubmissionRow = Database['public']['Tables']['submissions']['Row'];
