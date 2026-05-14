@@ -2,7 +2,13 @@ import { error, fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { createPublicClient, createAdminClient } from '$lib/server/supabase';
 import { isNfcUnlockRequired } from '$lib/server/nfc';
-import type { AnswerField, InputMode, ChallengeResult, TabAnswer } from '$lib/types/index.js';
+import type {
+	AnswerField,
+	InputMode,
+	ChallengeResult,
+	TabAnswer,
+	EffectsConfig
+} from '$lib/types/index.js';
 import {
 	TYPE_FIELDS,
 	VARIANT_FIELDS,
@@ -11,12 +17,15 @@ import {
 	DEFAULT_FIELD_MAX,
 	buildFieldResults,
 	scoreSubmission,
+	getSourceTracksForTab,
 	type TrackData,
 	type BonusParams,
 	type TabInput,
 	type SlotDraft,
-	type TabSourceTrackData,
-	type TabClipData
+	type TabClipData,
+	type TabSourceTrackRaw,
+	type MashupSourceRaw,
+	type ClipRaw
 } from '$lib/server/scoring.js';
 
 // ─── Load ────────────────────────────────────────────────────────────────────
@@ -66,20 +75,45 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 	const sourceTracks = sourceTracksResult.data ?? [];
 	const tabClips = tabClipsResult.data ?? [];
 
-	// Collect all referenced track IDs
-	const trackIds = [...new Set(sourceTracks.map((s) => s.track_id))];
+	// For mashup variant: load mashup sources to derive per-tab source tracks
+	const mashupIds =
+		challenge.variant === 'mashup'
+			? [
+					...new Set(
+						tabs
+							.map((t) => (t as unknown as { mashup_id?: string | null }).mashup_id)
+							.filter((id): id is string => !!id)
+					)
+				]
+			: [];
+	const { data: mashupSourceRows } = mashupIds.length
+		? await admin.from('mashup_sources').select('*').in('mashup_id', mashupIds).order('sort_order')
+		: { data: [] };
+	const mashupSources: MashupSourceRaw[] = (mashupSourceRows ?? []).map((r) => ({
+		id: r.id,
+		mashup_id: r.mashup_id,
+		track_id: r.track_id,
+		sort_order: r.sort_order
+	}));
+
+	// Collect all referenced track IDs (including mashup sources)
 	const clipIds = [...new Set(tabClips.map((c) => c.clip_id))];
+	const trackIds = [
+		...new Set([...sourceTracks.map((s) => s.track_id), ...mashupSources.map((s) => s.track_id)])
+	];
 
 	const [tracksResult, clipsResult] = await Promise.all([
 		trackIds.length
 			? admin.from('tracks').select('*').in('id', trackIds)
 			: Promise.resolve({ data: [] }),
 		clipIds.length
-			? supabase.from('clips').select('*').in('id', clipIds)
+			? supabase.from('clips').select('id, track_id, storage_path, type, effects').in('id', clipIds)
 			: Promise.resolve({ data: [] })
 	]);
 
 	const clipMap = new Map((clipsResult.data ?? []).map((c) => [c.id, c]));
+	const clipTrackMap = new Map((clipsResult.data ?? []).map((c) => [c.id, c.track_id]));
+	const trackMap = new Map((tracksResult.data ?? []).map((t) => [t.id, t as TrackData]));
 
 	// Attempt (per-team timer) — NOT auto-created here
 	const attempt = attemptResult.data ?? null;
@@ -124,14 +158,21 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 	}
 
 	// ── Build per-tab view data (audio URLs, source tracks) ──────────────────
+	const allTabClipDataLoad: TabClipData[] = tabClips.map((c) => ({
+		id: c.id,
+		tabId: c.tab_id,
+		clipId: c.clip_id,
+		fragmentNumber: c.fragment_number,
+		sortOrder: c.sort_order,
+		trackId: clipTrackMap.get(c.clip_id)
+	}));
+
 	const tabList = tabs.map((tab) => {
-		const tabSrcs = sourceTracks
-			.filter((s) => s.tab_id === tab.id)
-			.sort((a, b) => a.sort_order - b.sort_order);
 		const tabClipRows = tabClips
 			.filter((c) => c.tab_id === tab.id)
 			.sort((a, b) => a.sort_order - b.sort_order);
 
+		const tabEffects = (tab as unknown as { effects?: unknown }).effects as EffectsConfig | null;
 		const clipItems = tabClipRows.map((tc) => {
 			const clip = clipMap.get(tc.clip_id);
 			const clipUrl = clip
@@ -139,21 +180,40 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 					? clip.storage_path
 					: supabase.storage.from('clips').getPublicUrl(clip.storage_path).data.publicUrl
 				: '';
-			const effects = (clip?.effects as { pitch?: number; tempo?: number } | null) ?? {};
+			// For effects variant: use tab-level effects; otherwise use clip-level effects
+			const effects =
+				challenge.variant === 'effects'
+					? {
+							pitch: tabEffects?.pitch?.enabled ? tabEffects.pitch.semitones : 0,
+							tempo: tabEffects?.tempo?.enabled ? tabEffects.tempo.rate : 1
+						}
+					: ((clip?.effects as { pitch?: number; tempo?: number } | null) ?? {});
 			return {
 				id: tc.id,
 				clipId: tc.clip_id,
 				fragmentNumber: tc.fragment_number,
 				sortOrder: tc.sort_order,
 				clipUrl,
-				effects
+				effects,
+				tabEffects: challenge.variant === 'effects' ? tabEffects : undefined
 			};
 		});
 
-		const sourceTrackItems = tabSrcs.map((s) => ({
+		// Derive source tracks for this tab using the centralised helper
+		const resolvedSrcs = getSourceTracksForTab(
+			challenge.variant,
+			{ id: tab.id, mashup_id: (tab as unknown as { mashup_id?: string | null }).mashup_id },
+			sourceTracks as TabSourceTrackRaw[],
+			mashupSources,
+			allTabClipDataLoad,
+			(clipsResult.data ?? []).map((c) => ({ id: c.id, track_id: c.track_id })) as ClipRaw[],
+			trackMap
+		);
+
+		const sourceTrackItems = resolvedSrcs.map((s) => ({
 			id: s.id,
-			trackId: s.track_id,
-			sortOrder: s.sort_order
+			trackId: s.trackId,
+			sortOrder: s.sortOrder
 		}));
 
 		return {
@@ -385,6 +445,8 @@ export const actions: Actions = {
 		if (!tabs?.length) return fail(500, { formError: 'No tabs configured' });
 
 		const tabIds = tabs.map((t) => t.id);
+		const variant = challenge.variant;
+
 		const [sourceTracksResult, tabClipsResult] = await Promise.all([
 			admin
 				.from('challenge_tab_source_tracks')
@@ -396,24 +458,61 @@ export const actions: Actions = {
 		const sourceTracks = sourceTracksResult.data ?? [];
 		const tabClipRows = tabClipsResult.data ?? [];
 
-		const trackIds = [...new Set(sourceTracks.map((s) => s.track_id))];
+		// For mashup: load mashup sources
+		const mashupIds =
+			variant === 'mashup'
+				? [
+						...new Set(
+							tabs
+								.map((t) => (t as unknown as { mashup_id?: string | null }).mashup_id)
+								.filter((id): id is string => !!id)
+						)
+					]
+				: [];
+		const { data: mashupSourceRows } = mashupIds.length
+			? await admin
+					.from('mashup_sources')
+					.select('*')
+					.in('mashup_id', mashupIds)
+					.order('sort_order')
+			: { data: [] };
+		const submitMashupSources: MashupSourceRaw[] = (mashupSourceRows ?? []).map((r) => ({
+			id: r.id,
+			mashup_id: r.mashup_id,
+			track_id: r.track_id,
+			sort_order: r.sort_order
+		}));
+
 		const clipIds = [...new Set(tabClipRows.map((c) => c.clip_id))];
+		const trackIds = [
+			...new Set([
+				...sourceTracks.map((s) => s.track_id),
+				...submitMashupSources.map((s) => s.track_id)
+			])
+		];
 
 		const [tracksResult, clipsResult] = await Promise.all([
 			trackIds.length
 				? admin.from('tracks').select('*').in('id', trackIds)
 				: Promise.resolve({ data: [] }),
 			clipIds.length
-				? admin.from('clips').select('track_id').in('id', clipIds)
+				? admin.from('clips').select('id, track_id').in('id', clipIds)
 				: Promise.resolve({ data: [] })
 		]);
-		const trackMap = new Map((tracksResult.data ?? []).map((t) => [t.id, t]));
-		// clipParentTrack: clip_id → track_id (for fragment grouping)
-		const clipParentTrack = new Map(
-			(clipsResult.data ?? []).map((c, i) => [clipIds[i], c.track_id])
-		);
+		const trackMap = new Map((tracksResult.data ?? []).map((t) => [t.id, t as TrackData]));
+		const submitClips: ClipRaw[] = (clipsResult.data ?? []).map((c) => ({
+			id: c.id,
+			track_id: c.track_id
+		}));
+		const allTabClipData: TabClipData[] = tabClipRows.map((c) => ({
+			id: c.id,
+			tabId: c.tab_id,
+			clipId: c.clip_id,
+			fragmentNumber: c.fragment_number,
+			sortOrder: c.sort_order,
+			trackId: submitClips.find((cl) => cl.id === c.clip_id)?.track_id
+		}));
 
-		const variant = challenge.variant;
 		const variantFields = (TYPE_FIELDS[variant] ?? ['artist', 'title', 'year']) as AnswerField[];
 
 		const pcRaw = (challenge.points_config ?? {}) as Record<string, unknown>;
@@ -507,40 +606,19 @@ export const actions: Actions = {
 					.speed_threshold_seconds ?? null
 		};
 
-		// Build TabInput[] for scoreSubmission
+		// Build TabInput[] for scoreSubmission using getSourceTracksForTab
 		const tabInputs: TabInput[] = tabs.map((tab) => {
-			const tabSrcs = sourceTracks
-				.filter((s) => s.tab_id === tab.id)
-				.sort((a, b) => a.sort_order - b.sort_order)
-				.map(
-					(s): TabSourceTrackData => ({
-						id: s.id,
-						tabId: s.tab_id,
-						trackId: s.track_id,
-						sortOrder: s.sort_order,
-						track: (trackMap.get(s.track_id) ?? {
-							id: s.track_id,
-							artist: '',
-							title: '',
-							year: 0
-						}) as TrackData
-					})
-				);
+			const tabSrcs = getSourceTracksForTab(
+				variant,
+				{ id: tab.id, mashup_id: (tab as unknown as { mashup_id?: string | null }).mashup_id },
+				sourceTracks as TabSourceTrackRaw[],
+				submitMashupSources,
+				allTabClipData,
+				submitClips,
+				trackMap
+			);
 
-			const tabClipItems = tabClipRows
-				.filter((c) => c.tab_id === tab.id)
-				.sort((a, b) => a.sort_order - b.sort_order)
-				.map(
-					(c): TabClipData => ({
-						id: c.id,
-						tabId: c.tab_id,
-						clipId: c.clip_id,
-						fragmentNumber: c.fragment_number,
-						sortOrder: c.sort_order,
-						trackId: clipParentTrack.get(c.clip_id)
-					})
-				);
-
+			const tabClipItems = allTabClipData.filter((c) => c.tabId === tab.id);
 			const playerDraft: SlotDraft[] = draftByTab[String(tab.position)] ?? [{ fieldValues: {} }];
 
 			return {

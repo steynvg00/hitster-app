@@ -56,6 +56,7 @@
 	const hasGrouping = variantFields.includes('grouping' as AnswerField);
 	const isFragments = data.challenge.variant === 'fragments';
 	const isMashup = data.challenge.variant === 'mashup';
+	const isEffects = data.challenge.variant === 'effects';
 	const isMultiSource = isFragments || isMashup;
 
 	// ── Field state: per-tab, per-slot ───────────────────────────────────────
@@ -931,7 +932,7 @@
 			</div>
 		{/if}
 
-		<!-- Challenge intro (mashup/fragments) -->
+		<!-- Challenge intro (mashup/fragments/effects) -->
 		{#if isMashup && activeTab}
 			<p class="mb-4 text-sm font-semibold text-zinc-400">
 				Identify the {activeTab.sourceTracks.length} songs in this mashup:
@@ -939,6 +940,10 @@
 		{:else if isFragments && activeTab}
 			<p class="mb-4 text-sm font-semibold text-zinc-400">
 				Identify the {activeTab.sourceTracks.length} tracks and group the fragments:
+			</p>
+		{:else if isEffects}
+			<p class="mb-4 text-sm font-semibold text-zinc-400">
+				The audio has been processed with effects — identify the original track:
 			</p>
 		{/if}
 
