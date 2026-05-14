@@ -252,7 +252,15 @@
 				fieldModes={savedFieldModes}
 			/>
 		{:else if isEffects}
-			<EffectsEditor tabs={data.tabs} {pointsConfig} fieldModes={savedFieldModes} />
+			<EffectsEditor
+				tabs={data.tabs}
+				sourceTracksByTab={data.sourceTracksByTab}
+				clipsByTab={data.clipsByTab}
+				allTracks={data.allTracks}
+				clips={data.clips}
+				{pointsConfig}
+				fieldModes={savedFieldModes}
+			/>
 		{/if}
 	</div>
 </div>

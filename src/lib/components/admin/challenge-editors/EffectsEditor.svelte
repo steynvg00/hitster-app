@@ -2,18 +2,51 @@
 	import { enhance } from '$app/forms';
 	import { TYPE_FIELDS } from '$lib/variants';
 	import type { EffectsConfig } from '$lib/types/index.js';
+	import SearchablePicker from '$lib/components/admin/SearchablePicker.svelte';
 
+	type Track = { id: string; artist: string; title: string; year: number };
+	type Clip = { id: string; track_id: string; type: string; storage_path: string };
 	type Tab = { id: string; position: number; effects?: unknown };
+	type Src = { id: string; tab_id: string; track_id: string; sort_order: number };
+	type TabClip = {
+		id: string;
+		tab_id: string;
+		clip_id: string;
+		fragment_number: number | null;
+		sort_order: number;
+	};
 
 	let {
 		tabs,
+		sourceTracksByTab,
+		clipsByTab,
+		allTracks,
+		clips,
 		pointsConfig,
 		fieldModes: savedFieldModes
 	}: {
 		tabs: Tab[];
+		sourceTracksByTab: Src[];
+		clipsByTab: TabClip[];
+		allTracks: Track[];
+		clips: Clip[];
 		pointsConfig: Record<string, number>;
 		fieldModes: Record<string, string>;
 	} = $props();
+
+	function srcsForTab(tabId: string): Src[] {
+		return sourceTracksByTab
+			.filter((s) => s.tab_id === tabId)
+			.sort((a, b) => a.sort_order - b.sort_order);
+	}
+
+	function clipsForTab(tabId: string): TabClip[] {
+		return clipsByTab.filter((c) => c.tab_id === tabId).sort((a, b) => a.sort_order - b.sort_order);
+	}
+
+	function clipsForTrack(trackId: string): Clip[] {
+		return clips.filter((c) => c.track_id === trackId);
+	}
 
 	const INPUT_MODES = [
 		'combobox',
@@ -99,6 +132,10 @@
 		<div class="space-y-4">
 			{#each tabs as tab, tabIdx (tab.id)}
 				{@const cfg = tabEffects[tab.id] ?? {}}
+				{@const srcs = srcsForTab(tab.id)}
+				{@const tabClips = clipsForTab(tab.id)}
+				{@const src = srcs[0]}
+				{@const tabClip = tabClips[0]}
 
 				<div class="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
 					<div class="mb-4 flex items-center justify-between">
@@ -115,6 +152,58 @@
 								class="text-xs text-red-700 hover:text-red-400">✕ Remove</button
 							>
 						</form>
+					</div>
+
+					<!-- Source track + clip pickers -->
+					<div class="mb-4 space-y-3">
+						<div>
+							<label class="mb-1 block text-xs text-zinc-400">Source track</label>
+							<form method="POST" action="?/setTabSourceTrack" use:enhance>
+								<input type="hidden" name="tab_id" value={tab.id} />
+								<input type="hidden" name="existing_src_id" value={src?.id ?? ''} />
+								<SearchablePicker
+									name="track_id"
+									items={allTracks.map((t) => ({
+										id: t.id,
+										label: `${t.artist} — ${t.title}`,
+										subtitle: String(t.year)
+									}))}
+									value={src?.track_id ?? ''}
+									placeholder="Search tracks…"
+									emptyLabel="— no track —"
+								/>
+							</form>
+						</div>
+
+						<div>
+							<label class="mb-1 block text-xs text-zinc-400">Clip</label>
+							{#if src?.track_id}
+								<form method="POST" action="?/setTabClip" use:enhance>
+									<input type="hidden" name="tab_id" value={tab.id} />
+									<input type="hidden" name="existing_clip_id" value={tabClip?.id ?? ''} />
+									<SearchablePicker
+										name="clip_id"
+										items={clipsForTrack(src.track_id).map((c) => ({
+											id: c.id,
+											label: c.type,
+											subtitle: c.storage_path.split('/').pop() ?? ''
+										}))}
+										value={tabClip?.clip_id ?? ''}
+										placeholder="Search clips…"
+										emptyLabel="— no clip —"
+									/>
+								</form>
+								{#if tabClip?.clip_id}
+									{@const previewClip = clips.find((c) => c.id === tabClip.clip_id)}
+									{#if previewClip}
+										<audio controls src={previewClip.storage_path} class="mt-2 h-8 w-full rounded"
+										></audio>
+									{/if}
+								{/if}
+							{:else}
+								<p class="text-xs text-zinc-600 italic">Pick a track first</p>
+							{/if}
+						</div>
 					</div>
 
 					<!-- Effects chain -->
