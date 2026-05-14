@@ -32,12 +32,20 @@
 	const selectedItem = $derived(items.find((i) => i.id === value));
 
 	function select(id: string, el: HTMLElement) {
+		// Capture form reference before any state changes alter the DOM
+		const form = el.closest('form');
 		value = id;
 		query = '';
 		open = false;
-		// submit the closest form
-		const form = el.closest('form');
-		form?.requestSubmit();
+		if (form) {
+			// Svelte 5 defers signal-to-DOM effects; imperatively sync the hidden
+			// input so FormData picks up the new value before requestSubmit fires.
+			const hiddenEl = form.querySelector(
+				`input[type="hidden"][name="${name}"]`
+			) as HTMLInputElement | null;
+			if (hiddenEl) hiddenEl.value = id;
+			form.requestSubmit();
+		}
 	}
 
 	function onFocusOut(e: FocusEvent) {
