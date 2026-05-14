@@ -9,8 +9,7 @@ export const POST: RequestHandler = async ({ locals }) => {
 	let created = 0;
 
 	// ── Per-team challenge auto-close ──────────────────────────────────────────
-	// Only runs when timed challenges exist — guarded but NOT an early return so
-	// the game-set-level check below always executes.
+	// Guarded but NOT an early return so the game-set check below always executes.
 	const { data: challenges } = await db
 		.from('challenges')
 		.select('id, timer_seconds')
@@ -34,16 +33,19 @@ export const POST: RequestHandler = async ({ locals }) => {
 
 		if (expired.length > 0) {
 			const expiredChallengeIds = [...new Set(expired.map((a) => a.challenge_id))];
-			const { data: allCts } = await db
-				.from('challenge_tracks')
-				.select('challenge_id, track_id, sort_order')
-				.in('challenge_id', expiredChallengeIds)
-				.order('sort_order');
 
-			const ctsByChallenge = new Map<string, { track_id: string; sort_order: number }[]>();
-			for (const ct of allCts ?? []) {
-				if (!ctsByChallenge.has(ct.challenge_id)) ctsByChallenge.set(ct.challenge_id, []);
-				ctsByChallenge.get(ct.challenge_id)!.push(ct);
+			// Load tabs for expired challenges, then their source tracks
+			const { data: tabRows } = await db
+				.from('challenge_tabs')
+				.select('id, challenge_id, position')
+				.in('challenge_id', expiredChallengeIds)
+				.order('position');
+
+			// We don't need source track data for empty auto-submit — just tab count
+			const tabsByChallenge = new Map<string, { id: string; position: number }[]>();
+			for (const tab of tabRows ?? []) {
+				if (!tabsByChallenge.has(tab.challenge_id)) tabsByChallenge.set(tab.challenge_id, []);
+				tabsByChallenge.get(tab.challenge_id)!.push({ id: tab.id, position: tab.position });
 			}
 
 			const endedAt = new Date().toISOString();
@@ -57,12 +59,11 @@ export const POST: RequestHandler = async ({ locals }) => {
 					.maybeSingle();
 
 				if (!existingSub) {
-					const cts = ctsByChallenge.get(attempt.challenge_id) ?? [];
-					const emptyAnswers = cts.map((ct) => ({
-						track_id: ct.track_id,
-						field_values: {},
-						scored: {},
-						total: 0
+					// Build empty TabAnswer[] in new shape
+					const tabs = tabsByChallenge.get(attempt.challenge_id) ?? [];
+					const emptyAnswers = tabs.map((tab) => ({
+						tab_position: tab.position,
+						source_answers: []
 					}));
 
 					const { error: insertErr } = await db.from('submissions').insert({
@@ -76,17 +77,13 @@ export const POST: RequestHandler = async ({ locals }) => {
 					if (!insertErr) created++;
 				}
 
-				await db
-					.from('challenge_attempts')
-					.update({ ended_at: endedAt })
-					.eq('id', attempt.id);
+				await db.from('challenge_attempts').update({ ended_at: endedAt }).eq('id', attempt.id);
 			}
 		}
 	}
 
 	// ── Game-set-level timer expiry ────────────────────────────────────────────
-	// Always runs, independent of whether any challenge attempts were expired.
-	// This was previously unreachable when challenges had no timers (early return bug).
+	// Always runs unconditionally — never gated by the challenge section above.
 	const { data: activeSets } = await db
 		.from('game_sets')
 		.select('id, total_timer_seconds, started_at')

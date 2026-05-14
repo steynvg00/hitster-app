@@ -37,8 +37,19 @@ export default defineConfig(
 		}
 	},
 	{
-		// Override or add rule settings here, such as:
-		// 'svelte/button-has-type': 'error'
-		rules: {}
+		rules: {
+			// _ prefix convention for intentionally unused params/vars
+			'@typescript-eslint/no-unused-vars': [
+				'error',
+				{
+					argsIgnorePattern: '^_',
+					varsIgnorePattern: '^_',
+					caughtErrorsIgnorePattern: '^_'
+				}
+			],
+			// Pre-existing patterns throughout codebase — not enforced
+			'svelte/no-navigation-without-resolve': 'off',
+			'svelte/require-each-key': 'off'
+		}
 	}
 );
