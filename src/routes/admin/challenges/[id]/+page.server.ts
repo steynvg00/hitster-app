@@ -1,6 +1,7 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
+import { CHALLENGE_TYPES } from '$lib/variants';
 
 export const load: PageServerLoad = async ({ params }) => {
 	const db = createAdminClient();
@@ -12,34 +13,47 @@ export const load: PageServerLoad = async ({ params }) => {
 		.single();
 	if (cErr || !challenge) error(404, 'Challenge not found');
 
-	const [ctResult, tracksResult] = await Promise.all([
-		db.from('challenge_tracks').select('*').eq('challenge_id', params.id).order('sort_order'),
-		db.from('tracks').select('*').order('artist')
-	]);
+	// Load tabs with their source tracks and clips
+	const { data: tabs } = await db
+		.from('challenge_tabs')
+		.select('*')
+		.eq('challenge_id', params.id)
+		.order('position');
 
-	const challengeTracks = ctResult.data ?? [];
-	const allTracks = tracksResult.data ?? [];
+	const tabIds = (tabs ?? []).map((t) => t.id);
 
-	// Load clips for all tracks in the library (not just tracks already in this challenge)
-	// so the clip dropdown populates when the admin picks any available track.
+	const [sourceTracksResult, tabClipsResult, allTracksResult, answerOptionsResult] =
+		await Promise.all([
+			tabIds.length
+				? db
+						.from('challenge_tab_source_tracks')
+						.select('*')
+						.in('tab_id', tabIds)
+						.order('sort_order')
+				: Promise.resolve({ data: [] }),
+			tabIds.length
+				? db.from('challenge_tab_clips').select('*').in('tab_id', tabIds).order('sort_order')
+				: Promise.resolve({ data: [] }),
+			db.from('tracks').select('*').order('artist'),
+			db.from('answer_options').select('*').eq('challenge_id', params.id)
+		]);
+
+	const allTracks = allTracksResult.data ?? [];
 	const allTrackIds = allTracks.map((t) => t.id);
+
 	const { data: clips } = await db
 		.from('clips')
 		.select('*')
 		.in('track_id', allTrackIds.length ? allTrackIds : ['__none__']);
 
-	// Load answer options for this challenge
-	const { data: answerOptions } = await db
-		.from('answer_options')
-		.select('*')
-		.eq('challenge_id', params.id);
-
 	return {
 		challenge,
-		challengeTracks: challengeTracks,
+		tabs: tabs ?? [],
+		sourceTracksByTab: sourceTracksResult.data ?? [],
+		clipsByTab: tabClipsResult.data ?? [],
 		allTracks,
 		clips: clips ?? [],
-		answerOptions: answerOptions ?? []
+		answerOptions: answerOptionsResult.data ?? []
 	};
 };
 
@@ -52,7 +66,6 @@ export const actions: Actions = {
 		const stage_label = (data.get('stage_label') as string)?.trim() || null;
 		const timer_seconds = parseInt(data.get('timer_seconds') as string, 10) || 60;
 		const variant = data.get('variant') as string;
-		const pointsRaw = (data.get('points_config') as string)?.trim();
 		const difficultyRaw = parseInt(data.get('difficulty_rating') as string, 10);
 		const difficulty_rating = difficultyRaw >= 1 && difficultyRaw <= 5 ? difficultyRaw : 3;
 		const speedRaw = (data.get('speed_threshold_seconds') as string | null)?.trim();
@@ -62,14 +75,34 @@ export const actions: Actions = {
 		const nfc_lock_override =
 			nfcOverrideRaw === 'true' ? true : nfcOverrideRaw === 'false' ? false : null;
 
-		let points_config: object;
-		try {
-			points_config = JSON.parse(pointsRaw || '{}');
-		} catch {
-			return fail(400, { error: 'points_config must be valid JSON' });
+		// Collect field_points from form (field_points[artist]=10 etc.)
+		const fieldPointEntries: Record<string, number> = {};
+		for (const [key, val] of data.entries()) {
+			if (key.startsWith('field_points[') && key.endsWith(']')) {
+				const field = key.slice(13, -1);
+				const n = parseInt(val as string, 10);
+				if (!isNaN(n)) fieldPointEntries[field] = n;
+			}
 		}
 
 		if (!title) return fail(400, { error: 'Title is required' });
+		if (!variant || !(CHALLENGE_TYPES as readonly string[]).includes(variant)) {
+			return fail(400, { error: 'Invalid type' });
+		}
+
+		// Preserve existing field_modes when saving meta
+		const { data: existing } = await db
+			.from('challenges')
+			.select('points_config')
+			.eq('id', params.id)
+			.single();
+		const existingPc = (existing?.points_config ?? {}) as Record<string, unknown>;
+		const existingModes = (existingPc.field_modes ?? {}) as Record<string, string>;
+
+		const points_config = {
+			field_modes: existingModes,
+			field_points: fieldPointEntries
+		};
 
 		const { error: e } = await db
 			.from('challenges')
@@ -98,102 +131,168 @@ export const actions: Actions = {
 
 		const { error: e } = await db
 			.from('challenges')
-			.update({
-				status,
-				is_active: status === 'active'
-			})
+			.update({ status, is_active: status === 'active' })
 			.eq('id', params.id);
 		if (e) return fail(500, { error: e.message });
 		return { success: true, action: 'status' };
 	},
 
-	addTrack: async ({ request, params, locals }) => {
+	// ── Tab management ──────────────────────────────────────────────────────────
+
+	addTab: async ({ params, locals }) => {
 		const db = createAdminClient();
-		const data = await request.formData();
 
-		const track_id = data.get('track_id') as string;
-		const clip_id = data.get('clip_id') as string;
-
-		if (!track_id || !clip_id) return fail(400, { error: 'Select a track and clip' });
-
-		// Get max sort_order
 		const { data: existing } = await db
-			.from('challenge_tracks')
-			.select('sort_order')
+			.from('challenge_tabs')
+			.select('position')
 			.eq('challenge_id', params.id)
-			.order('sort_order', { ascending: false })
+			.order('position', { ascending: false })
 			.limit(1);
 
-		const sort_order = (existing?.[0]?.sort_order ?? 0) + 1;
+		const position = (existing?.[0]?.position ?? -1) + 1;
 
-		const { error: e } = await db.from('challenge_tracks').insert({
-			challenge_id: params.id,
-			track_id,
-			clip_id,
-			sort_order,
-			created_by: locals.user?.id ?? null
-		});
-		if (e) return fail(500, { error: e.message });
-		return { success: true, action: 'addTrack' };
+		const { data: newTab, error: e } = await db
+			.from('challenge_tabs')
+			.insert({ challenge_id: params.id, position, created_by: locals.user?.id ?? null })
+			.select('id')
+			.single();
+		if (e || !newTab) return fail(500, { error: e?.message ?? 'Could not create tab' });
+		return { success: true, action: 'addTab', tabId: newTab.id };
 	},
 
-	removeTrack: async ({ request, params }) => {
+	removeTab: async ({ request }) => {
 		const db = createAdminClient();
 		const data = await request.formData();
-		const ct_id = data.get('ct_id') as string;
-		if (!ct_id) return fail(400, { error: 'Missing challenge_track id' });
-
-		const { error: e } = await db.from('challenge_tracks').delete().eq('id', ct_id);
+		const tab_id = data.get('tab_id') as string;
+		if (!tab_id) return fail(400, { error: 'Missing tab_id' });
+		// CASCADE deletes source_tracks and clips for this tab
+		const { error: e } = await db.from('challenge_tabs').delete().eq('id', tab_id);
 		if (e) return fail(500, { error: e.message });
-		return { success: true, action: 'removeTrack' };
+		return { success: true, action: 'removeTab' };
 	},
 
-	reorderTrack: async ({ request, params }) => {
+	setTabSourceTrack: async ({ request }) => {
 		const db = createAdminClient();
 		const data = await request.formData();
-		const ct_id = data.get('ct_id') as string;
-		const direction = data.get('direction') as 'up' | 'down';
+		const tab_id = data.get('tab_id') as string;
+		const track_id = data.get('track_id') as string;
+		const existing_src_id = data.get('existing_src_id') as string | null;
 
-		const { data: all } = await db
-			.from('challenge_tracks')
-			.select('id, sort_order')
-			.eq('challenge_id', params.id)
-			.order('sort_order');
+		if (!tab_id || !track_id) return fail(400, { error: 'Missing tab_id or track_id' });
 
-		if (!all) return fail(500, { error: 'Could not load tracks' });
-
-		const idx = all.findIndex((r) => r.id === ct_id);
-		if (idx === -1) return fail(400, { error: 'Track not found' });
-
-		const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
-		if (swapIdx < 0 || swapIdx >= all.length) return { success: true, action: 'reorderTrack' };
-
-		const [a, b] = [all[idx], all[swapIdx]];
-		await Promise.all([
-			db.from('challenge_tracks').update({ sort_order: b.sort_order }).eq('id', a.id),
-			db.from('challenge_tracks').update({ sort_order: a.sort_order }).eq('id', b.id)
-		]);
-		return { success: true, action: 'reorderTrack' };
+		if (existing_src_id) {
+			await db.from('challenge_tab_source_tracks').update({ track_id }).eq('id', existing_src_id);
+		} else {
+			await db.from('challenge_tab_source_tracks').insert({ tab_id, track_id, sort_order: 0 });
+		}
+		return { success: true, action: 'setTabSourceTrack' };
 	},
 
-	// Generate default answer options: correct answer + up to 7 distractors from other tracks
+	addTabSourceTrack: async ({ request }) => {
+		const db = createAdminClient();
+		const data = await request.formData();
+		const tab_id = data.get('tab_id') as string;
+		const track_id = data.get('track_id') as string;
+		if (!tab_id || !track_id) return fail(400, { error: 'Missing tab_id or track_id' });
+
+		const { data: existing } = await db
+			.from('challenge_tab_source_tracks')
+			.select('sort_order')
+			.eq('tab_id', tab_id)
+			.order('sort_order', { ascending: false })
+			.limit(1);
+		const sort_order = (existing?.[0]?.sort_order ?? -1) + 1;
+
+		const { error: e } = await db
+			.from('challenge_tab_source_tracks')
+			.insert({ tab_id, track_id, sort_order });
+		if (e) return fail(500, { error: e.message });
+		return { success: true, action: 'addTabSourceTrack' };
+	},
+
+	removeTabSourceTrack: async ({ request }) => {
+		const db = createAdminClient();
+		const data = await request.formData();
+		const src_id = data.get('src_id') as string;
+		if (!src_id) return fail(400, { error: 'Missing src_id' });
+		const { error: e } = await db.from('challenge_tab_source_tracks').delete().eq('id', src_id);
+		if (e) return fail(500, { error: e.message });
+		return { success: true, action: 'removeTabSourceTrack' };
+	},
+
+	setTabClip: async ({ request }) => {
+		const db = createAdminClient();
+		const data = await request.formData();
+		const tab_id = data.get('tab_id') as string;
+		const clip_id = data.get('clip_id') as string;
+		const existing_clip_id = data.get('existing_clip_id') as string | null;
+
+		if (!tab_id || !clip_id) return fail(400, { error: 'Missing tab_id or clip_id' });
+
+		if (existing_clip_id) {
+			await db.from('challenge_tab_clips').update({ clip_id }).eq('id', existing_clip_id);
+		} else {
+			await db
+				.from('challenge_tab_clips')
+				.insert({ tab_id, clip_id, fragment_number: null, sort_order: 0 });
+		}
+		return { success: true, action: 'setTabClip' };
+	},
+
+	addTabClip: async ({ request }) => {
+		const db = createAdminClient();
+		const data = await request.formData();
+		const tab_id = data.get('tab_id') as string;
+		const clip_id = data.get('clip_id') as string;
+		const fragment_number = data.get('fragment_number') as string | null;
+
+		if (!tab_id || !clip_id) return fail(400, { error: 'Missing tab_id or clip_id' });
+
+		const { data: existing } = await db
+			.from('challenge_tab_clips')
+			.select('sort_order')
+			.eq('tab_id', tab_id)
+			.order('sort_order', { ascending: false })
+			.limit(1);
+		const sort_order = (existing?.[0]?.sort_order ?? -1) + 1;
+
+		const fn = fragment_number ? parseInt(fragment_number, 10) : null;
+
+		const { error: e } = await db
+			.from('challenge_tab_clips')
+			.insert({ tab_id, clip_id, fragment_number: fn, sort_order });
+		if (e) return fail(500, { error: e.message });
+		return { success: true, action: 'addTabClip' };
+	},
+
+	removeTabClip: async ({ request }) => {
+		const db = createAdminClient();
+		const data = await request.formData();
+		const tc_id = data.get('tc_id') as string;
+		if (!tc_id) return fail(400, { error: 'Missing tc_id' });
+		const { error: e } = await db.from('challenge_tab_clips').delete().eq('id', tc_id);
+		if (e) return fail(500, { error: e.message });
+		return { success: true, action: 'removeTabClip' };
+	},
+
+	// ── Answer options / input modes ────────────────────────────────────────────
+
 	generateOptions: async ({ request, params, locals }) => {
 		const db = createAdminClient();
 		const data = await request.formData();
-		const ct_id = data.get('ct_id') as string;
+		const src_id = data.get('src_id') as string;
 		const field = data.get('field') as string;
 
-		if (!ct_id || !field) return fail(400, { error: 'Missing ct_id or field' });
+		if (!src_id || !field) return fail(400, { error: 'Missing src_id or field' });
 
-		// Get the challenge_track with track details
-		const { data: ct } = await db
-			.from('challenge_tracks')
+		const { data: src } = await db
+			.from('challenge_tab_source_tracks')
 			.select('track_id')
-			.eq('id', ct_id)
+			.eq('id', src_id)
 			.single();
-		if (!ct) return fail(400, { error: 'challenge_track not found' });
+		if (!src) return fail(400, { error: 'Source track not found' });
 
-		const { data: track } = await db.from('tracks').select('*').eq('id', ct.track_id).single();
+		const { data: track } = await db.from('tracks').select('*').eq('id', src.track_id).single();
 		if (!track) return fail(400, { error: 'Track not found' });
 
 		type TrackKey = keyof typeof track;
@@ -201,11 +300,10 @@ export const actions: Actions = {
 		if (correct == null || correct === '')
 			return fail(400, { error: `Track has no value for field "${field}"` });
 
-		// Get up to 7 distinct distractors from other tracks
 		const { data: others } = await db
 			.from('tracks')
 			.select(field)
-			.neq('id', ct.track_id)
+			.neq('id', src.track_id)
 			.not(field, 'is', null)
 			.limit(100);
 
@@ -217,12 +315,12 @@ export const actions: Actions = {
 		const distractors = [...distSet].sort(() => Math.random() - 0.5).slice(0, 7);
 		const options = [String(correct), ...distractors].sort(() => Math.random() - 0.5);
 
-		// Delete existing options for this challenge+field, then insert new ones
 		await db
 			.from('answer_options')
 			.delete()
 			.eq('challenge_id', params.id)
 			.eq('field', field as never);
+
 		if (options.length > 0) {
 			const { error: e } = await db.from('answer_options').insert(
 				options.map((value) => ({
@@ -255,6 +353,7 @@ export const actions: Actions = {
 			.delete()
 			.eq('challenge_id', params.id)
 			.eq('field', field as never);
+
 		if (options.length > 0) {
 			const { error: e } = await db.from('answer_options').insert(
 				options.map((value) => ({
@@ -267,74 +366,6 @@ export const actions: Actions = {
 			if (e) return fail(500, { error: e.message });
 		}
 		return { success: true, action: 'saveOptions' };
-	},
-
-	// Saves per-field input mode into challenge.points_config.field_modes.
-	// We store here (not answer_options.input_mode) to avoid ambiguity with
-	// the migration-default 'multiple_choice' that all existing rows carry.
-	duplicateChallenge: async ({ params, locals }) => {
-		const db = createAdminClient();
-
-		const { data: source } = await db.from('challenges').select('*').eq('id', params.id).single();
-		if (!source) return fail(404, { error: 'Challenge not found' });
-
-		const { data: newChallenge, error: insertErr } = await db
-			.from('challenges')
-			.insert({
-				title: `${source.title} (copy)`,
-				variant: source.variant,
-				stage_label: source.stage_label,
-				timer_seconds: source.timer_seconds,
-				points_config: source.points_config as never,
-				difficulty_rating: source.difficulty_rating,
-				speed_threshold_seconds: source.speed_threshold_seconds,
-				hint_text: source.hint_text,
-				nfc_lock_override: source.nfc_lock_override,
-				status: 'draft',
-				is_active: false,
-				created_by: locals.user?.id ?? null
-			})
-			.select('id')
-			.single();
-
-		if (insertErr || !newChallenge) {
-			return fail(500, { error: insertErr?.message ?? 'Could not duplicate challenge' });
-		}
-
-		const [{ data: sourceTracks }, { data: sourceOptions }] = await Promise.all([
-			db
-				.from('challenge_tracks')
-				.select('track_id, clip_id, sort_order')
-				.eq('challenge_id', params.id)
-				.order('sort_order'),
-			db.from('answer_options').select('field, value, input_mode').eq('challenge_id', params.id)
-		]);
-
-		if (sourceTracks?.length) {
-			await db.from('challenge_tracks').insert(
-				sourceTracks.map((ct) => ({
-					challenge_id: newChallenge.id,
-					track_id: ct.track_id,
-					clip_id: ct.clip_id,
-					sort_order: ct.sort_order,
-					created_by: locals.user?.id ?? null
-				}))
-			);
-		}
-
-		if (sourceOptions?.length) {
-			await db.from('answer_options').insert(
-				sourceOptions.map((ao) => ({
-					challenge_id: newChallenge.id,
-					field: ao.field,
-					value: ao.value,
-					input_mode: ao.input_mode,
-					created_by: locals.user?.id ?? null
-				}))
-			);
-		}
-
-		redirect(303, `/admin/challenges/${newChallenge.id}`);
 	},
 
 	saveInputMode: async ({ request, params }) => {
@@ -362,7 +393,98 @@ export const actions: Actions = {
 			.update({ points_config: { ...pc, field_modes: fieldModes } as never })
 			.eq('id', params.id);
 		if (e) return fail(500, { error: e.message });
-
 		return { success: true, action: 'saveInputMode' };
+	},
+
+	duplicateChallenge: async ({ params, locals }) => {
+		const db = createAdminClient();
+
+		const { data: source } = await db.from('challenges').select('*').eq('id', params.id).single();
+		if (!source) return fail(404, { error: 'Challenge not found' });
+
+		const { data: newChallenge, error: insertErr } = await db
+			.from('challenges')
+			.insert({
+				title: `${source.title} (copy)`,
+				variant: source.variant,
+				stage_label: source.stage_label,
+				timer_seconds: source.timer_seconds,
+				points_config: source.points_config as never,
+				difficulty_rating: source.difficulty_rating,
+				speed_threshold_seconds: source.speed_threshold_seconds,
+				hint_text: source.hint_text,
+				nfc_lock_override: source.nfc_lock_override,
+				status: 'draft',
+				is_active: false,
+				created_by: locals.user?.id ?? null
+			})
+			.select('id')
+			.single();
+
+		if (insertErr || !newChallenge)
+			return fail(500, { error: insertErr?.message ?? 'Could not duplicate' });
+
+		// Copy tabs + their source_tracks + clips
+		const { data: sourceTabs } = await db
+			.from('challenge_tabs')
+			.select('*')
+			.eq('challenge_id', params.id)
+			.order('position');
+
+		for (const tab of sourceTabs ?? []) {
+			const { data: newTab } = await db
+				.from('challenge_tabs')
+				.insert({
+					challenge_id: newChallenge.id,
+					position: tab.position,
+					created_by: locals.user?.id ?? null
+				})
+				.select('id')
+				.single();
+			if (!newTab) continue;
+
+			const [{ data: srcs }, { data: clipEntries }] = await Promise.all([
+				db.from('challenge_tab_source_tracks').select('*').eq('tab_id', tab.id).order('sort_order'),
+				db.from('challenge_tab_clips').select('*').eq('tab_id', tab.id).order('sort_order')
+			]);
+
+			if (srcs?.length) {
+				await db
+					.from('challenge_tab_source_tracks')
+					.insert(
+						srcs.map((s) => ({ tab_id: newTab.id, track_id: s.track_id, sort_order: s.sort_order }))
+					);
+			}
+			if (clipEntries?.length) {
+				await db.from('challenge_tab_clips').insert(
+					clipEntries.map((c) => ({
+						tab_id: newTab.id,
+						clip_id: c.clip_id,
+						fragment_number: c.fragment_number,
+						sort_order: c.sort_order
+					}))
+				);
+			}
+		}
+
+		// Copy answer options
+		const { data: sourceOptions } = await db
+			.from('answer_options')
+			.select('field, value, input_mode')
+			.eq('challenge_id', params.id);
+
+		if (sourceOptions?.length) {
+			await db.from('answer_options').insert(
+				sourceOptions.map((ao) => ({
+					challenge_id: newChallenge.id,
+					field: ao.field,
+					value: ao.value,
+					input_mode: ao.input_mode,
+					created_by: locals.user?.id ?? null
+				}))
+			);
+		}
+
+		redirect(303, `/admin/challenges/${newChallenge.id}`);
 	}
 };
