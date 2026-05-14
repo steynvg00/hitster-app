@@ -32,6 +32,7 @@
 	const selectedItem = $derived(items.find((i) => i.id === value));
 
 	function select(id: string, el: HTMLElement) {
+		console.log('[SearchablePicker] select() called', { id, name });
 		// Capture form reference before any state changes alter the DOM
 		const form = el.closest('form');
 		value = id;
@@ -44,6 +45,11 @@
 				`input[type="hidden"][name="${name}"]`
 			) as HTMLInputElement | null;
 			if (hiddenEl) hiddenEl.value = id;
+			console.log('[SearchablePicker] form submit', {
+				action: form.action,
+				hiddenValue: hiddenEl?.value,
+				formData: Object.fromEntries(new FormData(form))
+			});
 			form.requestSubmit();
 		}
 	}
@@ -79,15 +85,22 @@
 	{/if}
 
 	{#if open}
+		<!-- onmousedown preventDefault stops the text input losing focus before click fires.
+		     Without this, some browsers (Safari/macOS) set relatedTarget=null in focusout,
+		     causing onFocusOut to close the dropdown before the click event lands. -->
 		<ul
 			class="absolute z-50 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl"
+			onmousedown={(e) => e.preventDefault()}
 		>
 			<!-- Empty / clear option -->
 			<li>
 				<button
 					type="button"
 					class="w-full px-3 py-2 text-left text-xs text-zinc-500 hover:bg-zinc-800"
-					onclick={(e) => select('', e.currentTarget)}>{emptyLabel}</button
+					onclick={(e) => {
+						console.log('[SearchablePicker] result click', { id: '', eventType: e.type });
+						select('', e.currentTarget);
+					}}>{emptyLabel}</button
 				>
 			</li>
 			{#each results as item (item.id)}
@@ -97,7 +110,10 @@
 						class="flex w-full flex-col px-3 py-2 text-left hover:bg-zinc-800 {value === item.id
 							? 'bg-zinc-800'
 							: ''}"
-						onclick={(e) => select(item.id, e.currentTarget)}
+						onclick={(e) => {
+							console.log('[SearchablePicker] result click', { id: item.id, eventType: e.type });
+							select(item.id, e.currentTarget);
+						}}
 					>
 						<span class="text-xs text-zinc-200">{item.label}</span>
 						{#if item.subtitle}
