@@ -6,7 +6,6 @@
 	type Track = { id: string; artist: string; title: string; year: number };
 	type Clip = { id: string; track_id: string; type: string; storage_path: string };
 	type Tab = { id: string; position: number };
-	type Src = { id: string; tab_id: string; track_id: string; sort_order: number };
 	type TabClip = {
 		id: string;
 		tab_id: string;
@@ -17,7 +16,6 @@
 
 	let {
 		tabs,
-		sourceTracksByTab,
 		clipsByTab,
 		allTracks,
 		clips,
@@ -25,7 +23,6 @@
 		fieldModes: savedFieldModes
 	}: {
 		tabs: Tab[];
-		sourceTracksByTab: Src[];
 		clipsByTab: TabClip[];
 		allTracks: Track[];
 		clips: Clip[];
@@ -42,14 +39,23 @@
 	] as const;
 	const fields = TYPE_FIELDS['fragments'];
 
-	function srcsForTab(tabId: string): Src[] {
-		return sourceTracksByTab
-			.filter((s) => s.tab_id === tabId)
-			.sort((a, b) => a.sort_order - b.sort_order);
-	}
-
 	function clipsForTab(tabId: string): TabClip[] {
 		return clipsByTab.filter((c) => c.tab_id === tabId).sort((a, b) => a.sort_order - b.sort_order);
+	}
+
+	function sourceTracksForTab(tabId: string): Track[] {
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity
+		const seen = new Set<string>();
+		const result: Track[] = [];
+		for (const tc of clipsForTab(tabId)) {
+			const c = clips.find((c) => c.id === tc.clip_id);
+			if (!c) continue;
+			if (seen.has(c.track_id)) continue;
+			seen.add(c.track_id);
+			const t = allTracks.find((t) => t.id === c.track_id);
+			if (t) result.push(t);
+		}
+		return result;
 	}
 
 	function currentMode(field: string): string {
@@ -71,8 +77,8 @@
 		</form>
 	</div>
 	<p class="mb-4 text-xs text-zinc-500">
-		Each tab has N source tracks and M numbered clips. Fragment numbers are assigned per clip so the
-		scorer knows which clips belong to which source track.
+		Each tab has numbered fragment clips. Source tracks are derived automatically from the clips you
+		add.
 	</p>
 
 	{#if tabs.length === 0}
@@ -84,8 +90,8 @@
 	{:else}
 		<div class="space-y-6">
 			{#each tabs as tab, tabIdx (tab.id)}
-				{@const srcs = srcsForTab(tab.id)}
 				{@const tabClips = clipsForTab(tab.id)}
+				{@const sourceTracks = sourceTracksForTab(tab.id)}
 
 				<div class="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
 					<div class="mb-3 flex items-center justify-between">
@@ -104,55 +110,10 @@
 						</form>
 					</div>
 
-					<!-- Source tracks -->
-					<div class="mb-4">
-						<span class="mb-2 block text-xs font-semibold text-zinc-400">Source Tracks</span>
-						{#if srcs.length === 0}
-							<p class="text-xs text-zinc-600 italic">Add at least 2 source tracks.</p>
-						{:else}
-							<div class="mb-2 space-y-1">
-								{#each srcs as src (src.id)}
-									{@const t = allTracks.find((t) => t.id === src.track_id)}
-									<div
-										class="flex items-center justify-between rounded bg-zinc-800 px-3 py-1.5 text-xs text-zinc-300"
-									>
-										<span
-											>{t ? `${t.artist} — ${t.title} (${t.year})` : src.track_id.slice(0, 8)}</span
-										>
-										<form method="POST" action="?/removeTabSourceTrack" use:enhance class="inline">
-											<input type="hidden" name="src_id" value={src.id} />
-											<button type="submit" class="ml-2 text-red-700 hover:text-red-400">✕</button>
-										</form>
-									</div>
-								{/each}
-							</div>
-						{/if}
-						<form method="POST" action="?/addTabSourceTrack" use:enhance class="flex gap-2">
-							<input type="hidden" name="tab_id" value={tab.id} />
-							<div class="flex-1">
-								<SearchablePicker
-									name="track_id"
-									items={allTracks.map((t) => ({
-										id: t.id,
-										label: `${t.artist} — ${t.title}`,
-										subtitle: String(t.year)
-									}))}
-									placeholder="+ Add source track…"
-									emptyLabel="— none —"
-								/>
-							</div>
-							<button
-								type="submit"
-								class="rounded-lg bg-zinc-700 px-3 py-1 text-xs font-semibold text-zinc-200 hover:bg-zinc-600"
-								>Add</button
-							>
-						</form>
-					</div>
-
 					<!-- Fragment clips -->
-					<div>
+					<div class="mb-4">
 						<span class="mb-2 block text-xs font-semibold text-zinc-400"
-							>Fragments (numbered clips)</span
+							>Fragments ({tabClips.length})</span
 						>
 						{#if tabClips.length === 0}
 							<p class="text-xs text-zinc-600 italic">No fragments yet.</p>
@@ -165,15 +126,12 @@
 										<span
 											class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-400 text-[10px] font-black text-zinc-950"
 										>
-											{tc.fragment_number ?? fragIdx + 1}
+											{fragIdx + 1}
 										</span>
 										<span class="flex-1 text-zinc-300">
 											{parentTrack ? `${parentTrack.artist} — ${parentTrack.title}` : 'unknown'}
 											{c ? `[${c.type}]` : ''}
 										</span>
-										<!-- Assign to source track -->
-										<span class="text-zinc-500">→</span>
-										<span class="text-zinc-400">{parentTrack?.artist ?? '?'}</span>
 										<form method="POST" action="?/removeTabClip" use:enhance class="inline">
 											<input type="hidden" name="tc_id" value={tc.id} />
 											<button type="submit" class="ml-1 text-red-700 hover:text-red-400">✕</button>
@@ -210,6 +168,22 @@
 							</button>
 						</form>
 					</div>
+
+					<!-- Derived source tracks (read-only) -->
+					{#if sourceTracks.length > 0}
+						<div>
+							<span class="mb-1.5 block text-xs font-semibold text-zinc-400"
+								>Source tracks (derived)</span
+							>
+							<div class="flex flex-wrap gap-1.5">
+								{#each sourceTracks as t (t.id)}
+									<span class="rounded-full bg-zinc-800 px-2.5 py-0.5 text-xs text-zinc-300">
+										{t.artist} — {t.title} ({t.year})
+									</span>
+								{/each}
+							</div>
+						</div>
+					{/if}
 				</div>
 			{/each}
 		</div>

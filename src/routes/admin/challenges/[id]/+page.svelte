@@ -245,7 +245,6 @@
 		{:else if isFragments}
 			<FragmentsEditor
 				tabs={data.tabs}
-				sourceTracksByTab={data.sourceTracksByTab}
 				clipsByTab={data.clipsByTab}
 				allTracks={data.allTracks}
 				clips={data.clips}
