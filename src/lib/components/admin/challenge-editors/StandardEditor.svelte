@@ -2,6 +2,7 @@
 	import { enhance } from '$app/forms';
 	import type { ChallengeType } from '$lib/types/index.js';
 	import { TYPE_FIELDS } from '$lib/variants';
+	import SearchablePicker from '$lib/components/admin/SearchablePicker.svelte';
 
 	type Track = { id: string; artist: string; title: string; year: number };
 	type Clip = { id: string; track_id: string; type: string; storage_path: string };
@@ -69,8 +70,6 @@
 	function currentMode(field: string): string {
 		return savedFieldModes[field] ?? 'open_text';
 	}
-
-	let selectedTrackForTab = $state<Record<string, string>>({});
 </script>
 
 <!-- ── Tabs ── -->
@@ -119,27 +118,23 @@
 					</div>
 
 					<!-- Source track picker -->
-					<div class="mb-3 grid grid-cols-2 gap-3">
+					<div class="mb-3 space-y-3">
 						<div>
 							<label class="mb-1 block text-xs text-zinc-400">Source track</label>
 							<form method="POST" action="?/setTabSourceTrack" use:enhance>
 								<input type="hidden" name="tab_id" value={tab.id} />
 								<input type="hidden" name="existing_src_id" value={src?.id ?? ''} />
-								<select
+								<SearchablePicker
 									name="track_id"
-									class="input-field"
-									onchange={(e) => {
-										selectedTrackForTab[tab.id] = (e.target as HTMLSelectElement).value;
-										(e.target as HTMLSelectElement).form?.requestSubmit();
-									}}
-								>
-									<option value="">— pick a track —</option>
-									{#each allTracks as t (t.id)}
-										<option value={t.id} selected={src?.track_id === t.id}>
-											{t.artist} — {t.title} ({t.year})
-										</option>
-									{/each}
-								</select>
+									items={allTracks.map((t) => ({
+										id: t.id,
+										label: `${t.artist} — ${t.title}`,
+										subtitle: String(t.year)
+									}))}
+									value={src?.track_id ?? ''}
+									placeholder="Search tracks…"
+									emptyLabel="— no track —"
+								/>
 							</form>
 						</div>
 
@@ -149,28 +144,30 @@
 								<form method="POST" action="?/setTabClip" use:enhance>
 									<input type="hidden" name="tab_id" value={tab.id} />
 									<input type="hidden" name="existing_clip_id" value={tabClip?.id ?? ''} />
-									<select
+									<SearchablePicker
 										name="clip_id"
-										class="input-field"
-										onchange={(e) => (e.target as HTMLSelectElement).form?.requestSubmit()}
-									>
-										<option value="">— pick a clip —</option>
-										{#each clipsForTrack(src.track_id) as c (c.id)}
-											<option value={c.id} selected={tabClip?.clip_id === c.id}>
-												{c.type} — {c.storage_path.split('/').pop()}
-											</option>
-										{/each}
-									</select>
+										items={clipsForTrack(src.track_id).map((c) => ({
+											id: c.id,
+											label: c.type,
+											subtitle: c.storage_path.split('/').pop() ?? ''
+										}))}
+										value={tabClip?.clip_id ?? ''}
+										placeholder="Search clips…"
+										emptyLabel="— no clip —"
+									/>
 								</form>
+								{#if tabClip?.clip_id}
+									{@const previewClip = clips.find((c) => c.id === tabClip.clip_id)}
+									{#if previewClip}
+										<audio controls src={previewClip.storage_path} class="mt-2 h-8 w-full rounded"
+										></audio>
+									{/if}
+								{/if}
 							{:else}
 								<p class="text-xs text-zinc-600 italic">Pick a track first</p>
 							{/if}
 						</div>
 					</div>
-
-					{#if tabClip && src?.track_id}
-						<p class="text-xs text-zinc-600">Clip: {tabClip.clip_id.slice(0, 8)}…</p>
-					{/if}
 				</div>
 			{/each}
 		</div>
@@ -190,14 +187,7 @@
 				<!-- Max points -->
 				<label class="flex items-center gap-1.5 text-xs text-zinc-400">
 					Max pts
-					<form method="POST" action="?/updateMeta" use:enhance class="inline">
-						{#each fields as f (f)}
-							<input
-								type="hidden"
-								name="field_points[{f}]"
-								value={f === field ? undefined : (pointsConfig[f] ?? 10)}
-							/>
-						{/each}
+					<form method="POST" action="?/saveFieldPoints" use:enhance class="inline">
 						<input
 							type="number"
 							name="field_points[{field}]"

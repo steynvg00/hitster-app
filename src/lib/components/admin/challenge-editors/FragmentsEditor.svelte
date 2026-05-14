@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { TYPE_FIELDS } from '$lib/variants';
+	import SearchablePicker from '$lib/components/admin/SearchablePicker.svelte';
 
 	type Track = { id: string; artist: string; title: string; year: number };
 	type Clip = { id: string; track_id: string; type: string; storage_path: string };
@@ -54,9 +55,6 @@
 	function currentMode(field: string): string {
 		return savedFieldModes[field] ?? 'open_text';
 	}
-
-	let addTrackSelections = $state<Record<string, string>>({});
-	let addClipSelections = $state<Record<string, string>>({});
 </script>
 
 <!-- ── Tabs ── -->
@@ -131,16 +129,18 @@
 						{/if}
 						<form method="POST" action="?/addTabSourceTrack" use:enhance class="flex gap-2">
 							<input type="hidden" name="tab_id" value={tab.id} />
-							<select
-								name="track_id"
-								bind:value={addTrackSelections[tab.id]}
-								class="input-field flex-1"
-							>
-								<option value="">+ Add source track…</option>
-								{#each allTracks as t (t.id)}
-									<option value={t.id}>{t.artist} — {t.title} ({t.year})</option>
-								{/each}
-							</select>
+							<div class="flex-1">
+								<SearchablePicker
+									name="track_id"
+									items={allTracks.map((t) => ({
+										id: t.id,
+										label: `${t.artist} — ${t.title}`,
+										subtitle: String(t.year)
+									}))}
+									placeholder="+ Add source track…"
+									emptyLabel="— none —"
+								/>
+							</div>
 							<button
 								type="submit"
 								class="rounded-lg bg-zinc-700 px-3 py-1 text-xs font-semibold text-zinc-200 hover:bg-zinc-600"
@@ -187,19 +187,21 @@
 						<form method="POST" action="?/addTabClip" use:enhance class="flex flex-wrap gap-2">
 							<input type="hidden" name="tab_id" value={tab.id} />
 							<input type="hidden" name="fragment_number" value={tabClips.length + 1} />
-							<select
-								name="clip_id"
-								bind:value={addClipSelections[tab.id]}
-								class="input-field flex-1"
-							>
-								<option value="">+ Add fragment clip…</option>
-								{#each clips as c (c.id)}
-									{@const t = allTracks.find((t) => t.id === c.track_id)}
-									<option value={c.id}>
-										{t ? `${t.artist} — ${t.title}` : c.track_id.slice(0, 8)} [{c.type}]
-									</option>
-								{/each}
-							</select>
+							<div class="flex-1">
+								<SearchablePicker
+									name="clip_id"
+									items={clips.map((c) => {
+										const t = allTracks.find((t) => t.id === c.track_id);
+										return {
+											id: c.id,
+											label: t ? `${t.artist} — ${t.title}` : c.track_id.slice(0, 8),
+											subtitle: `[${c.type}]`
+										};
+									})}
+									placeholder="+ Add fragment clip…"
+									emptyLabel="— none —"
+								/>
+							</div>
 							<button
 								type="submit"
 								class="rounded-lg bg-zinc-700 px-3 py-1 text-xs font-semibold text-zinc-200 hover:bg-zinc-600"
@@ -232,7 +234,7 @@
 				{/if}
 				<label class="flex items-center gap-1.5 text-xs text-zinc-400">
 					Max pts
-					<form method="POST" action="?/updateMeta" use:enhance class="inline">
+					<form method="POST" action="?/saveFieldPoints" use:enhance class="inline">
 						<input
 							type="number"
 							name="field_points[{field}]"

@@ -396,6 +396,36 @@ export const actions: Actions = {
 		return { success: true, action: 'saveInputMode' };
 	},
 
+	saveFieldPoints: async ({ request, params }) => {
+		const db = createAdminClient();
+		const data = await request.formData();
+
+		const submitted: Record<string, number> = {};
+		for (const [key, val] of data.entries()) {
+			if (key.startsWith('field_points[') && key.endsWith(']')) {
+				const field = key.slice(13, -1);
+				const n = parseInt(val as string, 10);
+				if (!isNaN(n) && n > 0) submitted[field] = n;
+			}
+		}
+
+		const { data: challenge } = await db
+			.from('challenges')
+			.select('points_config')
+			.eq('id', params.id)
+			.single();
+		if (!challenge) return fail(404, { error: 'Challenge not found' });
+
+		const pc = (challenge.points_config ?? {}) as Record<string, unknown>;
+		const existing = (pc.field_points ?? {}) as Record<string, number>;
+		const { error: e } = await db
+			.from('challenges')
+			.update({ points_config: { ...pc, field_points: { ...existing, ...submitted } } as never })
+			.eq('id', params.id);
+		if (e) return fail(500, { error: e.message });
+		return { success: true, action: 'saveFieldPoints' };
+	},
+
 	duplicateChallenge: async ({ params, locals }) => {
 		const db = createAdminClient();
 
