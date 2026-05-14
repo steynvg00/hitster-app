@@ -4,7 +4,13 @@
 	import SearchablePicker from '$lib/components/admin/SearchablePicker.svelte';
 
 	type Track = { id: string; artist: string; title: string; year: number };
-	type Clip = { id: string; track_id: string; type: string; storage_path: string };
+	type Clip = {
+		id: string;
+		track_id: string;
+		type: string;
+		storage_path: string;
+		storage_object_path: string | null;
+	};
 	type Tab = { id: string; position: number; mashup_id?: string | null };
 	type Mashup = { id: string; name: string; primary_clip_id: string };
 	type MashupSource = { id: string; mashup_id: string; track_id: string; sort_order: number };
@@ -109,6 +115,11 @@
 							/>
 						</form>
 						{#if mashupClip}
+							{@const _ = console.log('[ClipPreview] resolving clip', {
+								clip_id: mashupClip.id,
+								storage_object_path: mashupClip.storage_object_path,
+								resolved_url: mashupClip.storage_path
+							})}
 							<audio controls src={mashupClip.storage_path} class="mt-2 h-8 w-full rounded"></audio>
 						{/if}
 					</div>

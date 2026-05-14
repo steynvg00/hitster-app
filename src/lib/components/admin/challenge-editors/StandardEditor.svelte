@@ -5,7 +5,13 @@
 	import SearchablePicker from '$lib/components/admin/SearchablePicker.svelte';
 
 	type Track = { id: string; artist: string; title: string; year: number };
-	type Clip = { id: string; track_id: string; type: string; storage_path: string };
+	type Clip = {
+		id: string;
+		track_id: string;
+		type: string;
+		storage_path: string;
+		storage_object_path: string | null;
+	};
 	type Tab = { id: string; position: number };
 	type Src = { id: string; tab_id: string; track_id: string; sort_order: number };
 	type TabClip = {
@@ -159,6 +165,11 @@
 								{#if tabClip?.clip_id}
 									{@const previewClip = clips.find((c) => c.id === tabClip.clip_id)}
 									{#if previewClip}
+										{@const _ = console.log('[ClipPreview] resolving clip', {
+											clip_id: previewClip.id,
+											storage_object_path: previewClip.storage_object_path,
+											resolved_url: previewClip.storage_path
+										})}
 										<audio controls src={previewClip.storage_path} class="mt-2 h-8 w-full rounded"
 										></audio>
 									{/if}

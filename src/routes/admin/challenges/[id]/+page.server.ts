@@ -45,10 +45,32 @@ export const load: PageServerLoad = async ({ params }) => {
 	const allTracks = allTracksResult.data ?? [];
 	const allTrackIds = allTracks.map((t) => t.id);
 
-	const { data: clips } = await db
+	const { data: rawClips } = await db
 		.from('clips')
 		.select('*')
 		.in('track_id', allTrackIds.length ? allTrackIds : ['__none__']);
+
+	// Normalise storage_path to a resolvable URL.
+	// Canonical source: storage_object_path + 'audio' bucket (set by the upload endpoint).
+	// Legacy clips (manually inserted) have storage_object_path = null; fall back to
+	// storage_path if it looks like a full URL, otherwise surface as empty string so the
+	// diagnostic log in the editor makes the data issue visible.
+	const clips = (rawClips ?? []).map((c) => {
+		const objPath = (c as unknown as { storage_object_path?: string | null }).storage_object_path;
+		let resolvedUrl: string;
+		if (objPath) {
+			resolvedUrl = db.storage.from('audio').getPublicUrl(objPath).data.publicUrl;
+		} else if (c.storage_path?.startsWith('http')) {
+			resolvedUrl = c.storage_path;
+		} else {
+			resolvedUrl = '';
+		}
+		return {
+			...c,
+			storage_path: resolvedUrl,
+			storage_object_path: objPath ?? null
+		};
+	});
 
 	return {
 		challenge,
@@ -56,7 +78,7 @@ export const load: PageServerLoad = async ({ params }) => {
 		sourceTracksByTab: sourceTracksResult.data ?? [],
 		clipsByTab: tabClipsResult.data ?? [],
 		allTracks,
-		clips: clips ?? [],
+		clips,
 		answerOptions: answerOptionsResult.data ?? [],
 		mashups: mashupsResult.data ?? [],
 		mashupSources: mashupSourcesResult.data ?? []
