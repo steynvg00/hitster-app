@@ -51,13 +51,15 @@
 	const carouselLen = data.carouselChallenges.length;
 
 	const variantLabel: Record<string, string> = {
-		normal: 'Normal',
-		label: 'Label',
+		standard: 'Standard',
 		anthem: 'Anthem',
-		vocal: 'Vocal',
-		fragments: 'Fragments',
-		kick: 'Kick',
+		label: 'Label',
 		mashup: 'Mashup',
+		fragments: 'Fragments',
+		effects: 'Effects',
+		normal: 'Normal',
+		vocal: 'Vocal',
+		kick: 'Kick',
 		battle: 'Battle'
 	};
 
