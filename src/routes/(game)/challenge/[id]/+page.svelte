@@ -12,7 +12,7 @@
 	import Waveform from '$lib/components/ui/Waveform.svelte';
 	import BonusTracker from '$lib/components/game/BonusTracker.svelte';
 	import TutorialOverlay from '$lib/components/game/TutorialOverlay.svelte';
-	import { getVariantIcon, getVariantColor } from '$lib/variants';
+	import { getTypeIcon, getTypeColor } from '$lib/variants';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -26,14 +26,24 @@
 	};
 	const teamHex = $derived(teamColors[data.team.color] ?? '#ef4444');
 
-	// ── Draft persistence (localStorage) ─────────────────────────────────────
-	// draft[trackId][field] = value; persists across page refreshes
+	// ── Draft (localStorage) ──────────────────────────────────────────────────
+	// New shape: Record<tabPosition, SlotDraft[]>
+	// SlotDraft = { fieldValues: Record<string, string>, fragments?: number[] }
 	const DRAFT_KEY = `hitster_draft_${data.team.id}_${data.challenge.id}`;
 
-	function loadDraft(): Record<string, Record<string, string>> {
+	type SlotDraft = { fieldValues: Record<string, string>; fragments?: number[] };
+
+	function loadDraft(): Record<string, SlotDraft[]> {
 		if (typeof localStorage === 'undefined') return {};
 		try {
-			return JSON.parse(localStorage.getItem(DRAFT_KEY) ?? '{}');
+			const raw = JSON.parse(localStorage.getItem(DRAFT_KEY) ?? '{}');
+			// Detect and discard old shape (keyed by track UUID, not tab position)
+			const keys = Object.keys(raw);
+			if (keys.length > 0 && keys[0].includes('-') && keys[0].length === 36) {
+				localStorage.removeItem(DRAFT_KEY);
+				return {};
+			}
+			return raw;
 		} catch {
 			return {};
 		}
@@ -41,91 +51,144 @@
 
 	const savedDraft = loadDraft();
 
-	// Per-track string field state (all fields except year)
-	let allFieldValues = $state<Record<string, string>[]>(
-		data.challengeTracks.map((ct) => {
-			const saved = savedDraft[ct.trackId] ?? {};
-			return Object.fromEntries(data.variantFields.map((f: AnswerField) => [f, saved[f] ?? '']));
+	const variantFields = data.variantFields as AnswerField[];
+	const hasYear = variantFields.includes('year' as AnswerField);
+	const hasGrouping = variantFields.includes('grouping' as AnswerField);
+	const isFragments = data.challenge.variant === 'fragments';
+	const isMashup = data.challenge.variant === 'mashup';
+	const isMultiSource = isFragments || isMashup;
+
+	// ── Field state: per-tab, per-slot ───────────────────────────────────────
+	// allDrafts[tabIdx][slotIdx].fieldValues[field]
+	let allDrafts = $state<SlotDraft[][]>(
+		data.tabs.map((tab) => {
+			const tabDraft = savedDraft[String(tab.position)] ?? [];
+			const slotCount = Math.max(tab.sourceTracks.length, 1);
+			return Array.from({ length: slotCount }, (_, si) => {
+				const saved = tabDraft[si] ?? { fieldValues: {} };
+				return {
+					fieldValues: Object.fromEntries(
+						variantFields
+							.filter((f) => f !== 'year' && f !== 'grouping')
+							.map((f) => [f, saved.fieldValues?.[f] ?? ''])
+					),
+					fragments: saved.fragments ?? []
+				};
+			});
 		})
 	);
 
-	// Multi-artist collab state: [trackIndex][slotIndex] → string
-	// Only used when artist field is in combobox mode; joined with " & " on submit
+	// Year values: per-tab, per-slot
+	let allYearValues = $state<number[][]>(
+		data.tabs.map((tab) => {
+			const tabDraft = savedDraft[String(tab.position)] ?? [];
+			const slotCount = Math.max(tab.sourceTracks.length, 1);
+			return Array.from({ length: slotCount }, (_, si) => {
+				const y = parseInt(tabDraft[si]?.fieldValues?.['year'] ?? '1990', 10);
+				return isNaN(y) ? 1990 : y;
+			});
+		})
+	);
+
+	// Multi-artist collab: per-tab, per-slot
 	const hasArtistCombobox = $derived(
-		data.variantFields.includes('artist' as AnswerField) && data.fieldModes['artist'] === 'combobox'
+		variantFields.includes('artist' as AnswerField) && data.fieldModes['artist'] === 'combobox'
 	);
-	let collabArtists = $state<string[][]>(
-		data.challengeTracks.map((ct) => {
-			const saved = savedDraft[ct.trackId];
-			const savedArtist = saved?.['artist'] ?? '';
-			return savedArtist ? savedArtist.split(' & ') : [''];
+	let collabArtists = $state<string[][][]>(
+		data.tabs.map((tab) => {
+			const tabDraft = savedDraft[String(tab.position)] ?? [];
+			const slotCount = Math.max(tab.sourceTracks.length, 1);
+			return Array.from({ length: slotCount }, (_, si) => {
+				const saved = tabDraft[si]?.fieldValues?.['artist'] ?? '';
+				return saved ? saved.split(' & ') : [''];
+			});
 		})
 	);
 
-	function addArtistSlot(trackIdx: number) {
-		if (collabArtists[trackIdx].length < 3) {
-			collabArtists[trackIdx] = [...collabArtists[trackIdx], ''];
+	function addArtistSlot(tabIdx: number, slotIdx: number) {
+		if (collabArtists[tabIdx][slotIdx].length < 3) {
+			collabArtists[tabIdx][slotIdx] = [...collabArtists[tabIdx][slotIdx], ''];
 		}
 	}
-	function removeArtistSlot(trackIdx: number, slotIdx: number) {
-		collabArtists[trackIdx] = collabArtists[trackIdx].filter((_, i) => i !== slotIdx);
-		if (collabArtists[trackIdx].length === 0) collabArtists[trackIdx] = [''];
-		// Sync back to allFieldValues
-		allFieldValues[trackIdx]['artist'] = collabArtists[trackIdx].filter(Boolean).join(' & ');
+	function removeArtistSlot(tabIdx: number, slotIdx: number, artistIdx: number) {
+		collabArtists[tabIdx][slotIdx] = collabArtists[tabIdx][slotIdx].filter(
+			(_, i) => i !== artistIdx
+		);
+		if (collabArtists[tabIdx][slotIdx].length === 0) collabArtists[tabIdx][slotIdx] = [''];
+		allDrafts[tabIdx][slotIdx].fieldValues['artist'] = collabArtists[tabIdx][slotIdx]
+			.filter(Boolean)
+			.join(' & ');
 	}
 
-	// Year is numeric — bindable as number, stored separately
-	const hasYear = data.variantFields.includes('year' as AnswerField);
-	let allYearValues = $state<number[]>(
-		data.challengeTracks.map((ct) => {
-			const saved = savedDraft[ct.trackId] ?? {};
-			return parseInt(saved['year'] ?? '1990', 10);
-		})
-	);
+	// Fragment chip toggle
+	function toggleFragment(tabIdx: number, slotIdx: number, fragNum: number) {
+		const frags = allDrafts[tabIdx][slotIdx].fragments ?? [];
+		if (frags.includes(fragNum)) {
+			allDrafts[tabIdx][slotIdx].fragments = frags.filter((n) => n !== fragNum);
+		} else {
+			allDrafts[tabIdx][slotIdx].fragments = [...frags, fragNum].sort((a, b) => a - b);
+		}
+	}
 
-	// Persist to localStorage on any state change
+	// Persist draft to localStorage on any state change
 	$effect(() => {
-		const d: Record<string, Record<string, string>> = {};
-		for (let i = 0; i < data.challengeTracks.length; i++) {
-			const artistValue = hasArtistCombobox
-				? collabArtists[i].filter((a) => a.trim()).join(' & ')
-				: (allFieldValues[i]['artist'] ?? '');
-			d[data.challengeTracks[i].trackId] = {
-				...allFieldValues[i],
-				...(hasArtistCombobox ? { artist: artistValue } : {}),
-				...(hasYear ? { year: String(allYearValues[i]) } : {})
-			};
+		const d: Record<string, SlotDraft[]> = {};
+		for (let ti = 0; ti < data.tabs.length; ti++) {
+			const tab = data.tabs[ti];
+			const slotCount = Math.max(tab.sourceTracks.length, 1);
+			d[String(tab.position)] = Array.from({ length: slotCount }, (_, si) => {
+				const artistVal = hasArtistCombobox
+					? (collabArtists[ti]?.[si]?.filter((a) => a.trim()).join(' & ') ?? '')
+					: (allDrafts[ti]?.[si]?.fieldValues['artist'] ?? '');
+				return {
+					fieldValues: {
+						...allDrafts[ti]?.[si]?.fieldValues,
+						...(hasArtistCombobox ? { artist: artistVal } : {}),
+						...(hasYear ? { year: String(allYearValues[ti]?.[si] ?? 1990) } : {})
+					},
+					fragments: allDrafts[ti]?.[si]?.fragments
+				};
+			});
 		}
 		if (typeof localStorage !== 'undefined') {
 			localStorage.setItem(DRAFT_KEY, JSON.stringify(d));
 		}
 	});
 
-	function buildAnswersForSubmit(): Record<string, Record<string, string>> {
-		const d: Record<string, Record<string, string>> = {};
-		for (let i = 0; i < data.challengeTracks.length; i++) {
-			const artistValue = hasArtistCombobox
-				? collabArtists[i].filter((a) => a.trim()).join(' & ')
-				: (allFieldValues[i]['artist'] ?? '');
-			d[data.challengeTracks[i].trackId] = {
-				...allFieldValues[i],
-				...(hasArtistCombobox ? { artist: artistValue } : {}),
-				...(hasYear ? { year: String(allYearValues[i]) } : {})
-			};
+	function buildAnswersForSubmit(): Record<string, SlotDraft[]> {
+		const d: Record<string, SlotDraft[]> = {};
+		for (let ti = 0; ti < data.tabs.length; ti++) {
+			const tab = data.tabs[ti];
+			const slotCount = Math.max(tab.sourceTracks.length, 1);
+			d[String(tab.position)] = Array.from({ length: slotCount }, (_, si) => {
+				const artistVal = hasArtistCombobox
+					? (collabArtists[ti]?.[si]?.filter((a) => a.trim()).join(' & ') ?? '')
+					: (allDrafts[ti]?.[si]?.fieldValues['artist'] ?? '');
+				return {
+					fieldValues: {
+						...allDrafts[ti]?.[si]?.fieldValues,
+						...(hasArtistCombobox ? { artist: artistVal } : {}),
+						...(hasYear ? { year: String(allYearValues[ti]?.[si] ?? 1990) } : {})
+					},
+					fragments: allDrafts[ti]?.[si]?.fragments
+				};
+			});
 		}
 		return d;
 	}
 
-	// ── Multi-track tab state ─────────────────────────────────────────────────
-	let activeTrackIndex = $state(0);
-	const activeTrack = $derived(data.challengeTracks[activeTrackIndex]);
-	const isMultiTrack = $derived(data.challengeTracks.length > 1);
+	// ── Tab state ─────────────────────────────────────────────────────────────
+	let activeTabIndex = $state(0);
+	const activeTab = $derived(data.tabs[activeTabIndex]);
+	const isMultiTab = $derived(data.tabs.length > 1);
 
-	// ── Audio player (WaveSurfer) ─────────────────────────────────────────────
+	// ── Audio player ──────────────────────────────────────────────────────────
 	let waveformRef = $state<Waveform | undefined>(undefined);
 	let isPlaying = $state(false);
 	let currentTime = $state(0);
 	let duration = $state(0);
+	// For fragments: which clip index is active in the current tab
+	let activeClipIndex = $state(0);
 
 	const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 	const timeLabel = $derived(`${fmt(currentTime)} / ${fmt(duration || 0)}`);
@@ -133,6 +196,13 @@
 	function togglePlay() {
 		waveformRef?.playPause();
 	}
+
+	// Reset clip index when tab changes
+	$effect(() => {
+		void activeTabIndex;
+		activeClipIndex = 0;
+		isPlaying = false;
+	});
 
 	// ── Timer ─────────────────────────────────────────────────────────────────
 	let timerMs = $state<number | null>(null);
@@ -156,7 +226,6 @@
 	onMount(() => {
 		let iv: ReturnType<typeof setInterval> | undefined;
 
-		// Countdown timer (reads from team's own attempt start time)
 		if (data.timerEndsAt) {
 			const update = () => {
 				const remaining = Math.max(0, data.timerEndsAt! - Date.now());
@@ -167,7 +236,6 @@
 			iv = setInterval(update, 500);
 		}
 
-		// Detect when this team's attempt ends (auto-submit sets ended_at)
 		const attemptChannel = supabaseBrowser
 			.channel(`attempt-${data.challenge.id}-${data.team.id}`)
 			.on(
@@ -180,14 +248,12 @@
 				},
 				(payload) => {
 					const updated = payload.new as { team_id: string; ended_at: string | null };
-					if (updated.team_id === data.team.id && updated.ended_at && !result) {
+					if (updated.team_id === data.team.id && updated.ended_at && !result)
 						window.location.reload();
-					}
 				}
 			)
 			.subscribe();
 
-		// Backup: also watch for the submission INSERT directly
 		const submissionInsertChannel = supabaseBrowser
 			.channel(`sub-insert-${data.challenge.id}-${data.team.id}`)
 			.on(
@@ -200,14 +266,12 @@
 				},
 				(payload) => {
 					const newSub = payload.new as { team_id: string; is_final: boolean };
-					if (newSub.team_id === data.team.id && newSub.is_final && !result) {
+					if (newSub.team_id === data.team.id && newSub.is_final && !result)
 						window.location.reload();
-					}
 				}
 			)
 			.subscribe();
 
-		// Subscribe to set recap changes — redirect to waiting when recap starts
 		let setChannel: ReturnType<typeof supabaseBrowser.channel> | null = null;
 		if (data.activeSetId) {
 			setChannel = supabaseBrowser
@@ -237,7 +301,7 @@
 		};
 	});
 
-	// ── Result (declared before canSubmit so it can be referenced) ───────────
+	// ── Result ────────────────────────────────────────────────────────────────
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const f = $derived(form as any);
 	const result = $derived<ChallengeResult | null>(
@@ -246,31 +310,37 @@
 
 	// ── Validation ────────────────────────────────────────────────────────────
 	const comboboxFields = $derived(
-		data.variantFields.filter((f: AnswerField) => data.fieldModes[f] === 'combobox')
+		variantFields.filter((f: AnswerField) => data.fieldModes[f] === 'combobox')
 	);
 
 	const canSubmit = $derived(
 		!submitting &&
 			!result &&
 			(timerMs === null || timerMs > 0) &&
-			data.challengeTracks.every((_, i) => {
-				const otherComboFields = comboboxFields.filter(
-					(f: AnswerField) => !(f === 'artist' && hasArtistCombobox)
-				);
-				const otherOk = otherComboFields.every(
-					(f: AnswerField) => (allFieldValues[i]?.[f] ?? '').length > 0
-				);
-				const artistOk = !hasArtistCombobox || collabArtists[i].some((a) => a.trim().length > 0);
-				return otherOk && artistOk;
+			data.tabs.every((tab, ti) => {
+				const slotCount = Math.max(tab.sourceTracks.length, 1);
+				return Array.from({ length: slotCount }, (_, si) => {
+					const otherComboFields = comboboxFields.filter(
+						(ff: AnswerField) => !(ff === 'artist' && hasArtistCombobox)
+					);
+					const otherOk = otherComboFields.every(
+						(ff: AnswerField) => (allDrafts[ti]?.[si]?.fieldValues[ff] ?? '').length > 0
+					);
+					const artistOk =
+						!hasArtistCombobox || collabArtists[ti]?.[si]?.some((a) => a.trim().length > 0);
+					return otherOk && artistOk;
+				}).every(Boolean);
 			})
 	);
 	const formError = $derived<string | null>(f?.formError ?? null);
 	const reviewError = $derived<string | null>(f?.reviewError ?? null);
 
-	let resultTrackIndex = $state(0);
-	const resultTrack = $derived(result?.tracks[resultTrackIndex] ?? null);
+	let resultTabIndex = $state(0);
+	const resultTab = $derived(result?.tabs?.[resultTabIndex] ?? null);
+	// Legacy flat result for simple display when tabs not present
+	const resultTrack = $derived(result?.tracks?.[resultTabIndex] ?? null);
 
-	let reviewedKeys = $state<Set<string>>(new Set()); // `${trackId}:${field}`
+	let reviewedKeys = $state<Set<string>>(new Set());
 	$effect(() => {
 		if (f?.reviewRequested && f.reviewedField) reviewedKeys.add(f.reviewedField);
 	});
@@ -285,8 +355,6 @@
 	);
 
 	onMount(() => {
-		// Auto-show tutorial once per variant per team session, only when already in-game.
-		// When attempt is null (pre-game gate), the tutorial is shown inline — no overlay needed.
 		if (data.tutorialText && data.team?.id && data.attempt) {
 			const key = `tutorial_seen_${data.team.id}_${data.challenge.variant}`;
 			if (!localStorage.getItem(key)) {
@@ -296,7 +364,6 @@
 		}
 	});
 
-	// Pre-game gate: mark tutorial as seen immediately so the overlay won't pop on reload.
 	$effect(() => {
 		if (
 			!data.attempt &&
@@ -310,23 +377,23 @@
 		}
 	});
 
-	// ── Field label display ───────────────────────────────────────────────────
-	const FIELD_LABELS: Record<AnswerField, string> = {
+	// ── Field labels ──────────────────────────────────────────────────────────
+	const FIELD_LABELS: Record<string, string> = {
 		artist: 'Artist',
 		title: 'Title',
 		year: 'Year',
 		label: 'Record Label',
 		festival: 'Festival',
-		vocal_source: 'Vocal source'
+		grouping: 'Which fragments?'
 	};
 	function fieldLabel(field: AnswerField) {
-		return FIELD_LABELS[field] ?? field;
+		return FIELD_LABELS[field as string] ?? field;
 	}
 
-	let reviewingKey = $state<string | null>(null); // `${trackId}:${field}`
+	let reviewingKey = $state<string | null>(null);
 
-	const VariantIcon = $derived(getVariantIcon(data.challenge.variant));
-	const variantColor = $derived(getVariantColor(data.challenge.variant));
+	const TypeIcon = $derived(getTypeIcon(data.challenge.variant));
+	const typeColor = $derived(getTypeColor(data.challenge.variant));
 
 	// ── Live result (realtime submissions subscription) ───────────────────────
 	let liveScore = $state<number | null>(null);
@@ -376,7 +443,6 @@
 		return () => supabaseBrowser.removeChannel(channel);
 	});
 
-	// ── Animated score count-up ───────────────────────────────────────────────
 	$effect(() => {
 		const target = liveScore ?? 0;
 		if (target === 0) {
@@ -384,12 +450,12 @@
 			return;
 		}
 		const from = animatedScore;
-		const duration = Math.min(1400, 400 + Math.abs(target - from) * 8);
+		const dur = Math.min(1400, 400 + Math.abs(target - from) * 8);
 		const startTime = performance.now();
 		let rafId: number;
 		const tick = (now: number) => {
-			const p = Math.min((now - startTime) / duration, 1);
-			const eased = 1 - Math.pow(1 - p, 3); // ease-out cubic
+			const p = Math.min((now - startTime) / dur, 1);
+			const eased = 1 - Math.pow(1 - p, 3);
 			animatedScore = Math.round(from + (target - from) * eased);
 			if (p < 1) rafId = requestAnimationFrame(tick);
 		};
@@ -407,7 +473,6 @@
 {/if}
 
 {#if showHintModal && data.challenge.hint_text}
-	<!-- ── Hint modal ──────────────────────────────────────────────────────── -->
 	<div
 		class="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm"
 		role="dialog"
@@ -428,9 +493,8 @@
 				onclick={() => (showHintModal = false)}
 				class="mt-6 w-full rounded-xl py-3 text-sm font-bold transition-colors"
 				style="background-color: {teamHex}22; color: {teamHex}; border: 1px solid {teamHex}44;"
+				>Got it</button
 			>
-				Got it
-			</button>
 		</div>
 	</div>
 {/if}
@@ -441,12 +505,9 @@
 		<div class="pt-4 pb-6">
 			<span
 				class="rounded-full px-3 py-1 text-xs font-bold tracking-widest text-white uppercase"
-				style="background-color: {teamHex};"
+				style="background-color: {teamHex};">{data.team.display_name}</span
 			>
-				{data.team.display_name}
-			</span>
 		</div>
-
 		<h1 class="mb-1 text-2xl font-black">Results</h1>
 		<p class="mb-4 text-sm text-zinc-400">{data.challenge.title}</p>
 
@@ -455,7 +516,6 @@
 				{reviewError}
 			</div>
 		{/if}
-
 		{#if reviewJustResolved && liveStatus === 'review_approved'}
 			<div
 				class="mb-4 rounded-xl border border-green-600/50 bg-green-900/30 p-3 text-sm text-green-300"
@@ -470,34 +530,139 @@
 			</div>
 		{/if}
 
-		<!-- Track tabs (multi-track only) -->
-		{#if result.tracks.length > 1}
+		<!-- Tab tabs (multi-tab) -->
+		{#if (result.tabs?.length ?? 0) > 1}
 			<div class="mb-4 flex gap-1 overflow-x-auto pb-1">
-				{#each result.tracks as tr, i}
+				{#each result.tabs ?? [] as tr, i}
 					<button
 						type="button"
-						onclick={() => (resultTrackIndex = i)}
-						class="shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors
-							{resultTrackIndex === i ? 'text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}"
-						style={resultTrackIndex === i ? `background-color: ${teamHex};` : ''}
+						onclick={() => (resultTabIndex = i)}
+						class="shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors {resultTabIndex ===
+						i
+							? 'text-white'
+							: 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}"
+						style={resultTabIndex === i ? `background-color: ${teamHex};` : ''}
 					>
-						Track {tr.trackIndex}
-						<span class="ml-1 text-xs opacity-70">{tr.total}/{tr.maxTotal}</span>
+						Tab {tr.tabIndex} <span class="ml-1 text-xs opacity-70">{tr.total}/{tr.maxTotal}</span>
 					</button>
 				{/each}
 			</div>
 		{/if}
 
-		{#if resultTrack}
+		<!-- Per-tab results (use slots within tab) -->
+		{#if resultTab}
+			{#each resultTab.slots as slot, slotIdx (slotIdx)}
+				{#if slotIdx > 0}
+					<div class="mb-3 flex items-center gap-2 text-xs text-zinc-500">
+						<div class="h-px flex-1 bg-zinc-800"></div>
+						<span>Slot {slotIdx + 1}</span>
+						<div class="h-px flex-1 bg-zinc-800"></div>
+					</div>
+				{/if}
+				<div class="mb-4 space-y-1 rounded-2xl bg-zinc-900 p-5">
+					{#each slot.fields as fr, i}
+						{@const isPartial = fr.score > 0 && fr.score < fr.maxScore}
+						{@const isCorrect = fr.score === fr.maxScore}
+						{@const reviewKey = `tab_${resultTab.tabPosition}_slot_${slot.slotIndex}_${fr.field}`}
+
+						{#if i > 0}<div class="border-t border-zinc-800"></div>{/if}
+						<div class="py-3">
+							<div class="flex items-center justify-between">
+								<div>
+									<div class="mb-0.5 text-xs font-semibold tracking-wide text-zinc-500 uppercase">
+										{fieldLabel(fr.field)}
+									</div>
+									<div class="font-semibold">{fr.submitted || '—'}</div>
+									{#if !isCorrect}
+										<div class="text-xs text-zinc-500">Correct: {fr.correct}</div>
+										{#if fr.fuzzyScore !== undefined}
+											<div class="text-xs text-zinc-600">
+												Match: {Math.round(fr.fuzzyScore * 100)}%
+											</div>
+										{/if}
+									{/if}
+								</div>
+								<div class="ml-4 shrink-0 text-right">
+									<div
+										class="text-xl font-black {isCorrect
+											? 'text-green-400'
+											: isPartial
+												? 'text-yellow-400'
+												: 'text-red-400'}"
+									>
+										{isCorrect ? '✓' : isPartial ? '~' : '✗'}
+									</div>
+									<div class="text-sm text-zinc-400">+{fr.score} / {fr.maxScore}</div>
+								</div>
+							</div>
+
+							{#if (fr.score === 0 || isPartial) && data.fieldModes[fr.field] === 'open_text'}
+								{@const effectiveStatus = liveStatus ?? result.status}
+								{@const alreadyRequested =
+									reviewedKeys.has(reviewKey) ||
+									effectiveStatus === 'review_requested' ||
+									effectiveStatus === 'review_approved' ||
+									effectiveStatus === 'review_rejected'}
+								{#if alreadyRequested}
+									<p class="mt-2 text-xs text-amber-400">Review requested ✓</p>
+								{:else}
+									<div class="mt-2">
+										{#if reviewingKey === reviewKey}
+											<form
+												method="POST"
+												action="?/requestReview"
+												use:enhance={() =>
+													async ({ update }) => {
+														reviewingKey = null;
+														await update();
+													}}
+											>
+												<input type="hidden" name="submission_id" value={result.submissionId} />
+												<input type="hidden" name="team_id" value={data.team.id} />
+												<input type="hidden" name="field_name" value={reviewKey} />
+												<input type="hidden" name="track_id" value={slot.matchedTrackId ?? ''} />
+												<textarea
+													name="player_message"
+													placeholder="Optional: explain why you think this is correct"
+													rows="2"
+													class="mb-2 w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200 focus:outline-none"
+												></textarea>
+												<div class="flex gap-2">
+													<button
+														type="submit"
+														class="rounded-lg px-3 py-1.5 text-xs font-bold text-white transition-colors hover:opacity-90"
+														style="background-color: {teamHex};">Send request</button
+													>
+													<button
+														type="button"
+														onclick={() => (reviewingKey = null)}
+														class="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200"
+														>Cancel</button
+													>
+												</div>
+											</form>
+										{:else}
+											<button
+												type="button"
+												onclick={() => (reviewingKey = reviewKey)}
+												class="text-xs font-medium underline underline-offset-2"
+												style="color: {teamHex};">Request manual review</button
+											>
+										{/if}
+									</div>
+								{/if}
+							{/if}
+						</div>
+					{/each}
+				</div>
+			{/each}
+		{:else if resultTrack}
+			<!-- Fallback: old flat result -->
 			<div class="mb-6 space-y-1 rounded-2xl bg-zinc-900 p-5">
 				{#each resultTrack.fields as fr, i}
-					{@const isPartial = fr.score > 0 && fr.score < fr.maxScore}
 					{@const isCorrect = fr.score === fr.maxScore}
-					{@const isWrong = fr.score === 0}
-					{@const reviewKey = `${resultTrack.trackId}:${fr.field}`}
-
+					{@const isPartial = fr.score > 0 && fr.score < fr.maxScore}
 					{#if i > 0}<div class="border-t border-zinc-800"></div>{/if}
-
 					<div class="py-3">
 						<div class="flex items-center justify-between">
 							<div>
@@ -505,14 +670,7 @@
 									{fieldLabel(fr.field)}
 								</div>
 								<div class="font-semibold">{fr.submitted || '—'}</div>
-								{#if !isCorrect}
-									<div class="text-xs text-zinc-500">Correct: {fr.correct}</div>
-									{#if fr.fuzzyScore !== undefined}
-										<div class="text-xs text-zinc-600">
-											Match: {Math.round(fr.fuzzyScore * 100)}%
-										</div>
-									{/if}
-								{/if}
+								{#if !isCorrect}<div class="text-xs text-zinc-500">Correct: {fr.correct}</div>{/if}
 							</div>
 							<div class="ml-4 shrink-0 text-right">
 								<div
@@ -527,69 +685,6 @@
 								<div class="text-sm text-zinc-400">+{fr.score} / {fr.maxScore}</div>
 							</div>
 						</div>
-
-						{#if (isWrong || isPartial) && data.fieldModes[fr.field] === 'open_text'}
-							{@const effectiveStatus = liveStatus ?? result.status}
-							{@const alreadyRequested =
-								reviewedKeys.has(reviewKey) ||
-								effectiveStatus === 'review_requested' ||
-								effectiveStatus === 'review_approved' ||
-								effectiveStatus === 'review_rejected'}
-							{#if alreadyRequested}
-								<p class="mt-2 text-xs text-amber-400">Review requested ✓</p>
-							{:else}
-								<div class="mt-2">
-									{#if reviewingKey === reviewKey}
-										<form
-											method="POST"
-											action="?/requestReview"
-											use:enhance={() =>
-												async ({ update }) => {
-													reviewingKey = null;
-													await update();
-												}}
-										>
-											<input type="hidden" name="submission_id" value={result.submissionId} />
-											<input type="hidden" name="team_id" value={data.team.id} />
-											<input type="hidden" name="field_name" value={fr.field} />
-											<input type="hidden" name="track_id" value={resultTrack.trackId} />
-											<textarea
-												name="player_message"
-												placeholder="Optional: explain why you think this is correct"
-												rows="2"
-												class="mb-2 w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200 focus:outline-none"
-											>
-											</textarea>
-											<div class="flex gap-2">
-												<button
-													type="submit"
-													class="rounded-lg px-3 py-1.5 text-xs font-bold text-white transition-colors hover:opacity-90"
-													style="background-color: {teamHex};"
-												>
-													Send request
-												</button>
-												<button
-													type="button"
-													onclick={() => (reviewingKey = null)}
-													class="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200"
-												>
-													Cancel
-												</button>
-											</div>
-										</form>
-									{:else}
-										<button
-											type="button"
-											onclick={() => (reviewingKey = reviewKey)}
-											class="text-xs font-medium underline underline-offset-2"
-											style="color: {teamHex};"
-										>
-											Request manual review
-										</button>
-									{/if}
-								</div>
-							{/if}
-						{/if}
 					</div>
 				{/each}
 			</div>
@@ -613,21 +708,19 @@
 		</div>
 
 		<div class="text-center">
-			<a href="/leaderboard" class="text-sm underline underline-offset-2" style="color: {teamHex};">
-				View leaderboard →
-			</a>
+			<a href="/leaderboard" class="text-sm underline underline-offset-2" style="color: {teamHex};"
+				>View leaderboard →</a
+			>
 		</div>
 	</div>
 {:else if !data.attempt && data.challenge.status !== 'active'}
-	<!-- ── Challenge has ended (inactive, no prior attempt) ─────────────────── -->
+	<!-- ── Challenge ended ────────────────────────────────────────────────────── -->
 	<div class="mx-auto min-h-screen max-w-lg p-4">
 		<div class="pt-4 pb-6">
 			<span
 				class="rounded-full px-3 py-1 text-xs font-bold tracking-widest text-white uppercase"
-				style="background-color: {teamHex};"
+				style="background-color: {teamHex};">{data.team.display_name}</span
 			>
-				{data.team.display_name}
-			</span>
 		</div>
 		<h1 class="mb-6 text-2xl font-black">{data.challenge.title}</h1>
 		<div class="space-y-3 rounded-2xl border border-zinc-800 bg-zinc-900 p-8 text-center">
@@ -643,36 +736,31 @@
 		</div>
 	</div>
 {:else if !data.attempt}
-	<!-- ── Pre-game gate: tutorial + Start button ────────────────────────────── -->
+	<!-- ── Pre-game gate ──────────────────────────────────────────────────────── -->
 	<div class="mx-auto min-h-screen max-w-lg p-4">
 		<div class="pt-4 pb-6">
 			<span
 				class="rounded-full px-3 py-1 text-xs font-bold tracking-widest text-white uppercase"
-				style="background-color: {teamHex};"
+				style="background-color: {teamHex};">{data.team.display_name}</span
 			>
-				{data.team.display_name}
-			</span>
 		</div>
-
 		<div class="mb-6">
 			<div class="mb-2">
 				<span
-					class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-bold {variantColor}"
+					class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-bold {typeColor}"
 				>
-					<VariantIcon size={12} />
+					<TypeIcon size={12} />
 					{data.challenge.variant}
 				</span>
 			</div>
 			<h1 class="text-2xl font-black">{data.challenge.title}</h1>
 		</div>
-
 		{#if data.tutorialText}
 			<div class="mb-8 rounded-2xl border border-zinc-700 bg-zinc-900 p-6">
 				<h2 class="mb-3 text-xs font-bold tracking-widest text-zinc-400 uppercase">How to play</h2>
 				<p class="text-sm leading-relaxed text-zinc-200">{data.tutorialText}</p>
 			</div>
 		{/if}
-
 		<form
 			method="POST"
 			action="?/startChallenge"
@@ -699,23 +787,21 @@
 		<p class="mt-3 text-center text-xs text-zinc-600">Timer begins when you tap Start</p>
 	</div>
 {:else}
-	<!-- ── Challenge form ───────────────────────────────────────────────────── -->
+	<!-- ── Challenge form ─────────────────────────────────────────────────────── -->
 	<div class="mx-auto min-h-screen max-w-lg p-4">
 		<div class="flex items-center justify-between pt-4 pb-6">
 			<span
 				class="rounded-full px-3 py-1 text-xs font-bold tracking-widest text-white uppercase"
-				style="background-color: {teamHex};"
+				style="background-color: {teamHex};">{data.team.display_name}</span
 			>
-				{data.team.display_name}
-			</span>
-
 			{#if timerMs !== null}
 				<span
-					class="font-mono text-sm font-bold tabular-nums
-					{timerMs < 30_000 ? 'text-red-400' : timerMs < 60_000 ? 'text-yellow-400' : 'text-zinc-400'}"
+					class="font-mono text-sm font-bold tabular-nums {timerMs < 30_000
+						? 'text-red-400'
+						: timerMs < 60_000
+							? 'text-yellow-400'
+							: 'text-zinc-400'}">{fmtMs(timerMs)}</span
 				>
-					{fmtMs(timerMs)}
-				</span>
 			{/if}
 		</div>
 
@@ -727,41 +813,63 @@
 						onclick={() => (showTutorial = true)}
 						class="rounded-full px-3 py-1 text-xs font-semibold transition-colors"
 						style="background-color: {teamHex}22; color: {teamHex}; border: 1px solid {teamHex}44;"
+						>ⓘ</button
 					>
-						ⓘ
-					</button>
 				{/if}
 				{#if data.challenge.hint_text && data.hintUsed}
 					<button
 						onclick={() => (showHintModal = true)}
 						class="rounded-full px-3 py-1 text-xs font-semibold transition-colors"
 						style="background-color: {teamHex}22; color: {teamHex}; border: 1px solid {teamHex}44;"
+						>💡 Hint</button
 					>
-						💡 Hint
-					</button>
 				{/if}
 			</div>
 		</div>
 
-		<!-- Track tabs (multi-track only) -->
-		{#if isMultiTrack}
+		<!-- Tab strip (multi-tab) -->
+		{#if isMultiTab}
 			<div class="mb-4 flex gap-1 overflow-x-auto pb-1">
-				{#each data.challengeTracks as _ct, i}
+				{#each data.tabs as _tab, i}
 					<button
 						type="button"
-						onclick={() => (activeTrackIndex = i)}
-						class="shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors
-							{activeTrackIndex === i ? 'text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}"
-						style={activeTrackIndex === i ? `background-color: ${teamHex};` : ''}
+						onclick={() => (activeTabIndex = i)}
+						class="shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors {activeTabIndex ===
+						i
+							? 'text-white'
+							: 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}"
+						style={activeTabIndex === i ? `background-color: ${teamHex};` : ''}
 					>
-						Track {i + 1}
+						Tab {i + 1}
 					</button>
 				{/each}
 			</div>
 		{/if}
 
-		<!-- Audio player -->
+		<!-- Audio player(s) -->
 		<div class="mb-6 rounded-2xl bg-zinc-900 p-5">
+			{#if isFragments && activeTab && activeTab.clips.length > 1}
+				<!-- Fragments: numbered clip strip at top -->
+				<div class="mb-3 flex flex-wrap gap-1.5">
+					{#each activeTab.clips as clipItem, ci}
+						<button
+							type="button"
+							onclick={() => {
+								activeClipIndex = ci;
+								isPlaying = false;
+							}}
+							class="rounded-lg px-3 py-1.5 text-xs font-bold transition-colors {activeClipIndex ===
+							ci
+								? 'text-white'
+								: 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}"
+							style={activeClipIndex === ci ? `background-color: ${teamHex};` : ''}
+						>
+							Fragment {clipItem.fragmentNumber ?? ci + 1}
+						</button>
+					{/each}
+				</div>
+			{/if}
+
 			<div class="flex items-center gap-4">
 				<button
 					type="button"
@@ -771,26 +879,33 @@
 					aria-label={isPlaying ? 'Pause' : 'Play'}
 				>
 					{#if isPlaying}
-						<svg class="h-5 w-5 text-white" fill="currentColor" viewBox="0 0 20 20">
-							<rect x="5" y="4" width="3" height="12" rx="1" />
-							<rect x="12" y="4" width="3" height="12" rx="1" />
-						</svg>
+						<svg class="h-5 w-5 text-white" fill="currentColor" viewBox="0 0 20 20"
+							><rect x="5" y="4" width="3" height="12" rx="1" /><rect
+								x="12"
+								y="4"
+								width="3"
+								height="12"
+								rx="1"
+							/></svg
+						>
 					{:else}
-						<svg class="ml-0.5 h-5 w-5 text-white" fill="currentColor" viewBox="0 0 20 20">
-							<path
+						<svg class="ml-0.5 h-5 w-5 text-white" fill="currentColor" viewBox="0 0 20 20"
+							><path
 								d="M6.3 2.841A1.5 1.5 0 004 4.11v11.78a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"
-							/>
-						</svg>
+							/></svg
+						>
 					{/if}
 				</button>
 				<div class="min-w-0 flex-1 space-y-1.5">
-					{#key activeTrackIndex}
+					{#key `${activeTabIndex}-${activeClipIndex}`}
 						<Waveform
 							bind:this={waveformRef}
-							src={activeTrack?.clipUrl ?? ''}
+							src={activeTab?.clips[activeClipIndex]?.clipUrl ?? activeTab?.primaryClipUrl ?? ''}
 							height={48}
 							progressColor={teamHex}
-							effects={activeTrack?.effects ?? {}}
+							effects={activeTab?.clips[activeClipIndex]?.effects ??
+								activeTab?.primaryClipEffects ??
+								{}}
 							onPlayStateChange={(p) => (isPlaying = p)}
 							onTimeUpdate={(t, d) => {
 								currentTime = t;
@@ -808,13 +923,23 @@
 				{formError}
 			</div>
 		{/if}
-
 		{#if timerMs === 0}
 			<div
 				class="mb-4 rounded-xl border border-amber-600/50 bg-amber-900/30 p-3 text-sm text-amber-300"
 			>
 				Time's up — submitting your answers…
 			</div>
+		{/if}
+
+		<!-- Challenge intro (mashup/fragments) -->
+		{#if isMashup && activeTab}
+			<p class="mb-4 text-sm font-semibold text-zinc-400">
+				Identify the {activeTab.sourceTracks.length} songs in this mashup:
+			</p>
+		{:else if isFragments && activeTab}
+			<p class="mb-4 text-sm font-semibold text-zinc-400">
+				Identify the {activeTab.sourceTracks.length} tracks and group the fragments:
+			</p>
 		{/if}
 
 		<form
@@ -833,84 +958,195 @@
 		>
 			<input type="hidden" name="team_id" value={data.team.id} />
 
-			<!-- {#key} forces components to remount when switching tracks, so inputText resets correctly -->
-			{#key activeTrackIndex}
-				{#each data.variantFields as field (field)}
-					{@const mode = data.fieldModes[field] as InputMode}
-					<div>
-						<label class="mb-1.5 block text-sm font-semibold text-zinc-400"
-							>{fieldLabel(field)}</label
-						>
+			{#key activeTabIndex}
+				{#if isMultiSource && activeTab}
+					<!-- Multi-slot layout: one block per source track slot -->
+					{#each Array.from({ length: Math.max(activeTab.sourceTracks.length, 1) }, (_, si) => si) as slotIdx (slotIdx)}
+						<div class="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+							{#if activeTab.sourceTracks.length > 1}
+								<div class="mb-3 text-xs font-bold tracking-widest text-zinc-500 uppercase">
+									Track {slotIdx + 1}
+								</div>
+							{/if}
 
-						{#if field === 'artist' && hasArtistCombobox}
-							<!-- Multi-artist collab input -->
-							{#each collabArtists[activeTrackIndex] as _, slotIdx}
-								<div class="mb-2 flex items-start gap-2">
-									<div class="min-w-0 flex-1">
+							{#each variantFields.filter((f) => f !== 'grouping') as field (field)}
+								{@const mode = data.fieldModes[field] as InputMode}
+								<div class="mb-4">
+									<label class="mb-1.5 block text-sm font-semibold text-zinc-400"
+										>{fieldLabel(field)}</label
+									>
+
+									{#if field === 'artist' && hasArtistCombobox}
+										{#each collabArtists[activeTabIndex]?.[slotIdx] ?? [''] as _, artistIdx}
+											<div class="mb-2 flex items-start gap-2">
+												<div class="min-w-0 flex-1">
+													<Combobox
+														name="artist_slot_{slotIdx}_{artistIdx}"
+														pool={data.pools['artist'] ?? []}
+														{teamHex}
+														bind:value={collabArtists[activeTabIndex][slotIdx][artistIdx]}
+													/>
+												</div>
+												{#if (collabArtists[activeTabIndex]?.[slotIdx]?.length ?? 0) > 1}
+													<button
+														type="button"
+														onclick={() => removeArtistSlot(activeTabIndex, slotIdx, artistIdx)}
+														class="mt-2 shrink-0 text-lg leading-none text-zinc-600 hover:text-red-400"
+														aria-label="Remove artist">−</button
+													>
+												{/if}
+											</div>
+										{/each}
+										{#if (collabArtists[activeTabIndex]?.[slotIdx]?.length ?? 0) < 3}
+											<button
+												type="button"
+												onclick={() => addArtistSlot(activeTabIndex, slotIdx)}
+												class="mt-1 text-xs font-semibold underline underline-offset-2"
+												style="color: {teamHex};">+ Add collab artist</button
+											>
+										{/if}
+									{:else if mode === 'combobox'}
 										<Combobox
-											name="artist_slot_{slotIdx}"
-											pool={data.pools['artist'] ?? []}
+											name="{field}_{slotIdx}"
+											pool={data.pools[field] ?? []}
 											{teamHex}
-											bind:value={collabArtists[activeTrackIndex][slotIdx]}
+											bind:value={allDrafts[activeTabIndex][slotIdx].fieldValues[field]}
 										/>
-									</div>
-									{#if collabArtists[activeTrackIndex].length > 1}
-										<button
-											type="button"
-											onclick={() => removeArtistSlot(activeTrackIndex, slotIdx)}
-											class="mt-2 shrink-0 text-lg leading-none text-zinc-600 hover:text-red-400"
-											aria-label="Remove artist">−</button
-										>
+									{:else if mode === 'multiple_choice'}
+										<MultipleChoice
+											name="{field}_{slotIdx}"
+											options={data.multipleChoiceOptions[field] ?? []}
+											{teamHex}
+											bind:value={allDrafts[activeTabIndex][slotIdx].fieldValues[field]}
+										/>
+									{:else if mode === 'open_text'}
+										<OpenText
+											name="{field}_{slotIdx}"
+											{teamHex}
+											bind:value={allDrafts[activeTabIndex][slotIdx].fieldValues[field]}
+										/>
+									{:else if mode === 'slider'}
+										<YearInput
+											name="{field}_{slotIdx}"
+											mode="slider"
+											{teamHex}
+											bind:value={allYearValues[activeTabIndex][slotIdx]}
+										/>
+									{:else if mode === 'typeable_number'}
+										<YearInput
+											name="{field}_{slotIdx}"
+											mode="typeable_number"
+											{teamHex}
+											bind:value={allYearValues[activeTabIndex][slotIdx]}
+										/>
 									{/if}
 								</div>
 							{/each}
-							{#if collabArtists[activeTrackIndex].length < 3}
-								<button
-									type="button"
-									onclick={() => addArtistSlot(activeTrackIndex)}
-									class="mt-1 text-xs font-semibold underline underline-offset-2"
-									style="color: {teamHex};"
-								>
-									+ Add collab artist
-								</button>
+
+							<!-- Fragment grouping chips -->
+							{#if hasGrouping && activeTab}
+								<div>
+									<label class="mb-1.5 block text-sm font-semibold text-zinc-400"
+										>Which fragments belong to this track?</label
+									>
+									<div class="flex flex-wrap gap-2">
+										{#each activeTab.clips as clipItem, ci}
+											{@const fragNum = clipItem.fragmentNumber ?? ci + 1}
+											{@const selected = (
+												allDrafts[activeTabIndex]?.[slotIdx]?.fragments ?? []
+											).includes(fragNum)}
+											<button
+												type="button"
+												onclick={() => toggleFragment(activeTabIndex, slotIdx, fragNum)}
+												class="rounded-full px-3 py-1 text-sm font-bold transition-colors"
+												style={selected
+													? `background-color: ${teamHex}; color: white;`
+													: 'background-color: #27272a; color: #a1a1aa;'}
+											>
+												{fragNum}
+											</button>
+										{/each}
+									</div>
+								</div>
 							{/if}
-						{:else if mode === 'combobox'}
-							<Combobox
-								name={field}
-								pool={data.pools[field] ?? []}
-								{teamHex}
-								bind:value={allFieldValues[activeTrackIndex][field]}
-							/>
-						{:else if mode === 'multiple_choice'}
-							<MultipleChoice
-								name={field}
-								options={data.multipleChoiceOptions[field] ?? []}
-								{teamHex}
-								bind:value={allFieldValues[activeTrackIndex][field]}
-							/>
-						{:else if mode === 'open_text'}
-							<OpenText
-								name={field}
-								{teamHex}
-								bind:value={allFieldValues[activeTrackIndex][field]}
-							/>
-						{:else if mode === 'slider'}
-							<YearInput
-								name={field}
-								mode="slider"
-								{teamHex}
-								bind:value={allYearValues[activeTrackIndex]}
-							/>
-						{:else if mode === 'typeable_number'}
-							<YearInput
-								name={field}
-								mode="typeable_number"
-								{teamHex}
-								bind:value={allYearValues[activeTrackIndex]}
-							/>
-						{/if}
-					</div>
-				{/each}
+						</div>
+					{/each}
+				{:else}
+					<!-- Single-slot layout (standard / anthem / label) -->
+					{#each variantFields as field (field)}
+						{@const mode = data.fieldModes[field] as InputMode}
+						<div>
+							<label class="mb-1.5 block text-sm font-semibold text-zinc-400"
+								>{fieldLabel(field)}</label
+							>
+
+							{#if field === 'artist' && hasArtistCombobox}
+								{#each collabArtists[activeTabIndex]?.[0] ?? [''] as _, artistIdx}
+									<div class="mb-2 flex items-start gap-2">
+										<div class="min-w-0 flex-1">
+											<Combobox
+												name="artist_slot_0_{artistIdx}"
+												pool={data.pools['artist'] ?? []}
+												{teamHex}
+												bind:value={collabArtists[activeTabIndex][0][artistIdx]}
+											/>
+										</div>
+										{#if (collabArtists[activeTabIndex]?.[0]?.length ?? 0) > 1}
+											<button
+												type="button"
+												onclick={() => removeArtistSlot(activeTabIndex, 0, artistIdx)}
+												class="mt-2 shrink-0 text-lg leading-none text-zinc-600 hover:text-red-400"
+												aria-label="Remove artist">−</button
+											>
+										{/if}
+									</div>
+								{/each}
+								{#if (collabArtists[activeTabIndex]?.[0]?.length ?? 0) < 3}
+									<button
+										type="button"
+										onclick={() => addArtistSlot(activeTabIndex, 0)}
+										class="mt-1 text-xs font-semibold underline underline-offset-2"
+										style="color: {teamHex};">+ Add collab artist</button
+									>
+								{/if}
+							{:else if mode === 'combobox'}
+								<Combobox
+									name={field}
+									pool={data.pools[field] ?? []}
+									{teamHex}
+									bind:value={allDrafts[activeTabIndex][0].fieldValues[field]}
+								/>
+							{:else if mode === 'multiple_choice'}
+								<MultipleChoice
+									name={field}
+									options={data.multipleChoiceOptions[field] ?? []}
+									{teamHex}
+									bind:value={allDrafts[activeTabIndex][0].fieldValues[field]}
+								/>
+							{:else if mode === 'open_text'}
+								<OpenText
+									name={field}
+									{teamHex}
+									bind:value={allDrafts[activeTabIndex][0].fieldValues[field]}
+								/>
+							{:else if mode === 'slider'}
+								<YearInput
+									name={field}
+									mode="slider"
+									{teamHex}
+									bind:value={allYearValues[activeTabIndex][0]}
+								/>
+							{:else if mode === 'typeable_number'}
+								<YearInput
+									name={field}
+									mode="typeable_number"
+									{teamHex}
+									bind:value={allYearValues[activeTabIndex][0]}
+								/>
+							{/if}
+						</div>
+					{/each}
+				{/if}
 			{/key}
 
 			<button

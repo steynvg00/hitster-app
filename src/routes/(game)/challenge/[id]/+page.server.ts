@@ -2,13 +2,9 @@ import { error, fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { createPublicClient, createAdminClient } from '$lib/server/supabase';
 import { isNfcUnlockRequired } from '$lib/server/nfc';
-import type {
-	AnswerField,
-	InputMode,
-	ChallengeResult,
-	AnswerArrayEntry
-} from '$lib/types/index.js';
+import type { AnswerField, InputMode, ChallengeResult, TabAnswer } from '$lib/types/index.js';
 import {
+	TYPE_FIELDS,
 	VARIANT_FIELDS,
 	DEFAULT_INPUT_MODES,
 	FIELD_POOL_TABLE,
@@ -16,7 +12,11 @@ import {
 	buildFieldResults,
 	scoreSubmission,
 	type TrackData,
-	type BonusParams
+	type BonusParams,
+	type TabInput,
+	type SlotDraft,
+	type TabSourceTrackData,
+	type TabClipData
 } from '$lib/server/scoring.js';
 
 // ─── Load ────────────────────────────────────────────────────────────────────
@@ -37,21 +37,20 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 
 	if (challengeErr || !challenge) error(404, 'Challenge not found');
 
-	// Fetch all tracks for this challenge (multi-track support)
-	const { data: challengeTracks, error: ctErr } = await supabase
-		.from('challenge_tracks')
+	// Fetch tabs for this challenge
+	const { data: tabs, error: tabErr } = await supabase
+		.from('challenge_tabs')
 		.select('*')
 		.eq('challenge_id', params.id)
-		.order('sort_order');
+		.order('position');
 
-	if (ctErr || !challengeTracks?.length) error(500, 'Challenge has no tracks configured');
+	if (tabErr || !tabs?.length) error(500, 'Challenge has no tabs configured');
 
-	const trackIds = challengeTracks.map((ct) => ct.track_id);
-	const clipIds = challengeTracks.map((ct) => ct.clip_id);
+	const tabIds = tabs.map((t) => t.id);
 
-	const [tracksResult, clipsResult, teamResult, attemptResult] = await Promise.all([
-		admin.from('tracks').select('*').in('id', trackIds),
-		supabase.from('clips').select('*').in('id', clipIds),
+	const [sourceTracksResult, tabClipsResult, teamResult, attemptResult] = await Promise.all([
+		admin.from('challenge_tab_source_tracks').select('*').in('tab_id', tabIds).order('sort_order'),
+		admin.from('challenge_tab_clips').select('*').in('tab_id', tabIds).order('sort_order'),
 		supabase.from('teams').select('*').eq('id', locals.teamId).single(),
 		admin
 			.from('challenge_attempts')
@@ -61,28 +60,38 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 			.maybeSingle()
 	]);
 
-	if (!tracksResult.data?.length || !clipsResult.data?.length)
-		error(500, 'Track or clip data missing');
 	if (!teamResult.data) redirect(302, '/join');
-
 	const team = teamResult.data;
 
-	// ── Attempt (per-team timer) ──────────────────────────────────────────────
-	// Attempt is NOT auto-created here; teams must click "Start challenge" explicitly.
-	// This prevents the timer from ticking while the tutorial is being read.
-	const attempt = attemptResult.data ?? null;
+	const sourceTracks = sourceTracksResult.data ?? [];
+	const tabClips = tabClipsResult.data ?? [];
 
-	const trackMap = new Map(tracksResult.data.map((t) => [t.id, t]));
-	const clipMap = new Map(clipsResult.data.map((c) => [c.id, c]));
+	// Collect all referenced track IDs
+	const trackIds = [...new Set(sourceTracks.map((s) => s.track_id))];
+	const clipIds = [...new Set(tabClips.map((c) => c.clip_id))];
+
+	const [tracksResult, clipsResult] = await Promise.all([
+		trackIds.length
+			? admin.from('tracks').select('*').in('id', trackIds)
+			: Promise.resolve({ data: [] }),
+		clipIds.length
+			? supabase.from('clips').select('*').in('id', clipIds)
+			: Promise.resolve({ data: [] })
+	]);
+
+	const clipMap = new Map((clipsResult.data ?? []).map((c) => [c.id, c]));
+
+	// Attempt (per-team timer) — NOT auto-created here
+	const attempt = attemptResult.data ?? null;
 
 	// ── Derive field modes & points ───────────────────────────────────────────
 	const variant = challenge.variant;
-	const variantFields: AnswerField[] = VARIANT_FIELDS[variant] ?? ['artist', 'title', 'year'];
+	const variantFields: AnswerField[] = (TYPE_FIELDS[variant] ??
+		VARIANT_FIELDS[variant] ?? ['artist', 'title', 'year']) as AnswerField[];
 
 	const pcRaw = (challenge.points_config ?? {}) as Record<string, unknown>;
 	const savedModes = (pcRaw.field_modes ?? {}) as Record<string, string>;
 
-	// Three-tier field points: challenge override > variant_defaults > hardcoded
 	let variantDefaultPoints: Record<string, number> = {};
 	let tutorialText: string | null = null;
 	const { data: vd } = await admin
@@ -103,7 +112,7 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 			challengeFieldPoints[f] ??
 			variantDefaultPoints[f] ??
 			DEFAULT_FIELD_MAX[f as AnswerField] ??
-			5;
+			10;
 	}
 
 	const fieldModes: Record<string, InputMode> = {};
@@ -114,17 +123,52 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 			'open_text';
 	}
 
-	// ── Clip URLs ─────────────────────────────────────────────────────────────
-	const trackList = challengeTracks.map((ct) => {
-		const clip = clipMap.get(ct.clip_id)!;
-		const clipUrl = clip.storage_path.startsWith('http')
-			? clip.storage_path
-			: supabase.storage.from('clips').getPublicUrl(clip.storage_path).data.publicUrl;
-		const effects = (clip.effects as { pitch?: number; tempo?: number } | null) ?? {};
-		return { id: ct.id, trackId: ct.track_id, sortOrder: ct.sort_order, clipUrl, effects };
+	// ── Build per-tab view data (audio URLs, source tracks) ──────────────────
+	const tabList = tabs.map((tab) => {
+		const tabSrcs = sourceTracks
+			.filter((s) => s.tab_id === tab.id)
+			.sort((a, b) => a.sort_order - b.sort_order);
+		const tabClipRows = tabClips
+			.filter((c) => c.tab_id === tab.id)
+			.sort((a, b) => a.sort_order - b.sort_order);
+
+		const clipItems = tabClipRows.map((tc) => {
+			const clip = clipMap.get(tc.clip_id);
+			const clipUrl = clip
+				? clip.storage_path.startsWith('http')
+					? clip.storage_path
+					: supabase.storage.from('clips').getPublicUrl(clip.storage_path).data.publicUrl
+				: '';
+			const effects = (clip?.effects as { pitch?: number; tempo?: number } | null) ?? {};
+			return {
+				id: tc.id,
+				clipId: tc.clip_id,
+				fragmentNumber: tc.fragment_number,
+				sortOrder: tc.sort_order,
+				clipUrl,
+				effects
+			};
+		});
+
+		const sourceTrackItems = tabSrcs.map((s) => ({
+			id: s.id,
+			trackId: s.track_id,
+			sortOrder: s.sort_order
+		}));
+
+		return {
+			id: tab.id,
+			position: tab.position,
+			tabIndex: tabs.indexOf(tab),
+			clips: clipItems,
+			sourceTracks: sourceTrackItems,
+			// Primary clip for simple single-source tabs (first clip)
+			primaryClipUrl: clipItems[0]?.clipUrl ?? '',
+			primaryClipEffects: clipItems[0]?.effects ?? {}
+		};
 	});
 
-	// ── Timer (based on team's own attempt start time) ───────────────────────
+	// ── Timer ─────────────────────────────────────────────────────────────────
 	const timerEndsAt =
 		attempt && !attempt.ended_at && (challenge.timer_seconds ?? 0) > 0
 			? new Date(attempt.started_at).getTime() + challenge.timer_seconds * 1000
@@ -172,36 +216,71 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 	let priorResult: ChallengeResult | null = null;
 
 	if (existing) {
-		const answersArray = existing.answers as unknown as AnswerArrayEntry[];
+		const answersArray = existing.answers as unknown as TabAnswer[];
 		const trackDataMap = new Map<string, TrackData>(
-			tracksResult.data.map((t) => [t.id, t as TrackData])
+			(tracksResult.data ?? []).map((t) => [t.id, t as TrackData])
 		);
 
-		const tracks = (Array.isArray(answersArray) ? answersArray : []).map((entry, i) => {
-			const track = entry.track_id ? trackDataMap.get(entry.track_id) : undefined;
-			const fields = track
-				? buildFieldResults(variantFields, entry.field_values ?? {}, track, fieldModes, fieldPoints)
-				: [];
-			const total = entry.total ?? fields.reduce((s, fr) => s + fr.score, 0);
-			const maxTotal =
-				fields.reduce((s, fr) => s + fr.maxScore, 0) ||
-				variantFields.reduce(
-					(s, f) => s + (fieldPoints[f] ?? DEFAULT_FIELD_MAX[f as AnswerField] ?? 5),
-					0
-				);
-			return { trackId: entry.track_id ?? '', trackIndex: i + 1, fields, total, maxTotal };
+		// Rebuild result from stored TabAnswer[]
+		const tabFieldResults = (Array.isArray(answersArray) ? answersArray : []).map((tabAns, i) => {
+			const slotResults = (tabAns.source_answers ?? []).map((sa, j) => {
+				const track = sa.matched_source_track_id
+					? trackDataMap.get(sa.matched_source_track_id)
+					: undefined;
+				const fields = track
+					? buildFieldResults(
+							variantFields.filter((f) => f !== 'grouping') as AnswerField[],
+							sa.field_values as Record<string, string>,
+							track,
+							fieldModes,
+							fieldPoints
+						)
+					: [];
+				const total = sa.total ?? fields.reduce((s, fr) => s + fr.score, 0);
+				const maxTotal =
+					fields.reduce((s, fr) => s + fr.maxScore, 0) ||
+					variantFields.reduce(
+						(s, f) => s + (fieldPoints[f] ?? DEFAULT_FIELD_MAX[f as AnswerField] ?? 10),
+						0
+					);
+				return {
+					slotIndex: j,
+					matchedTrackId: sa.matched_source_track_id ?? null,
+					fields,
+					total,
+					maxTotal
+				};
+			});
+
+			const tabTotal = slotResults.reduce((s, sr) => s + sr.total, 0);
+			const tabMaxTotal = slotResults.reduce((s, sr) => s + sr.maxTotal, 0);
+			return {
+				tabPosition: tabAns.tab_position,
+				tabIndex: i + 1,
+				slots: slotResults,
+				total: tabTotal,
+				maxTotal: tabMaxTotal
+			};
 		});
 
-		const total = tracks.reduce((s, tr) => s + tr.total, 0);
-		const maxTotal = tracks.reduce((s, tr) => s + tr.maxTotal, 0);
+		// Legacy flat tracks list (first slot per tab)
+		const legacyTracks = tabFieldResults.map((tr) => ({
+			trackId: tr.slots[0]?.matchedTrackId ?? '',
+			trackIndex: tr.tabIndex,
+			fields: tr.slots[0]?.fields ?? [],
+			total: tr.total,
+			maxTotal: tr.maxTotal
+		}));
 
-		// Restore breakdown from stored answers if available
+		const total = tabFieldResults.reduce((s, tr) => s + tr.total, 0);
+		const maxTotal = tabFieldResults.reduce((s, tr) => s + tr.maxTotal, 0);
 		const storedBreakdown = Array.isArray(answersArray) ? answersArray[0]?.breakdown : undefined;
 
 		priorResult = {
 			total,
 			maxTotal,
-			tracks,
+			tabs: tabFieldResults,
+			tracks: legacyTracks,
 			status: (existing.status ?? 'auto_wrong') as ChallengeResult['status'],
 			submissionId: existing.id,
 			isFinal: existing.is_final ?? true,
@@ -221,7 +300,7 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		hintUsed = !!hintRow;
 	}
 
-	// Check if player is in a set with an active recap (for redirect), and NFC lock guard
+	// ── Active set + NFC lock guard ───────────────────────────────────────────
 	let activeSetId: string | null = null;
 	let activeSetRecapState: string | null = null;
 	if (locals.playerId) {
@@ -240,7 +319,6 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 				activeSetId = gs.id;
 				activeSetRecapState = gs.recap_state ?? null;
 
-				// NFC lock guard: check set-level setting plus per-challenge override
 				if (isNfcUnlockRequired(challenge, gs) && locals.teamId) {
 					const { data: unlockRow } = await admin
 						.from('challenge_unlocks')
@@ -249,9 +327,7 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 						.eq('team_id', locals.teamId)
 						.eq('set_id', gs.id)
 						.maybeSingle();
-					if (!unlockRow) {
-						redirect(302, '/team');
-					}
+					if (!unlockRow) redirect(302, '/team');
 				}
 			}
 		}
@@ -259,7 +335,7 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 
 	return {
 		challenge,
-		challengeTracks: trackList,
+		tabs: tabList,
 		team,
 		variantFields,
 		fieldModes,
@@ -288,37 +364,57 @@ export const actions: Actions = {
 		const teamId = (formData.get('team_id') as string | null) ?? '';
 		if (!teamId) return fail(400, { formError: 'Missing team' });
 
-		// Guard: reject if already submitted (is_final check)
+		// Guard: reject if already submitted
 		const { data: existingSub } = await supabase
 			.from('submissions')
 			.select('id, is_final')
 			.eq('challenge_id', params.id)
 			.eq('team_id', teamId)
 			.maybeSingle();
-
 		if (existingSub) {
 			return fail(409, { formError: 'Already submitted — reload to see your result' });
 		}
 
-		const [challengeRes, challengeTracksRes] = await Promise.all([
+		const [challengeRes, tabsRes] = await Promise.all([
 			supabase.from('challenges').select('*').eq('id', params.id).single(),
-			supabase
-				.from('challenge_tracks')
-				.select('id, track_id, sort_order')
-				.eq('challenge_id', params.id)
-				.order('sort_order')
+			supabase.from('challenge_tabs').select('*').eq('challenge_id', params.id).order('position')
 		]);
 		const challenge = challengeRes.data;
-		const challengeTracks = challengeTracksRes.data;
+		const tabs = tabsRes.data;
 		if (!challenge) return fail(404, { formError: 'Challenge not found' });
-		if (!challengeTracks?.length) return fail(500, { formError: 'Challenge track not found' });
+		if (!tabs?.length) return fail(500, { formError: 'No tabs configured' });
 
-		const trackIds = challengeTracks.map((ct) => ct.track_id);
-		const { data: tracks } = await admin.from('tracks').select('*').in('id', trackIds);
-		if (!tracks?.length) return fail(500, { formError: 'Track not found' });
+		const tabIds = tabs.map((t) => t.id);
+		const [sourceTracksResult, tabClipsResult] = await Promise.all([
+			admin
+				.from('challenge_tab_source_tracks')
+				.select('*')
+				.in('tab_id', tabIds)
+				.order('sort_order'),
+			admin.from('challenge_tab_clips').select('*').in('tab_id', tabIds).order('sort_order')
+		]);
+		const sourceTracks = sourceTracksResult.data ?? [];
+		const tabClipRows = tabClipsResult.data ?? [];
+
+		const trackIds = [...new Set(sourceTracks.map((s) => s.track_id))];
+		const clipIds = [...new Set(tabClipRows.map((c) => c.clip_id))];
+
+		const [tracksResult, clipsResult] = await Promise.all([
+			trackIds.length
+				? admin.from('tracks').select('*').in('id', trackIds)
+				: Promise.resolve({ data: [] }),
+			clipIds.length
+				? admin.from('clips').select('track_id').in('id', clipIds)
+				: Promise.resolve({ data: [] })
+		]);
+		const trackMap = new Map((tracksResult.data ?? []).map((t) => [t.id, t]));
+		// clipParentTrack: clip_id → track_id (for fragment grouping)
+		const clipParentTrack = new Map(
+			(clipsResult.data ?? []).map((c, i) => [clipIds[i], c.track_id])
+		);
 
 		const variant = challenge.variant;
-		const variantFields: AnswerField[] = VARIANT_FIELDS[variant] ?? ['artist', 'title', 'year'];
+		const variantFields = (TYPE_FIELDS[variant] ?? ['artist', 'title', 'year']) as AnswerField[];
 
 		const pcRaw = (challenge.points_config ?? {}) as Record<string, unknown>;
 		const savedModes = (pcRaw.field_modes ?? {}) as Record<string, string>;
@@ -347,21 +443,19 @@ export const actions: Actions = {
 				challengeFieldPoints[f] ??
 				variantDefaultPoints[f] ??
 				DEFAULT_FIELD_MAX[f as AnswerField] ??
-				5;
+				10;
 		}
 
-		// Parse answers_json from form (set directly on FormData by use:enhance callback)
+		// Parse answers_json (new format: Record<tabPosition, SlotDraft[]>)
 		const answersJsonRaw = (formData.get('answers_json') as string | null) ?? '{}';
-		let draftByTrack: Record<string, Record<string, string>> = {};
+		let draftByTab: Record<string, SlotDraft[]> = {};
 		try {
-			draftByTrack = JSON.parse(answersJsonRaw);
+			draftByTab = JSON.parse(answersJsonRaw);
 		} catch {
 			return fail(400, { formError: 'Invalid answers format' });
 		}
 
-		// ── Bonus params ─────────────────────────────────────────────────────────
-		// Fetch team (for score + streak), all teams (for leader score), player's
-		// set (for challenge_multiplier), and attempt (for elapsed seconds) in parallel.
+		// ── Bonus params ──────────────────────────────────────────────────────
 		const [teamRes, allTeamsRes, attemptRes] = await Promise.all([
 			admin.from('teams').select('score, current_streak').eq('id', teamId).single(),
 			admin.from('teams').select('score').order('score', { ascending: false }).limit(1),
@@ -380,7 +474,6 @@ export const actions: Actions = {
 			? Math.floor((Date.now() - new Date(attemptStartedAt).getTime()) / 1000)
 			: null;
 
-		// challenge_multiplier: look up set_challenges for the player's active set
 		let challengeMultiplier = 1;
 		if (locals.playerId) {
 			const { data: playerRow } = await admin
@@ -414,13 +507,53 @@ export const actions: Actions = {
 					.speed_threshold_seconds ?? null
 		};
 
-		const trackDataMap = new Map<string, TrackData>(tracks.map((t) => [t.id, t as TrackData]));
-		const ctList = challengeTracks.map((ct) => ({ id: ct.id, trackId: ct.track_id }));
+		// Build TabInput[] for scoreSubmission
+		const tabInputs: TabInput[] = tabs.map((tab) => {
+			const tabSrcs = sourceTracks
+				.filter((s) => s.tab_id === tab.id)
+				.sort((a, b) => a.sort_order - b.sort_order)
+				.map(
+					(s): TabSourceTrackData => ({
+						id: s.id,
+						tabId: s.tab_id,
+						trackId: s.track_id,
+						sortOrder: s.sort_order,
+						track: (trackMap.get(s.track_id) ?? {
+							id: s.track_id,
+							artist: '',
+							title: '',
+							year: 0
+						}) as TrackData
+					})
+				);
+
+			const tabClipItems = tabClipRows
+				.filter((c) => c.tab_id === tab.id)
+				.sort((a, b) => a.sort_order - b.sort_order)
+				.map(
+					(c): TabClipData => ({
+						id: c.id,
+						tabId: c.tab_id,
+						clipId: c.clip_id,
+						fragmentNumber: c.fragment_number,
+						sortOrder: c.sort_order,
+						trackId: clipParentTrack.get(c.clip_id)
+					})
+				);
+
+			const playerDraft: SlotDraft[] = draftByTab[String(tab.position)] ?? [{ fieldValues: {} }];
+
+			return {
+				tabId: tab.id,
+				tabPosition: tab.position,
+				sourceTracks: tabSrcs,
+				clips: tabClipItems,
+				playerDraft
+			};
+		});
 
 		const { answersArray, result: scoredResult } = scoreSubmission(
-			draftByTrack,
-			ctList,
-			trackDataMap,
+			tabInputs,
 			variantFields,
 			fieldModes,
 			fieldPoints,
@@ -448,7 +581,6 @@ export const actions: Actions = {
 		}
 		if (!sub) return fail(500, { formError: 'Submission insert returned no data' });
 
-		// Update streak: increment if any base score, else reset
 		const newStreak = scoredResult.total > 0 ? (teamRow?.current_streak ?? 0) + 1 : 0;
 
 		await Promise.all([
@@ -467,11 +599,7 @@ export const actions: Actions = {
 				.eq('id', teamId)
 		]);
 
-		const result: ChallengeResult = {
-			...scoredResult,
-			submissionId: sub.id,
-			isFinal: true
-		};
+		const result: ChallengeResult = { ...scoredResult, submissionId: sub.id, isFinal: true };
 		return { submitted: true, result };
 	},
 
@@ -494,7 +622,7 @@ export const actions: Actions = {
 		return { success: true };
 	},
 
-	requestReview: async ({ request, params, cookies }) => {
+	requestReview: async ({ request, cookies }) => {
 		const supabase = createPublicClient(cookies);
 		const admin = createAdminClient();
 		const formData = await request.formData();
@@ -505,9 +633,8 @@ export const actions: Actions = {
 		const trackId = (formData.get('track_id') as string | null) || null;
 		const playerMessage = (formData.get('player_message') as string | null)?.trim() || null;
 
-		if (!submissionId || !teamId || !fieldName) {
+		if (!submissionId || !teamId || !fieldName)
 			return fail(400, { reviewError: 'Missing required fields' });
-		}
 
 		const { data: sub } = await supabase
 			.from('submissions')
