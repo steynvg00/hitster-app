@@ -42,7 +42,114 @@ export type ChallengeVariant =
 	| 'fragments'
 	| 'kick'
 	| 'mashup'
-	| 'battle';
+	| 'battle'
+	| 'effects';
+
+// ─── Effects ──────────────────────────────────────────────────────────────────
+
+export interface LowpassConfig {
+	enabled: boolean;
+	frequency: number; // Hz, 20–20000
+	q: number; // 0.1–20
+}
+
+export interface HighpassConfig {
+	enabled: boolean;
+	frequency: number; // Hz, 20–20000
+	q: number; // 0.1–20
+}
+
+export interface BandpassConfig {
+	enabled: boolean;
+	frequency: number; // Hz, 20–20000
+	width: number; // semitones, 1–48
+	mod_rate_hz: number; // LFO rate, 0–4
+}
+
+export interface PhaserConfig {
+	enabled: boolean;
+	frequency: number; // sweep Hz, 0.1–10
+	depth: number; // 0–1
+	stages: number; // 2–12 (even)
+	feedback: number; // 0–0.95
+	stereo_offset: number; // seconds, 0–0.05
+}
+
+export interface FlangerConfig {
+	enabled: boolean;
+	frequency: number; // LFO Hz, 0.1–5
+	depth: number; // 0–1
+	feedback: number; // 0–0.9
+	delay_time: number; // base delay ms, 1–20
+}
+
+export interface BitCrusherConfig {
+	enabled: boolean;
+	bits: number; // 1–16
+}
+
+export interface RingModConfig {
+	enabled: boolean;
+	frequency: number; // Hz, 1–2000
+}
+
+export interface DelayConfig {
+	enabled: boolean;
+	time: number; // seconds, 0.01–1
+	feedback: number; // 0–0.95
+	wet: number; // 0–1
+}
+
+export interface ReverbConfig {
+	enabled: boolean;
+	decay: number; // seconds, 0.1–10
+	pre_delay: number; // seconds, 0–0.5
+	wet: number; // 0–1
+}
+
+export interface PitchConfig {
+	enabled: boolean;
+	semitones: number; // -24 to +24
+	window_size: number; // seconds, 0.03–0.5
+}
+
+export interface TempoConfig {
+	enabled: boolean;
+	rate: number; // multiplier, 0.25–4.0
+}
+
+export interface ReverseConfig {
+	enabled: boolean;
+}
+
+export interface RobotVoiceConfig {
+	enabled: boolean; // preset: ring_mod 30Hz + bitcrusher 4bit + highpass 200Hz
+}
+
+export interface EffectsConfig {
+	lowpass?: LowpassConfig;
+	highpass?: HighpassConfig;
+	bandpass?: BandpassConfig;
+	phaser?: PhaserConfig;
+	flanger?: FlangerConfig;
+	bitcrusher?: BitCrusherConfig;
+	ring_mod?: RingModConfig;
+	delay?: DelayConfig;
+	reverb?: ReverbConfig;
+	pitch?: PitchConfig;
+	tempo?: TempoConfig;
+	reverse?: ReverseConfig;
+	robot_voice?: RobotVoiceConfig;
+}
+
+export interface EffectPreset {
+	id: string;
+	name: string;
+	effects: EffectsConfig;
+	is_builtin: boolean;
+	created_by: string | null;
+	created_at: string;
+}
 
 export interface Challenge {
 	id: string;

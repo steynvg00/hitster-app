@@ -8,7 +8,8 @@ export const VARIANTS = [
 	'fragments',
 	'kick',
 	'mashup',
-	'battle'
+	'battle',
+	'effects'
 ] as const;
 
 export type ChallengeVariant = (typeof VARIANTS)[number];
@@ -21,7 +22,8 @@ const VARIANT_ICON: Record<string, string> = {
 	fragments: 'Puzzle',
 	kick: 'Activity',
 	mashup: 'Shuffle',
-	battle: 'Swords'
+	battle: 'Swords',
+	effects: 'Wand2'
 };
 
 const VARIANT_COLOR: Record<string, string> = {
@@ -32,7 +34,8 @@ const VARIANT_COLOR: Record<string, string> = {
 	fragments: 'bg-orange-900/60 text-orange-400',
 	kick: 'bg-red-900/60 text-red-400',
 	mashup: 'bg-yellow-900/60 text-yellow-400',
-	battle: 'bg-amber-900/60 text-amber-400'
+	battle: 'bg-amber-900/60 text-amber-400',
+	effects: 'bg-cyan-900/60 text-cyan-400'
 };
 
 export function getVariantIcon(variant: string): typeof LucideIcons.Music {
