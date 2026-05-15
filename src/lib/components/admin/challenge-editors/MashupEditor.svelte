@@ -12,7 +12,7 @@
 		storage_object_path: string | null;
 	};
 	type Tab = { id: string; position: number; mashup_id?: string | null };
-	type Mashup = { id: string; name: string; primary_clip_id: string };
+	type Mashup = { id: string; name: string; audio_storage_path: string; audio_duration_seconds: number | null; audio_url: string };
 	type MashupSource = { id: string; mashup_id: string; track_id: string; sort_order: number };
 
 	let {
@@ -81,7 +81,6 @@
 		<div class="space-y-6">
 			{#each tabs as tab, tabIdx (tab.id)}
 				{@const mashup = mashups.find((m) => m.id === tab.mashup_id)}
-				{@const mashupClip = mashup ? clips.find((c) => c.id === mashup.primary_clip_id) : null}
 				{@const sources = tab.mashup_id ? sourcesForMashup(tab.mashup_id) : []}
 
 				<div class="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
@@ -114,13 +113,8 @@
 								emptyLabel="— no mashup —"
 							/>
 						</form>
-						{#if mashupClip}
-							{@const _ = console.log('[ClipPreview] resolving clip', {
-								clip_id: mashupClip.id,
-								storage_object_path: mashupClip.storage_object_path,
-								resolved_url: mashupClip.storage_path
-							})}
-							<audio controls crossorigin="anonymous" src={mashupClip.storage_path} class="mt-2 h-8 w-full rounded"></audio>
+						{#if mashup?.audio_url}
+							<audio controls crossorigin="anonymous" src={mashup.audio_url} class="mt-2 h-8 w-full rounded"></audio>
 						{/if}
 					</div>
 

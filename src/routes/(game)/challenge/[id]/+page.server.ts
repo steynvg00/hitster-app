@@ -75,7 +75,7 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 	const sourceTracks = sourceTracksResult.data ?? [];
 	const tabClips = tabClipsResult.data ?? [];
 
-	// For mashup variant: load mashup sources to derive per-tab source tracks
+	// For mashup variant: load mashup records + sources
 	const mashupIds =
 		challenge.variant === 'mashup'
 			? [
@@ -86,9 +86,26 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 					)
 				]
 			: [];
-	const { data: mashupSourceRows } = mashupIds.length
-		? await admin.from('mashup_sources').select('*').in('mashup_id', mashupIds).order('sort_order')
-		: { data: [] };
+	const [{ data: mashupRows }, { data: mashupSourceRows }] = await (mashupIds.length
+		? Promise.all([
+				admin
+					.from('mashups')
+					.select('id, audio_storage_path')
+					.in('id', mashupIds),
+				admin.from('mashup_sources').select('*').in('mashup_id', mashupIds).order('sort_order')
+			])
+		: Promise.resolve([{ data: [] }, { data: [] }]));
+
+	// Map mashup_id → public audio URL
+	const mashupAudioUrlMap = new Map<string, string>(
+		(mashupRows ?? []).map((m) => [
+			m.id,
+			m.audio_storage_path
+				? admin.storage.from('audio').getPublicUrl(m.audio_storage_path).data.publicUrl
+				: ''
+		])
+	);
+
 	const mashupSources: MashupSourceRaw[] = (mashupSourceRows ?? []).map((r) => ({
 		id: r.id,
 		mashup_id: r.mashup_id,
@@ -215,8 +232,15 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 			tabIndex: tabs.indexOf(tab),
 			clips: clipItems,
 			sourceTracks: sourceTrackItems,
-			// Primary clip for simple single-source tabs (first clip)
-			primaryClipUrl: clipItems[0]?.clipUrl ?? '',
+			// For mashup tabs the audio comes from the mashup file itself (not a clip).
+			// Fall back to first clip URL for all other variants.
+			primaryClipUrl:
+				clipItems[0]?.clipUrl ||
+				(challenge.variant === 'mashup'
+					? (mashupAudioUrlMap.get(
+							(tab as unknown as { mashup_id?: string | null }).mashup_id ?? ''
+						) ?? '')
+					: ''),
 			primaryClipEffects: clipItems[0]?.effects ?? {}
 		};
 	});

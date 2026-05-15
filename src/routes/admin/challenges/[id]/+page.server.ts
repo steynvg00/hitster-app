@@ -80,7 +80,12 @@ export const load: PageServerLoad = async ({ params }) => {
 		allTracks,
 		clips,
 		answerOptions: answerOptionsResult.data ?? [],
-		mashups: mashupsResult.data ?? [],
+		mashups: (mashupsResult.data ?? []).map((m) => ({
+			...m,
+			audio_url: m.audio_storage_path
+				? db.storage.from('audio').getPublicUrl(m.audio_storage_path).data.publicUrl
+				: ''
+		})),
 		mashupSources: mashupSourcesResult.data ?? []
 	};
 };

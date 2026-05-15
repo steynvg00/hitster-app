@@ -19,7 +19,12 @@ export const load: PageServerLoad = async ({ url }) => {
 
 	let tracks = tracksResult.data ?? [];
 	const clips = clipsResult.data ?? [];
-	const mashups = mashupsResult.data ?? [];
+	const mashups = (mashupsResult.data ?? []).map((m) => ({
+		...m,
+		audio_url: m.audio_storage_path
+			? db.storage.from('audio').getPublicUrl(m.audio_storage_path).data.publicUrl
+			: ''
+	}));
 	const mashupSources = mashupSourcesResult.data ?? [];
 
 	const tracksWithClips = new Set(clips.map((c) => c.track_id));
@@ -211,32 +216,16 @@ export const actions: Actions = {
 		return { success: true };
 	},
 
-	createMashup: async ({ request, locals }) => {
-		const db = createAdminClient();
-		const data = await request.formData();
-		const name = (data.get('name') as string)?.trim();
-		const primary_clip_id = (data.get('primary_clip_id') as string)?.trim();
-		if (!name) return fail(400, { error: 'Name is required' });
-		if (!primary_clip_id) return fail(400, { error: 'Primary clip is required' });
-		const { data: inserted, error } = await db
-			.from('mashups')
-			.insert({ name, primary_clip_id, created_by: locals.user?.id ?? null })
-			.select('id')
-			.single();
-		if (error) return fail(500, { error: error.message });
-		return { success: true, action: 'createMashup', id: inserted.id };
-	},
+	// createMashup is handled by POST /admin/mashups/upload (client-side upload flow)
 
 	updateMashup: async ({ request }) => {
 		const db = createAdminClient();
 		const data = await request.formData();
 		const id = (data.get('id') as string)?.trim();
 		const name = (data.get('name') as string)?.trim();
-		const primary_clip_id = (data.get('primary_clip_id') as string)?.trim();
 		if (!id) return fail(400, { error: 'Missing id' });
 		if (!name) return fail(400, { error: 'Name is required' });
-		if (!primary_clip_id) return fail(400, { error: 'Primary clip is required' });
-		const { error } = await db.from('mashups').update({ name, primary_clip_id }).eq('id', id);
+		const { error } = await db.from('mashups').update({ name }).eq('id', id);
 		if (error) return fail(500, { error: error.message });
 		return { success: true, action: 'updateMashup' };
 	},
@@ -277,8 +266,17 @@ export const actions: Actions = {
 		const data = await request.formData();
 		const id = (data.get('id') as string)?.trim();
 		if (!id) return fail(400, { error: 'Missing id' });
+		// Fetch audio path before deleting row so we can clean up storage
+		const { data: mashup } = await db
+			.from('mashups')
+			.select('audio_storage_path')
+			.eq('id', id)
+			.single();
 		const { error } = await db.from('mashups').delete().eq('id', id);
 		if (error) return fail(500, { error: error.message });
+		if (mashup?.audio_storage_path) {
+			await db.storage.from('audio').remove([mashup.audio_storage_path]);
+		}
 		return { success: true, action: 'deleteMashup' };
 	},
 

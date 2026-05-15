@@ -222,6 +222,55 @@
 	let showCreateMashup = $state(false);
 	let mashupAddTrack = $state<Record<string, string>>({});
 
+	// Mashup upload state (new mashup create flow)
+	let mashupUploadName = $state('');
+	let mashupUploadFile = $state<File | null>(null);
+	let mashupUploadDuration = $state(0);
+	let mashupUploadStatus = $state<'idle' | 'uploading' | 'done' | 'failed'>('idle');
+	let mashupUploadError = $state<string | null>(null);
+	let mashupDropOver = $state(false);
+
+	async function stageMashupFile(file: File) {
+		if (!file.type.startsWith('audio/') && !/\.(mp3|wav|ogg|m4a|aac|flac)$/i.test(file.name))
+			return;
+		mashupUploadFile = file;
+		mashupUploadDuration = await getAudioDuration(file);
+		mashupUploadStatus = 'idle';
+		mashupUploadError = null;
+	}
+
+	async function uploadMashup() {
+		if (!mashupUploadFile || !mashupUploadName.trim()) return;
+		const mashupId = crypto.randomUUID();
+		mashupUploadStatus = 'uploading';
+		mashupUploadError = null;
+
+		const fd = new FormData();
+		fd.append('file', mashupUploadFile);
+		fd.append('mashup_id', mashupId);
+		fd.append('name', mashupUploadName.trim());
+		fd.append('duration', String(mashupUploadDuration));
+
+		try {
+			const res = await fetch('/admin/mashups/upload', { method: 'POST', body: fd });
+			if (res.ok) {
+				mashupUploadStatus = 'done';
+				mashupUploadFile = null;
+				mashupUploadName = '';
+				mashupUploadDuration = 0;
+				showCreateMashup = false;
+				await invalidateAll();
+			} else {
+				const text = await res.text();
+				mashupUploadStatus = 'failed';
+				mashupUploadError = text || `HTTP ${res.status}`;
+			}
+		} catch (e) {
+			mashupUploadStatus = 'failed';
+			mashupUploadError = String(e);
+		}
+	}
+
 	// Trim modal state
 	type TrimState = { file: File; trackId: string; orderIndex: number | null } | null;
 	let trimModal = $state<TrimState>(null);
@@ -1089,7 +1138,15 @@
 		<h2 class="text-sm font-bold tracking-widest text-amber-400 uppercase">Mashups</h2>
 		<button
 			type="button"
-			onclick={() => (showCreateMashup = !showCreateMashup)}
+			onclick={() => {
+				showCreateMashup = !showCreateMashup;
+				if (!showCreateMashup) {
+					mashupUploadFile = null;
+					mashupUploadName = '';
+					mashupUploadStatus = 'idle';
+					mashupUploadError = null;
+				}
+			}}
 			class="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-300 hover:bg-zinc-700"
 		>
 			+ Create Mashup
@@ -1097,60 +1154,94 @@
 	</div>
 
 	{#if showCreateMashup}
-		<form
-			method="POST"
-			action="?/createMashup"
-			use:enhance={() =>
-				async ({ update }) => {
-					await update({ reset: true });
-					showCreateMashup = false;
-				}}
-			class="mb-4 rounded-xl border border-zinc-700 bg-zinc-900 p-4"
-		>
-			<div class="mb-3 grid grid-cols-2 gap-3">
-				<div>
-					<label class="mb-1 block text-xs text-zinc-400">Name</label>
-					<input
-						type="text"
-						name="name"
-						required
-						placeholder="e.g. Hardstyle Megamix Vol. 1"
-						class="input-field"
-					/>
-				</div>
-				<div>
-					<label class="mb-1 block text-xs text-zinc-400">Primary clip</label>
-					<SearchablePicker
-						name="primary_clip_id"
-						items={data.clips.map((c) => {
-							const t = data.tracks.find((t) => t.id === c.track_id);
-							return {
-								id: c.id,
-								label: t ? `${t.artist} — ${t.title}` : c.track_id.slice(0, 8),
-								subtitle: `[${c.type}]`
-							};
-						})}
-						placeholder="Search clips…"
-						emptyLabel="— select a clip —"
-					/>
-				</div>
+		<div class="mb-4 rounded-xl border border-zinc-700 bg-zinc-900 p-4">
+			<div class="mb-3">
+				<label class="mb-1 block text-xs text-zinc-400">Name</label>
+				<input
+					type="text"
+					bind:value={mashupUploadName}
+					placeholder="e.g. Hardstyle Megamix Vol. 1"
+					class="input-field"
+				/>
 			</div>
+			<!-- Audio file drop zone -->
+			<div
+				role="button"
+				tabindex="0"
+				class="relative mb-3 flex min-h-[80px] cursor-pointer items-center justify-center rounded-xl border-2 border-dashed p-4 transition-colors {mashupDropOver
+					? 'border-amber-400 bg-amber-950/20'
+					: mashupUploadFile
+						? 'border-green-700 bg-green-950/20'
+						: 'border-zinc-700 bg-zinc-800/50 hover:border-zinc-500'}"
+				ondragover={(e) => {
+					e.preventDefault();
+					mashupDropOver = true;
+				}}
+				ondragleave={() => (mashupDropOver = false)}
+				ondrop={async (e) => {
+					e.preventDefault();
+					mashupDropOver = false;
+					const f = e.dataTransfer?.files[0];
+					if (f) await stageMashupFile(f);
+				}}
+				onclick={() => document.getElementById('mashup-file-input')?.click()}
+				onkeydown={(e) => e.key === 'Enter' && document.getElementById('mashup-file-input')?.click()}
+			>
+				<input
+					id="mashup-file-input"
+					type="file"
+					accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac"
+					class="absolute inset-0 cursor-pointer opacity-0"
+					onchange={async (e) => {
+						const f = (e.target as HTMLInputElement).files?.[0];
+						if (f) await stageMashupFile(f);
+						(e.target as HTMLInputElement).value = '';
+					}}
+				/>
+				{#if mashupUploadFile}
+					<div class="text-center">
+						<p class="text-sm font-semibold text-green-400">{mashupUploadFile.name}</p>
+						<p class="mt-0.5 text-xs text-zinc-500">
+							{formatSize(mashupUploadFile.size)}
+							{#if mashupUploadDuration > 0} · {formatDuration(mashupUploadDuration)}{/if}
+						</p>
+					</div>
+				{:else}
+					<div class="text-center">
+						<p class="text-sm text-zinc-500">
+							Drop mashup audio, or <span class="text-amber-400">click to browse</span>
+						</p>
+						<p class="mt-0.5 text-xs text-zinc-600">mp3 / wav / m4a · up to 50 MB</p>
+					</div>
+				{/if}
+			</div>
+			{#if mashupUploadError}
+				<p class="mb-2 text-xs text-red-400">{mashupUploadError}</p>
+			{/if}
 			<div class="flex justify-end gap-2">
 				<button
 					type="button"
-					onclick={() => (showCreateMashup = false)}
+					onclick={() => {
+						showCreateMashup = false;
+						mashupUploadFile = null;
+						mashupUploadName = '';
+						mashupUploadStatus = 'idle';
+						mashupUploadError = null;
+					}}
 					class="rounded px-3 py-1.5 text-xs text-zinc-500 hover:text-zinc-300"
 				>
 					Cancel
 				</button>
 				<button
-					type="submit"
-					class="rounded-lg bg-amber-400 px-4 py-1.5 text-xs font-bold text-zinc-950 hover:bg-amber-300"
+					type="button"
+					disabled={!mashupUploadFile || !mashupUploadName.trim() || mashupUploadStatus === 'uploading'}
+					onclick={uploadMashup}
+					class="rounded-lg bg-amber-400 px-4 py-1.5 text-xs font-bold text-zinc-950 hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-50"
 				>
-					Create
+					{mashupUploadStatus === 'uploading' ? 'Uploading…' : 'Create'}
 				</button>
 			</div>
-		</form>
+		</div>
 	{/if}
 
 	{#if data.mashups.length === 0 && !showCreateMashup}
@@ -1163,10 +1254,6 @@
 		<div class="space-y-2">
 			{#each data.mashups as mashup (mashup.id)}
 				{@const sources = data.mashupSources.filter((s) => s.mashup_id === mashup.id)}
-				{@const primaryClip = data.clips.find((c) => c.id === mashup.primary_clip_id)}
-				{@const primaryTrack = primaryClip
-					? data.tracks.find((t) => t.id === primaryClip.track_id)
-					: null}
 
 				<div class="rounded-xl border border-zinc-800 bg-zinc-900">
 					<!-- Header row -->
@@ -1177,13 +1264,9 @@
 							class="flex flex-1 items-center gap-3 text-left"
 						>
 							<span class="font-semibold text-zinc-200">{mashup.name}</span>
-							<span class="text-xs text-zinc-500">
-								{#if primaryTrack}
-									clip: {primaryTrack.artist} — {primaryTrack.title}
-								{:else}
-									no primary clip
-								{/if}
-							</span>
+							{#if mashup.audio_duration_seconds}
+								<span class="text-xs text-zinc-500">{formatDuration(mashup.audio_duration_seconds)}</span>
+							{/if}
 							<span class="rounded bg-zinc-800 px-1.5 py-0.5 text-xs text-zinc-400">
 								{sources.length} source{sources.length === 1 ? '' : 's'}
 							</span>
@@ -1193,7 +1276,8 @@
 							<button
 								type="submit"
 								onclick={(e) => {
-									if (!confirm('Delete this mashup?')) e.preventDefault();
+									if (!confirm('Delete this mashup? This also deletes the audio file.'))
+										e.preventDefault();
 								}}
 								class="rounded px-1.5 py-0.5 text-xs text-red-700 hover:text-red-400">✕</button
 							>
@@ -1202,7 +1286,17 @@
 
 					{#if expandedMashup === mashup.id}
 						<div class="space-y-4 border-t border-zinc-800 px-4 py-4">
-							<!-- Edit name / primary clip -->
+							<!-- Audio player -->
+							{#if mashup.audio_url}
+								<audio
+									controls
+									crossorigin="anonymous"
+									src={mashup.audio_url}
+									class="h-8 w-full rounded"
+								></audio>
+							{/if}
+
+							<!-- Edit name -->
 							{#if editingMashup === mashup.id}
 								<form
 									method="POST"
@@ -1212,68 +1306,38 @@
 											await update({ reset: false });
 											editingMashup = null;
 										}}
-									class="grid grid-cols-2 gap-3"
+									class="flex gap-2"
 								>
 									<input type="hidden" name="id" value={mashup.id} />
-									<div>
-										<label class="mb-1 block text-xs text-zinc-400">Name</label>
-										<input
-											type="text"
-											name="name"
-											value={mashup.name}
-											required
-											class="input-field"
-										/>
-									</div>
-									<div>
-										<label class="mb-1 block text-xs text-zinc-400">Primary clip</label>
-										<SearchablePicker
-											name="primary_clip_id"
-											items={data.clips.map((c) => {
-												const t = data.tracks.find((t) => t.id === c.track_id);
-												return {
-													id: c.id,
-													label: t ? `${t.artist} — ${t.title}` : c.track_id.slice(0, 8),
-													subtitle: `[${c.type}]`
-												};
-											})}
-											value={mashup.primary_clip_id}
-											placeholder="Search clips…"
-											emptyLabel="— select a clip —"
-										/>
-									</div>
-									<div class="col-span-2 flex justify-end gap-2">
-										<button
-											type="button"
-											onclick={() => (editingMashup = null)}
-											class="rounded px-3 py-1 text-xs text-zinc-500 hover:text-zinc-300"
-										>
-											Cancel
-										</button>
-										<button
-											type="submit"
-											class="rounded bg-amber-400 px-3 py-1 text-xs font-bold text-zinc-950 hover:bg-amber-300"
-										>
-											Save
-										</button>
-									</div>
-								</form>
-							{:else}
-								<div class="flex items-center justify-between">
-									<div>
-										{#if primaryClip}
-											<audio controls crossorigin="anonymous" src={primaryClip.storage_path} class="h-8 w-full rounded"
-											></audio>
-										{/if}
-									</div>
+									<input
+										type="text"
+										name="name"
+										value={mashup.name}
+										required
+										class="input-field flex-1"
+									/>
 									<button
 										type="button"
-										onclick={() => (editingMashup = mashup.id)}
-										class="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
+										onclick={() => (editingMashup = null)}
+										class="rounded px-3 py-1 text-xs text-zinc-500 hover:text-zinc-300"
 									>
-										Edit
+										Cancel
 									</button>
-								</div>
+									<button
+										type="submit"
+										class="rounded bg-amber-400 px-3 py-1 text-xs font-bold text-zinc-950 hover:bg-amber-300"
+									>
+										Save
+									</button>
+								</form>
+							{:else}
+								<button
+									type="button"
+									onclick={() => (editingMashup = mashup.id)}
+									class="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
+								>
+									Rename
+								</button>
 							{/if}
 
 							<!-- Source tracks -->

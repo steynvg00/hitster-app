@@ -305,21 +305,24 @@ export type Database = {
 				Row: {
 					id: string;
 					name: string;
-					primary_clip_id: string;
+					audio_storage_path: string;
+					audio_duration_seconds: number | null;
 					created_at: string;
 					created_by: string | null;
 				};
 				Insert: {
 					id?: string;
 					name: string;
-					primary_clip_id: string;
+					audio_storage_path: string;
+					audio_duration_seconds?: number | null;
 					created_at?: string;
 					created_by?: string | null;
 				};
 				Update: {
 					id?: string;
 					name?: string;
-					primary_clip_id?: string;
+					audio_storage_path?: string;
+					audio_duration_seconds?: number | null;
 					created_at?: string;
 					created_by?: string | null;
 				};
