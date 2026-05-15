@@ -59,6 +59,11 @@
 	let toneHighpass: import('tone').Filter | null = null;
 	let toneBandpass: import('tone').Filter | null = null;
 
+	// Generation counter: incremented on every applyEffects call.
+	// Async awaits yield control; if a newer call has taken over, the stale
+	// call bails instead of connecting half-disposed nodes.
+	let applyEffectsGeneration = 0;
+
 	function disposeToneNodes() {
 		tonePitchShift?.dispose();
 		tonePitchShift = null;
@@ -100,10 +105,10 @@
 	});
 
 	async function applyEffects(fx: EffectsConfig | null | undefined) {
-		console.log('[FX] effects config received', fx);
+		const generation = ++applyEffectsGeneration;
+		console.log('[FX] effects config received', { generation, fx });
 
 		const mediaEl = ws?.getMediaElement() as HTMLAudioElement | null;
-		console.log('[FX] audioEl', mediaEl);
 		if (!mediaEl) {
 			console.log('[FX] getMediaElement returned null — cannot apply effects');
 			return;
@@ -142,21 +147,36 @@
 
 		// ── Build Web Audio chain ─────────────────────────────────────────────
 		const Tone = await import('tone');
+		// Bail if a newer invocation has superseded this one while we awaited the import.
+		if (generation !== applyEffectsGeneration) {
+			console.log('[FX] stale after import — discarding gen', generation);
+			return;
+		}
+
 		// Tone.start() will resolve immediately if the context is already running,
 		// or queue a resume for the next user gesture. We also call audioCtx.resume()
 		// in playPause() (synchronously on the click) to handle iOS/Safari strictly.
 		await Tone.start();
+		if (generation !== applyEffectsGeneration) {
+			console.log('[FX] stale after Tone.start() — discarding gen', generation);
+			return;
+		}
+
 		const ctx = Tone.context.rawContext as AudioContext;
 		audioCtx = ctx;
 		console.log('[FX] audio context state', ctx.state);
 
 		const source = getOrCreateMediaElementSource(mediaEl, ctx);
 		toneSourceNode = source;
-		console.log('[FX] media source node', source);
 
-		// Disconnect existing chain before rebuilding
+		// Teardown previous chain before rebuilding
+		const previousNodeCount = [toneLowpass, toneHighpass, toneBandpass, tonePhaser, tonePitchShift].filter(
+			Boolean
+		).length;
+		console.log('[FX] tearing down chain', { nodeCount: previousNodeCount });
 		source.disconnect();
 		disposeToneNodes();
+		console.log('[FX] teardown complete');
 
 		// Tempo correction: changing playbackRate also shifts pitch by log2(rate)*12 st.
 		// PitchShift at the end of the chain cancels this side-effect.
@@ -194,20 +214,37 @@
 		tonePitchShift = new Tone.PitchShift(pitchSemitones + tempoCorrection);
 		chain.push(tonePitchShift);
 
-		// source (native) → chain[0] → chain[1] → … → chain[n-1] → Tone destination
-		// Tone.js patches AudioNode.prototype.connect so native nodes can connect to Tone nodes.
-		source.connect(chain[0].input as unknown as AudioNode);
+		// Connect source (native MediaElementAudioSourceNode) → chain[0] (Tone.js node).
+		//
+		// Root cause of "value not found" (getValueForKey): ToneAudioNode.input is itself
+		// a ToneAudioNode (e.g. Tone.Gain), NOT a native AudioNode. Passing a ToneAudioNode
+		// to the native AudioNode.connect() triggers Tone.js's internal graph registry lookup
+		// which fails for nodes it didn't create the connection for.
+		//
+		// Fix: use Tone.connect(src, dst) which recursively unwraps dst.input until it
+		// reaches a native AudioNode/AudioParam, then calls the native connect correctly.
+		console.log('[FX] connecting', {
+			from: 'MediaElementSource',
+			to: chain[0].constructor.name,
+			fromType: 'AudioNode',
+			toType: 'ToneAudioNode'
+		});
+		Tone.connect(source as unknown as TN, chain[0]);
 		for (let i = 0; i < chain.length - 1; i++) {
+			console.log('[FX] connecting', {
+				from: chain[i].constructor.name,
+				to: chain[i + 1].constructor.name
+			});
 			chain[i].connect(chain[i + 1]);
 		}
 		chain[chain.length - 1].toDestination();
 
-		console.log('[FX] chain connected', {
-			nodeCount: chain.length,
+		console.log('[FX] chain built', {
+			finalNodeCount: chain.length,
+			chain: chain.map((n) => n.constructor.name),
 			pitchSemitones,
 			tempoRate,
-			tempoCorrection: tempoCorrection.toFixed(2),
-			terminalNode: 'PitchShift→destination'
+			tempoCorrection: tempoCorrection.toFixed(2)
 		});
 	}
 
