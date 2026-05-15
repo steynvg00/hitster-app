@@ -4,7 +4,7 @@
 	import SearchablePicker from '$lib/components/admin/SearchablePicker.svelte';
 
 	type Track = { id: string; artist: string; title: string; year: number };
-	type Clip = { id: string; track_id: string; type: string; storage_path: string };
+	type Clip = { id: string; track_id: string; type: string; storage_path: string; duration: number | null };
 	type Tab = { id: string; position: number };
 	type TabClip = {
 		id: string;
@@ -148,14 +148,20 @@
 							<div class="flex-1">
 								<SearchablePicker
 									name="clip_id"
-									items={clips.map((c) => {
-										const t = allTracks.find((t) => t.id === c.track_id);
-										return {
-											id: c.id,
-											label: t ? `${t.artist} — ${t.title}` : c.track_id.slice(0, 8),
-											subtitle: `[${c.type}]`
-										};
-									})}
+									items={clips
+										.filter((c) => c.type !== 'mashup')
+										.map((c) => {
+											const t = allTracks.find((t) => t.id === c.track_id);
+											const dur =
+												c.duration != null && c.duration > 0
+													? `${Math.floor(c.duration / 60)}:${String(Math.floor(c.duration % 60)).padStart(2, '0')}`
+													: null;
+											return {
+												id: c.id,
+												label: t ? `${t.artist} — ${t.title}` : c.track_id.slice(0, 8),
+												subtitle: dur ? `[${c.type}] ${dur}` : `[${c.type}]`
+											};
+										})}
 									placeholder="+ Add fragment clip…"
 									emptyLabel="— none —"
 								/>
