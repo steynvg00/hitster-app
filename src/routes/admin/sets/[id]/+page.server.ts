@@ -156,7 +156,6 @@ export const actions: Actions = {
 		const db = createAdminClient();
 		const formData = await request.formData();
 		const raw = (formData.get('challenge_ids') as string | null) ?? '';
-		console.log('[SetPage] addChallenge action', { raw, set_id: params.id, user: locals.user?.id });
 		const challengeIds = raw
 			.split(',')
 			.map((s) => s.trim())

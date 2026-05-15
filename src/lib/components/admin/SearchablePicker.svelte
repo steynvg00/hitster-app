@@ -32,7 +32,6 @@
 	const selectedItem = $derived(items.find((i) => i.id === value));
 
 	function select(id: string, el: HTMLElement) {
-		console.log('[SearchablePicker] select() called', { id, name });
 		// Capture form reference before any state changes alter the DOM
 		const form = el.closest('form');
 		value = id;
@@ -45,11 +44,6 @@
 				`input[type="hidden"][name="${name}"]`
 			) as HTMLInputElement | null;
 			if (hiddenEl) hiddenEl.value = id;
-			console.log('[SearchablePicker] form submit', {
-				action: form.action,
-				hiddenValue: hiddenEl?.value,
-				formData: Object.fromEntries(new FormData(form))
-			});
 			form.requestSubmit();
 		}
 	}
@@ -98,7 +92,6 @@
 					type="button"
 					class="w-full px-3 py-2 text-left text-xs text-zinc-500 hover:bg-zinc-800"
 					onclick={(e) => {
-						console.log('[SearchablePicker] result click', { id: '', eventType: e.type });
 						select('', e.currentTarget);
 					}}>{emptyLabel}</button
 				>
@@ -111,7 +104,6 @@
 							? 'bg-zinc-800'
 							: ''}"
 						onclick={(e) => {
-							console.log('[SearchablePicker] result click', { id: item.id, eventType: e.type });
 							select(item.id, e.currentTarget);
 						}}
 					>

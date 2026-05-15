@@ -182,7 +182,6 @@
 		if (!selected.includes(id)) {
 			selected = [...selected, id];
 			if (!multipliers[id]) multipliers = { ...multipliers, [id]: 1 };
-			console.log('[SetPage] challenge added to local state', { id, total: selected.length + 1 });
 		}
 	}
 
@@ -924,10 +923,6 @@
 						formData.set('challenge_ids', selected.join(','));
 						formData.set('multipliers_json', JSON.stringify(multipliers));
 						formData.set('nfc_slugs_json', JSON.stringify(nfcSlugs));
-						console.log('[SetPage] setChallenges submit', {
-							challenge_ids: selected.join(','),
-							count: selected.length
-						});
 						savingChallenges = true;
 						const blurredId = slugSavingId;
 						slugSavingId = null;

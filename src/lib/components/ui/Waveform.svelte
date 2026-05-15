@@ -83,7 +83,6 @@
 		// from within a user-gesture event handler. The play button click is that gesture.
 		if (audioCtx && audioCtx.state !== 'running') {
 			audioCtx.resume();
-			console.log('[FX] AudioContext resuming from playPause, was:', audioCtx.state);
 		}
 		ws?.playPause();
 	}
@@ -106,25 +105,20 @@
 
 	async function applyEffects(fx: EffectsConfig | null | undefined) {
 		const generation = ++applyEffectsGeneration;
-		console.log('[FX] effects config received', { generation, fx });
 
 		const mediaEl = ws?.getMediaElement() as HTMLAudioElement | null;
 		if (!mediaEl) {
-			console.log('[FX] getMediaElement returned null — cannot apply effects');
 			return;
 		}
 
 		// ── Tempo (no Web Audio needed — just playbackRate) ───────────────────
 		if (fx?.tempo?.enabled && fx.tempo.rate !== 1) {
 			mediaEl.playbackRate = fx.tempo.rate;
-			console.log('[FX] applying tempo', fx.tempo.rate, '— playbackRate now', mediaEl.playbackRate);
 		} else {
 			mediaEl.playbackRate = 1;
 		}
 
-		if (fx?.flanger?.enabled) {
-			console.log('[FX] flanger is enabled but not implemented (stub — audio passes through unmodified)');
-		}
+		// flanger: enabled flag accepted but not implemented (audio passes through unmodified)
 
 		// ── Decide if we need the Web Audio chain ─────────────────────────────
 		const needsWebAudio =
@@ -139,7 +133,6 @@
 			if (toneSourceNode && audioCtx) {
 				toneSourceNode.disconnect();
 				toneSourceNode.connect(audioCtx.destination);
-				console.log('[FX] no Web Audio effects active — source routed to destination directly');
 			}
 			disposeToneNodes();
 			return;
@@ -149,7 +142,6 @@
 		const Tone = await import('tone');
 		// Bail if a newer invocation has superseded this one while we awaited the import.
 		if (generation !== applyEffectsGeneration) {
-			console.log('[FX] stale after import — discarding gen', generation);
 			return;
 		}
 
@@ -158,25 +150,18 @@
 		// in playPause() (synchronously on the click) to handle iOS/Safari strictly.
 		await Tone.start();
 		if (generation !== applyEffectsGeneration) {
-			console.log('[FX] stale after Tone.start() — discarding gen', generation);
 			return;
 		}
 
 		const ctx = Tone.context.rawContext as AudioContext;
 		audioCtx = ctx;
-		console.log('[FX] audio context state', ctx.state);
 
 		const source = getOrCreateMediaElementSource(mediaEl, ctx);
 		toneSourceNode = source;
 
 		// Teardown previous chain before rebuilding
-		const previousNodeCount = [toneLowpass, toneHighpass, toneBandpass, tonePhaser, tonePitchShift].filter(
-			Boolean
-		).length;
-		console.log('[FX] tearing down chain', { nodeCount: previousNodeCount });
 		source.disconnect();
 		disposeToneNodes();
-		console.log('[FX] teardown complete');
 
 		// Tempo correction: changing playbackRate also shifts pitch by log2(rate)*12 st.
 		// PitchShift at the end of the chain cancels this side-effect.
@@ -223,34 +208,14 @@
 		//
 		// Fix: use Tone.connect(src, dst) which recursively unwraps dst.input until it
 		// reaches a native AudioNode/AudioParam, then calls the native connect correctly.
-		console.log('[FX] connecting', {
-			from: 'MediaElementSource',
-			to: chain[0].constructor.name,
-			fromType: 'AudioNode',
-			toType: 'ToneAudioNode'
-		});
 		Tone.connect(source as unknown as TN, chain[0]);
 		for (let i = 0; i < chain.length - 1; i++) {
-			console.log('[FX] connecting', {
-				from: chain[i].constructor.name,
-				to: chain[i + 1].constructor.name
-			});
 			chain[i].connect(chain[i + 1]);
 		}
 		chain[chain.length - 1].toDestination();
-
-		console.log('[FX] chain built', {
-			finalNodeCount: chain.length,
-			chain: chain.map((n) => n.constructor.name),
-			pitchSemitones,
-			tempoRate,
-			tempoCorrection: tempoCorrection.toFixed(2)
-		});
 	}
 
 	onMount(() => {
-		console.log('[FX] Waveform mounted', { src, effects });
-
 		import('wavesurfer.js').then(({ default: WaveSurfer }) => {
 			const mediaEl = document.createElement('audio');
 			mediaEl.crossOrigin = 'anonymous';
@@ -268,7 +233,6 @@
 
 			ws.on('ready', () => {
 				isReady = true;
-				console.log('[FX] WaveSurfer ready', { mediaEl: ws?.getMediaElement(), effects });
 				// applyEffects is driven by the $effect above — do not call it here
 			});
 			ws.on('play', () => onPlayStateChange?.(true));

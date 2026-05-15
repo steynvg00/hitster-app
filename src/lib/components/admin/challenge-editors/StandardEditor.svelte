@@ -165,11 +165,6 @@
 								{#if tabClip?.clip_id}
 									{@const previewClip = clips.find((c) => c.id === tabClip.clip_id)}
 									{#if previewClip}
-										{@const _ = console.log('[ClipPreview] resolving clip', {
-											clip_id: previewClip.id,
-											storage_object_path: previewClip.storage_object_path,
-											resolved_url: previewClip.storage_path
-										})}
 										<audio controls crossorigin="anonymous" src={previewClip.storage_path} class="mt-2 h-8 w-full rounded"
 										></audio>
 									{/if}

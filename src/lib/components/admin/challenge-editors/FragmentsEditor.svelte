@@ -70,13 +70,7 @@
 	// Per-tab track selection for the two-step add-fragment picker (local UI state only)
 	let selectedAddTrack = $state<Record<string, string>>({});
 
-	$effect(() => {
-		console.log(
-			'[FragmentsEditor] clips available',
-			clips.filter((c) => c.type !== 'mashup').length,
-			'(two-step mode)'
-		);
-	});
+
 </script>
 
 <!-- ── Tabs ── -->
