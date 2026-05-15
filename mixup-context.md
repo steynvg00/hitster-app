@@ -150,6 +150,15 @@ All migrations run **manually via Supabase SQL Editor** — no CLI runner. Files
 | 0029 | session_9_features     | `variant_defaults.tutorial_text text`; `game_sets.nfc_lock_enabled bool DEFAULT false`, `randomizer_enabled bool DEFAULT false`, `last_results jsonb`; `challenge_unlocks(id, challenge_id, team_id, set_id, unlocked_at)` table; `nfc_tags.purpose` CHECK extended to include `'challenge_unlock'` (superseded by 0030) |
 | 0030 | nfc_purpose_constraint | Fixes `nfc_tags.purpose` CHECK constraint to correctly allow `'challenge_unlock'` — aligns DB with `NfcTagPurpose` TypeScript type added in 0029                                                                                                                                                                         |
 | 0034 | set_preset_slug        | `game_sets.preset_slug text` (nullable) — stores a short slug when a set is created from a preset template; NULL or `'custom'` = no preset                                                                                                                                                                               |
+| 0035 | challenge_nfc_lock_override | `challenges.nfc_lock_override boolean` — per-challenge override for the NFC lock gate |
+| 0036 | challenge_tabs         | `challenge_tabs`, `challenge_tab_source_tracks`, `challenge_tab_clips` — multi-tab architecture for all variants |
+| 0037 | effects_variant        | New `effects` variant; `challenge_tabs.effects` JSONB (7 audio effects per tab) |
+| 0038 | mashups                | `mashups`, `mashup_sources` tables; `challenge_tabs.mashup_id` FK |
+| 0039 | mashups_audio_upload   | `mashups.audio_storage_path`, `audio_duration_seconds` |
+| 0040 | effects_tutorial_text  | `variant_defaults.tutorial_text text` |
+| 0041 | effect_presets         | `effect_presets` table — builtin + user-saved FX chain presets |
+| 0043 | join_consolidation     | `game_sets.team_selection_mode text` (`random`\|`selectable`); removed `randomizer_enabled`; `nfc_tags.purpose` CHECK updated (removed `'randomizer'`) |
+| 0044 | powerups_runtime       | `powerup_types` (text PK, 7 types seeded), `team_powerups`, `team_effects`; `game_sets.crown_holder_team_id`, `hard_gaan_window_minutes`; RLS + realtime |
 
 ---
 
@@ -187,9 +196,14 @@ All migrations run **manually via Supabase SQL Editor** — no CLI runner. Files
 - `assignment_slots` (jsonb pre-shuffled team_id list), `assignment_index` (cursor)
 - `started_at` (when set activated), `ended_at` timestamps
 - `nfc_lock_enabled bool` — when true, each challenge requires the team to scan its NFC unlock tag before playing; toggled from the set console (migration 0029)
-- `randomizer_enabled bool` — enables the randomizer flow for this set (migration 0029)
+- `team_selection_mode text` (`random`|`selectable`) — how players join: `random` auto-assigns a team; `selectable` shows a team picker grid (migration 0043)
 - `last_results jsonb` — snapshot of team rankings captured before a Reset Game action, shown as "Last results" in the console (migration 0029)
 - `preset_slug text` (nullable, migration 0034) — slug of the preset template used to create this set; NULL/`'custom'` = hand-configured; shown as a category badge in the sets list
+- `powerups_enabled bool` — master switch for powerup earning
+- `powerup_mode text` (`threshold`|`token_shop`) — earning mechanism
+- `powerup_config jsonb` — threshold mode: `{ "earn_threshold": 70 }` (score% required to earn)
+- `crown_holder_team_id uuid` — FK to leading team (P3c, not yet used)
+- `hard_gaan_window_minutes int` — window for hard_gaan powerup duration (default 15)
 
 ### Challenges
 
@@ -212,20 +226,35 @@ All migrations run **manually via Supabase SQL Editor** — no CLI runner. Files
 ### NFC tags
 
 - `slug` unique
-- `purpose`: `team_identity | team_entry | challenge | randomizer | hint | challenge_unlock`
-- Bound to `set_id` (for randomizers), `challenge_id` (for challenge stations and hints), or `team_color` (team-identity cards)
-- Randomizer tap behaviour depends on `game_sets.play_state`: joining → assign team; playing → /nfc/game-in-progress; recap → /nfc/game-over
+- `purpose`: `team_identity | team_entry | challenge | hint | challenge_unlock`
+- Bound to `challenge_id` (for challenge stations and hints), or `team_color` (team-identity cards)
 - Hint tap → `/nfc/hint/[challenge_id]` → records usage in `challenge_hints_used` → redirects to `/challenge/[id]?hint=1`
+- `'randomizer'` purpose has been removed (migration 0043). Players join via `/sets/[id]/join` instead.
+
+### Powerups (P3a runtime — migration 0044)
+
+Two families — do NOT confuse:
+
+| Family | Tables | Notes |
+| --- | --- | --- |
+| Legacy (0032) | `powerups`, `set_powerups`, `powerup_usages` | Old catalog; not used for earning |
+| Runtime (0044) | `powerup_types`, `team_powerups`, `team_effects` | Active system |
+
+`powerup_types` rows (text PK, 7 seeded): `shield`, `time_boost`, `insurance`, `bonus_points`, `hard_gaan`, `single_event_mult`, `free_answer`. Key fields: `holdable bool`, `immediate_use bool`, `default_min_score_pct`, `icon`.
+
+`team_powerups` tracks each earned powerup: `status` = `pending → held | lost`. `pending` = shown in reveal modal; `held` = stored in the UI row; `lost` = dismissed.
+
+`team_effects` reserved for P3b activation — nothing writes to it yet.
 
 ---
 
 ## 6. Player flows
 
-1. **Tap NFC randomizer card** (or visit `/play/teams`) → if no `hitster_player` cookie, redirect to `/play/teams` onboarding with `?next=` return URL
+1. **Scan QR / visit link** (e.g. `/sets/[id]/join`) or visit `/play/teams` → if no `hitster_player` cookie, redirect to `/play/teams` onboarding with `?next=` return URL
 2. **Onboarding** at `/play/teams`: name + optional photo (camera or gallery) → `players` row + cookie set → redirect to next URL (or `/play/teams/sets`)
 3. **Either**:
-   - **NFC randomizer** at `/nfc/randomize/[set_id]`: animated team assignment using shuffled slot list (or fallback to lowest-count team) → land on `/team`
-   - **UI flow** at `/play/teams/sets`: pick active set → animation → team
+   - **Join via `/sets/[id]/join`**: if `team_selection_mode=random` → auto-assign + `/play/teams/randomizing`; if `selectable` → team picker grid
+   - **UI flow** at `/play/teams/sets`: pick active set → `/sets/[id]/join` → team assignment
 4. **Challenge play**: visit `/challenge/[id]` → attempt created on first arrival → tab row for multi-track → answer fields per `input_mode` → draft answers stored in localStorage keyed by team+challenge → submit (final lock) or auto-submit on timer expiry
 5. **Results screen**: per-track breakdown, per-field correct/wrong with fuzzy-match score for open text → "Request manual review" buttons for wrong fields
 6. **Live leaderboard** at `/play/leaderboard`: realtime team scores, hidden when set is ending (suspense window)
@@ -498,8 +527,8 @@ Each non-homepage surface gets its OWN treatment, not the homepage 6-variant sys
 
 ### SQL reset (in CLAUDE.md)
 
-- **Soft reset** — preserves game_sets, set_challenges, challenges, tracks, NFC cards. Clears: submissions, review_requests, activity_log, challenge_attempts, challenge_hints_used, challenge_unlocks, team scores. Resets game_sets to `inactive/joining`.
-- **Hard reset** — same as soft reset, but also removes randomizer + challenge_unlock NFC cards and all player records. Does NOT delete game_sets or set_challenges — configuration is preserved.
+- **Soft reset** — preserves game_sets, set_challenges, challenges, tracks, NFC cards. Clears: submissions, review_requests, activity_log, challenge_attempts, challenge_hints_used, challenge_unlocks, team_powerups, team_effects, team scores. Resets game_sets to `inactive/joining`.
+- **Hard reset** — same as soft reset, but also removes `challenge_unlock` NFC cards and all player records. Does NOT delete game_sets or set_challenges — configuration is preserved.
 
 Note: `recap_state` must be set to `'pending'` (not NULL) and `recap_ranking` to `'[]'::jsonb` in reset SQL — NULL/missing values violate CHECK constraints.
 
@@ -514,7 +543,7 @@ Note: `recap_state` must be set to `'pending'` (not NULL) and `recap_ranking` to
 ### Migrations
 
 - Manually pasted into Supabase SQL Editor (no CLI runner)
-- Sequential numbering (0001 → 0030)
+- Sequential numbering (0001 → 0044; next is 0045)
 - Idempotent where possible (`if not exists`)
 - After running, sanity-check via `information_schema.columns` queries
 
@@ -530,46 +559,48 @@ Note: `recap_state` must be set to `'pending'` (not NULL) and `recap_ranking` to
 
 ---
 
-## 13. Where we left off (May 13, 2026)
+## 13. Where we left off (May 15, 2026)
 
 **Recently shipped (verified):**
 
 - Supabase Auth + ownership migration + minimal dashboard (Session A)
 - Game lifecycle state machine (joining/playing/recap)
-- Set page rebuild: Gameset Console with inline editing, state-adaptive UI, NFC lock toggle, randomizer toggle, copy buttons
+- Set page rebuild: Gameset Console with inline editing, state-adaptive UI, NFC lock toggle, copy buttons
 - Tutorial system (per-variant text, lobby + in-challenge access)
 - Player state machine (Lobby → Team Console → Results → Thanks)
 - Reset Game action + Last Results panel
 - Theme system: 7 themes including Mainstage, Showtime, Classic
 - 6 of 10 original bugs from §9 fixed
 - Admin parity Batch A: sets list overhaul, Modal.svelte, preset_slug (migration 0034), category badges, URL-bound filter/sort, empty states
-- Admin parity Batch B: duplicateSet + duplicateChallenge actions, Duplicate buttons, URL-bound filter/sort on tracks + challenges, `src/lib/variants.ts` with icon/color helpers, variant icon badges throughout, empty states
+- Admin parity Batch B: duplicateSet + duplicateChallenge actions, URL-bound filter/sort on tracks + challenges, `src/lib/variants.ts` icon/color helpers, empty states
 - **Batch D — Bug 11**: deferred challenge_attempt creation; pre-game gate + `startChallenge` form action
-- **Batch E — Admin polish**: ActivityFeed.svelte on dashboard (realtime activity_log); recap Highlight Reel (fastest answers); powerup category UI (collapsible + tri-state master toggle)
-- **Path X — Bug 5 fix**: Waveform.svelte WeakMap caching; festival palette tokens in @theme; homepage wordmark polish
-- **Visual identity theming pass**: `/sets/[id]/podium` (TV spectacle), `/play/thanks` (reflective celebration), `/play/waiting` (ceremonial suspense) — all using festival palette, each with distinct visual treatment
-- **DevNav**: floating dev-only navigation drawer (`src/lib/components/DevNav.svelte`), mounted in root layout behind `import.meta.env.DEV`; `/api/dev/state` GET endpoint (403 in prod); 6 route sections; active-set context block; search + arrow-key nav; localStorage persistence; terminal aesthetic (mono, dark, lime)
-
-**Pushed but partially unverified (need full walk):**
-
-- Mechanics commits: bonus tracker, results breakdown animation, leaderboard redesign, team photos, collab artists, waiting carousel, NFC hint scan flow (Tier 1 verified, Tier 2 + 3 pending)
-- Latest timer expiry fix
+- **Batch E — Admin polish**: ActivityFeed.svelte on dashboard; powerup category admin UI
+- **Path X — Bug 5 fix**: Waveform.svelte WeakMap caching; festival palette tokens in @theme; homepage polish
+- **Visual identity theming pass**: `/sets/[id]/podium`, `/play/thanks`, `/play/waiting` — festival palette, distinct per-surface treatments
+- **DevNav**: floating dev-only drawer behind `import.meta.env.DEV`; `/api/dev/state` GET endpoint
+- **Challenge-types redesign**: variant editors (Standard/Mashup/Fragments/Effects), challenge_tabs multi-tab architecture, EffectsEditor with 7 FX per tab, migrations 0036–0041
+- **Join consolidation** (feature/join-consolidation merged): `/sets/[id]/join` replaces NFC randomizer; `team_selection_mode` (random/selectable); selectable picker with capacity gates + overflow safety; `/sets/[id]/in-progress` + `/sets/[id]/over` status pages; migration 0043
+- **UX papercuts** (feature/ux-papercuts merged): row-click on challenges/tracks/sets/pools admin pages; per-clip play button in FragmentsEditor
+- **Powerups P3a** (feature/powerups-p3a — NOT YET MERGED): migration 0044 + `src/lib/server/powerups.ts` + HeldPowerups + PowerupRevealModal; earning wired into submit action; year slider 2000–2026
 
 **Open from §9 bug pile:**
 
 - Bug 6: ffmpeg trim CORS error
 - Bug 8: Duplicate slug error link goes to wrong location
 - Bug 9: MP4/MOV screen recordings rejected on upload
-- (Bug 5 fixed — see above)
+
+**Branches outstanding:**
+
+- `feature/powerups-p3a` — complete, needs: (1) migration 0044 run in Supabase, (2) manual test, (3) merge to main / Vercel deploy
 
 **Highest-priority next moves:**
 
-1. Host whitelist / closed access (BLOCKER for August event)
-2. Walk Tier 2+3 verification for mechanics work
-3. Address remaining §9 bugs (6, 8, 9)
-4. Game mode rollout (Imposter / Battle / Relay — see §10 creative session items)
-5. Dashboard glassmorphic composition pass (deferred from visual identity session)
+1. Merge + deploy `feature/powerups-p3a` (run migration 0044 first)
+2. Host whitelist / closed access (BLOCKER for August event)
+3. Powerups P3b — activation effects (bonus_points instant, hard_gaan multiplier window, shield block, time_boost on attempt create, insurance retroactive)
+4. Address remaining §9 bugs (6, 8, 9)
+5. Game mode rollout (Imposter / Battle / Relay — see §10 creative session items)
 
 ---
 
-## Pick up here — Host whitelist + verification walk
+## Pick up here — Merge P3a + run migration 0044, then P3b or whitelist

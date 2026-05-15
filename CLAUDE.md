@@ -94,7 +94,7 @@ All scoring logic lives in `src/routes/(game)/challenge/[id]/+page.server.ts`. K
 
 ### Database migrations
 
-Migrations live in `supabase/migrations/` and must be **run manually** in the Supabase SQL Editor (Dashboard → SQL Editor → paste → Run). There is no CLI migration runner wired up. Number files sequentially (next is `0035_...sql`). Use `DO $$ BEGIN … EXCEPTION WHEN others THEN null; END $$;` guards around `ALTER PUBLICATION` statements.
+Migrations live in `supabase/migrations/` and must be **run manually** in the Supabase SQL Editor (Dashboard → SQL Editor → paste → Run). There is no CLI migration runner wired up. Number files sequentially (next is `0045_...sql`). Use `DO $$ BEGIN … EXCEPTION WHEN others THEN null; END $$;` guards around `ALTER PUBLICATION` statements.
 
 ### RLS posture
 
@@ -123,8 +123,8 @@ Default: deny all. Explicit policies for each permitted operation. All host writ
 src/
   lib/
     components/ui/     ← Combobox, MultipleChoice, OpenText, YearInput, Modal
-    components/game/   ← game-specific components
-    server/            ← supabase.ts, team.ts, admin.ts — server-only
+    components/game/   ← BonusTracker, TutorialOverlay, HeldPowerups, PowerupRevealModal
+    server/            ← supabase.ts, team.ts, admin.ts, powerups.ts — server-only
     supabase-browser.ts ← singleton browser client
     variants.ts        ← VARIANTS const, getVariantIcon(), getVariantColor() helpers
     types/
@@ -133,7 +133,7 @@ src/
   routes/
     (game)/            ← team-facing pages (no URL segment)
       challenge/[id]/  ← main challenge page + scoring logic
-      team/            ← team home (score, position, challenge list)
+      team/            ← team home (score, position, challenge list, held powerups)
       join/            ← manual team picker
     admin/             ← host admin (auth-guarded by layout.server.ts)
       sets/            ← game set CRUD (list, create)
@@ -149,17 +149,20 @@ src/
       variant-defaults/[variant]/ ← point defaults + streak config per variant
     leaderboard/       ← TV display (realtime)
     nfc/[tag]/         ← NFC tap handler (server route only)
-    nfc/randomize/[set_id]/ ← randomizer: joining→assign team, playing→game-in-progress, recap→game-over
     nfc/hint/[challenge_id]/ ← records challenge_hints_used → redirect to /challenge/[id]?hint=1
     nfc/unlock/[challenge_id]/ ← records challenge_unlocks (nfc_lock guard) → redirect to /challenge/[id]
-    nfc/game-in-progress/[set_id]/ ← "game already started" page
-    nfc/game-over/[set_id]/        ← "game over, view leaderboard" page
+    nfc/game-in-progress/[set_id]/ ← redirects to /sets/[id]/in-progress
+    nfc/game-over/[set_id]/        ← redirects to /sets/[id]/over
     play/[mode]/       ← player onboarding (mode = solo | teams)
       lobby/           ← lobby stub (solo mode only)
     play/teams/        ← static routes (higher priority than [mode])
       sets/            ← active game set picker → assignTeam → randomizing
       randomizing/     ← CSS animation: rolling → reveal → continue → /team
-    sets/[id]/podium/  ← TV-display podium (no auth gate); realtime recap reveals
+    sets/[id]/
+      join/            ← player join page: random mode auto-assigns; selectable mode shows team picker
+      in-progress/     ← "game already started" page (play_state = playing)
+      over/            ← "game over" page (play_state = recap)
+      podium/          ← TV-display podium (no auth gate); realtime recap reveals
     api/
       player/
         leave/         ← DELETE player session + photo
@@ -176,6 +179,15 @@ src/
 - `team_identity` → sets team cookie → `/team`
 - `team_entry` → snake-assigns team via activity_log count → sets cookie → `/team`
 - `challenge` → `/challenge/[id]` (redirects to `/join` first if no cookie)
+
+## Player join flow
+
+Players reach `/sets/[id]/join` (linked from QR code or host-shared URL). The page behaviour depends on `game_sets.team_selection_mode`:
+
+- `random` — auto-assigns via `assignTeam()` (snake-order, lowest-count), redirects to `/play/teams/randomizing?team={color}`
+- `selectable` — shows a team picker grid; capacity gates based on `expected_player_count / team_count`; overflow safety: if all teams are at capacity, smallest team is unlocked so joining is always possible
+
+If `play_state = playing` → redirect `/sets/[id]/in-progress`. If `recap` → `/sets/[id]/over`.
 
 ## Key data relationships
 
@@ -205,6 +217,9 @@ src/
 | 2026-05-13 | DevNav: floating dev-only navigation drawer (src/lib/components/DevNav.svelte) mounted in +layout.svelte behind import.meta.env.DEV guard; /api/dev/state GET endpoint (403 in prod); terminal aesthetic (mono, dark, lime); 6 collapsible route sections; active-set context block with quick links; dynamic [id] routes resolved via active set or recent-items dropdown; search filter; Cmd+K / Esc / arrow-key nav; localStorage persistence |
 | 2026-05-14 | Challenge-types redesign (feature/challenge-types-redesign): variant-specific admin editors (StandardEditor, MashupEditor, FragmentsEditor, EffectsEditor) in src/lib/components/admin/challenge-editors/; challenge_tabs multi-tab architecture with challenge_tab_source_tracks + challenge_tab_clips + mashups + mashup_sources; EffectsEditor per-tab FX chain (7 effects — pitch/tempo/lowpass/highpass/bandpass/phaser/flanger, 600 ms debounce fetch auto-save); getSourceTracksForTab() in scoring.ts centralises source-track resolution across all variants; effects variant intro text on player challenge page |
 | 2026-05-14 | SearchablePicker Svelte 5 timing fix: imperative hidden-input update before requestSubmit() — Svelte 5 defers signal-to-DOM effects as microtasks, so FormData would read the stale value; fix queries the hidden input by name and sets .value directly before the form fires. Affects all SearchablePicker usages (standard/mashup/fragments/effects editors). |
+| 2026-05-15 | Join consolidation (feature/join-consolidation): replaced NFC randomizer with /sets/[id]/join (random + selectable modes); added team_selection_mode to game_sets; removed randomizer_enabled + NFC randomizer tags; /sets/[id]/in-progress + /sets/[id]/over status pages; selectable team picker with overflow safety when expected_player_count is null |
+| 2026-05-15 | UX papercuts (feature/ux-papercuts): row-click nav on challenges/tracks/sets/pools admin pages; per-clip play button with stop-one-when-another-plays in FragmentsEditor |
+| 2026-05-15 | Powerups P3a (feature/powerups-p3a): migration 0044 (powerup_types, team_powerups, team_effects, 7 catalog types seeded); src/lib/server/powerups.ts (maybeAwardPowerup + resolvePowerupChoice); submit action earns powerup when score ≥ threshold; HeldPowerups.svelte (held cards + realtime + "Activation coming soon" toast); PowerupRevealModal.svelte (1.8s slot-machine settle animation, Store/Lose for holdable, Lose for immediate-use); year slider range 2000–2026. Activation effects stubbed for P3b. |
 
 ## Technical notes
 
@@ -354,6 +369,25 @@ Admin `/admin/live` polls `/api/auto-submit` every 10s. The endpoint finds attem
 
 `computeBreakdown(base, bonusParams)` in `src/lib/server/scoring.ts` returns a `ScoreBreakdown` interface. The breakdown is persisted in `submissions.answers[0].breakdown` and surfaced via the `BonusTracker` component.
 
+### Powerups runtime architecture (P3a)
+
+Two parallel powerup table families exist — don't confuse them:
+
+| Family | Tables | PK type | Purpose |
+| --- | --- | --- | --- |
+| Legacy (0032) | `powerups`, `set_powerups`, `powerup_usages` | uuid | Old catalog + usage log. Not used by P3a earning flow. |
+| P3a runtime (0044) | `powerup_types`, `team_powerups`, `team_effects` | text (types), uuid (rows) | Active earning, storage, and future activation. |
+
+**Earning flow:** after submission scoring, `maybeAwardPowerup()` in `src/lib/server/powerups.ts` checks `game_sets.powerups_enabled` and `powerup_config.earn_threshold` (default 70%). If score% ≥ threshold, picks a random eligible `powerup_types` row and inserts a `team_powerups` row with `status='pending'`. The submit action returns `earnedPowerup: { teamPowerupId, type }` to the client.
+
+**Resolve choices:** `resolveEarnedPowerup` action wraps `resolvePowerupChoice()`. `'store'` → `status='held'` (holdable types only). `'lose'` → `status='lost'`.
+
+**`team_effects`** table is reserved for P3b/P3c activation effects — nothing writes to it yet.
+
+**`game_sets.powerup_config`** JSONB key used in earning: `earn_threshold` (number, default 70). Other keys TBD in P3b.
+
+**P3b stub:** clicking a held powerup shows a toast "Activation coming soon". Immediate-use powerups (bonus_points, hard_gaan, single_event_mult) show a "Lose" button in the reveal modal with note "Activation in next update". Full activation ships in P3b.
+
 ### NFC hint scan flow
 
 `challenge_hints_used(challenge_id, team_id, used_at)` — unique on (challenge_id, team_id). NFC tags with `purpose = 'hint'` route through `/nfc/hint/[challenge_id]` which upserts a hint-used row then redirects to `/challenge/[id]?hint=1`. The challenge page opens a bottom-sheet modal showing `challenge.hint_text` on `?hint=1`. Teams that have scanned see a persistent Hint button to re-open the modal.
@@ -386,7 +420,9 @@ DELETE FROM challenge_unlocks;
 DELETE FROM submissions;
 DELETE FROM review_requests;
 DELETE FROM activity_log;
-UPDATE teams SET score = 0, current_streak = 0;
+DELETE FROM team_powerups;
+DELETE FROM team_effects;
+UPDATE teams SET score = 0, current_streak = 0, held_powerups = '[]'::jsonb, last_threshold_crossed = 0;
 UPDATE game_sets
 SET status = 'inactive',
     play_state = 'joining',
@@ -400,4 +436,4 @@ SET status = 'inactive',
     assignment_index = 0;
 ```
 
-Hard reset additionally: `DELETE FROM nfc_tags WHERE purpose IN ('randomizer', 'challenge_unlock'); DELETE FROM players;`
+Hard reset additionally: `DELETE FROM nfc_tags WHERE purpose = 'challenge_unlock'; DELETE FROM players;`
