@@ -115,18 +115,24 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 
 	// Collect all referenced track IDs (including mashup sources)
 	const clipIds = [...new Set(tabClips.map((c) => c.clip_id))];
+
+	// Fetch clips first — for fragments the source tracks are derived from clip.track_id,
+	// so we need the clip rows before we can build the full trackIds list.
+	const clipsResult = await (clipIds.length
+		? supabase.from('clips').select('id, track_id, storage_path, type, effects').in('id', clipIds)
+		: Promise.resolve({ data: [] as { id: string; track_id: string; storage_path: string; type: string; effects: unknown }[] }));
+
 	const trackIds = [
-		...new Set([...sourceTracks.map((s) => s.track_id), ...mashupSources.map((s) => s.track_id)])
+		...new Set([
+			...sourceTracks.map((s) => s.track_id),
+			...mashupSources.map((s) => s.track_id),
+			...(clipsResult.data ?? []).map((c) => c.track_id).filter((id): id is string => !!id)
+		])
 	];
 
-	const [tracksResult, clipsResult] = await Promise.all([
-		trackIds.length
-			? admin.from('tracks').select('*').in('id', trackIds)
-			: Promise.resolve({ data: [] }),
-		clipIds.length
-			? supabase.from('clips').select('id, track_id, storage_path, type, effects').in('id', clipIds)
-			: Promise.resolve({ data: [] })
-	]);
+	const tracksResult = await (trackIds.length
+		? admin.from('tracks').select('*').in('id', trackIds)
+		: Promise.resolve({ data: [] as { id: string; [key: string]: unknown }[] }));
 
 	const clipMap = new Map((clipsResult.data ?? []).map((c) => [c.id, c]));
 	const clipTrackMap = new Map((clipsResult.data ?? []).map((c) => [c.id, c.track_id]));
@@ -501,26 +507,28 @@ export const actions: Actions = {
 		}));
 
 		const clipIds = [...new Set(tabClipRows.map((c) => c.clip_id))];
-		const trackIds = [
-			...new Set([
-				...sourceTracks.map((s) => s.track_id),
-				...submitMashupSources.map((s) => s.track_id)
-			])
-		];
 
-		const [tracksResult, clipsResult] = await Promise.all([
-			trackIds.length
-				? admin.from('tracks').select('*').in('id', trackIds)
-				: Promise.resolve({ data: [] }),
-			clipIds.length
-				? admin.from('clips').select('id, track_id').in('id', clipIds)
-				: Promise.resolve({ data: [] })
-		]);
-		const trackMap = new Map((tracksResult.data ?? []).map((t) => [t.id, t as TrackData]));
+		// Fetch clips first — fragments derives source tracks from clip.track_id
+		const clipsResult = await (clipIds.length
+			? admin.from('clips').select('id, track_id').in('id', clipIds)
+			: Promise.resolve({ data: [] as { id: string; track_id: string }[] }));
 		const submitClips: ClipRaw[] = (clipsResult.data ?? []).map((c) => ({
 			id: c.id,
 			track_id: c.track_id
 		}));
+
+		const trackIds = [
+			...new Set([
+				...sourceTracks.map((s) => s.track_id),
+				...submitMashupSources.map((s) => s.track_id),
+				...submitClips.map((c) => c.track_id).filter(Boolean)
+			])
+		];
+
+		const tracksResult = await (trackIds.length
+			? admin.from('tracks').select('*').in('id', trackIds)
+			: Promise.resolve({ data: [] as { id: string; [key: string]: unknown }[] }));
+		const trackMap = new Map((tracksResult.data ?? []).map((t) => [t.id, t as TrackData]));
 		const allTabClipData: TabClipData[] = tabClipRows.map((c) => ({
 			id: c.id,
 			tabId: c.tab_id,
