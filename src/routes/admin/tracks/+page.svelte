@@ -225,8 +225,9 @@
 	let mashupUploadSources = $state<string[]>([]);
 	let mashupCreateSourcePicker = $state('');
 
-	// Edit form source track state (per-mashup)
-	let mashupEditSources = $state<Record<string, string[]>>({});
+	// Edit form source track state (single active edit session — only one mashup edits at a time)
+	let editingMashupSources = $state<string[]>([]);
+	let editingMashupSourcePicker = $state('');
 
 	// Mashup upload state (new mashup create flow)
 	let mashupUploadName = $state('');
@@ -1177,8 +1178,6 @@
 			</div>
 			<!-- Audio file drop zone -->
 			<div
-				role="button"
-				tabindex="0"
 				class="relative mb-3 flex min-h-[80px] cursor-pointer items-center justify-center rounded-xl border-2 border-dashed p-4 transition-colors {mashupDropOver
 					? 'border-amber-400 bg-amber-950/20'
 					: mashupUploadFile
@@ -1195,11 +1194,8 @@
 					const f = e.dataTransfer?.files[0];
 					if (f) await stageMashupFile(f);
 				}}
-				onclick={() => document.getElementById('mashup-file-input')?.click()}
-				onkeydown={(e) => e.key === 'Enter' && document.getElementById('mashup-file-input')?.click()}
 			>
 				<input
-					id="mashup-file-input"
 					type="file"
 					accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac"
 					class="absolute inset-0 cursor-pointer opacity-0"
@@ -1357,7 +1353,7 @@
 									use:enhance={({ formData }) => {
 										formData.set(
 											'source_track_ids',
-											JSON.stringify(mashupEditSources[mashup.id] ?? [])
+											JSON.stringify(editingMashupSources)
 										);
 										return async ({ update }) => {
 											await update({ reset: false });
@@ -1379,9 +1375,9 @@
 									</div>
 									<div>
 										<label class="mb-1 block text-xs text-zinc-400">Source Tracks</label>
-										{#if (mashupEditSources[mashup.id] ?? []).length > 0}
+										{#if editingMashupSources.length > 0}
 											<div class="mb-2 flex flex-wrap gap-1.5">
-												{#each mashupEditSources[mashup.id] ?? [] as tid (tid)}
+												{#each editingMashupSources as tid (tid)}
 													{@const t = data.tracks.find((tr) => tr.id === tid)}
 													<span
 														class="flex items-center gap-1 rounded-full bg-zinc-700 px-2.5 py-0.5 text-xs text-zinc-200"
@@ -1390,9 +1386,9 @@
 														<button
 															type="button"
 															onclick={() => {
-																mashupEditSources[mashup.id] = (
-																	mashupEditSources[mashup.id] ?? []
-																).filter((id) => id !== tid);
+																editingMashupSources = editingMashupSources.filter(
+																	(id) => id !== tid
+																);
 															}}
 															class="text-zinc-400 hover:text-red-400">✕</button
 														>
@@ -1402,19 +1398,22 @@
 										{/if}
 										<select
 											class="input-field text-xs"
-											onchange={(e) => {
-												const val = (e.target as HTMLSelectElement).value;
-												if (val && !(mashupEditSources[mashup.id] ?? []).includes(val)) {
-													mashupEditSources[mashup.id] = [
-														...(mashupEditSources[mashup.id] ?? []),
-														val
+											bind:value={editingMashupSourcePicker}
+											onchange={() => {
+												if (
+													editingMashupSourcePicker &&
+													!editingMashupSources.includes(editingMashupSourcePicker)
+												) {
+													editingMashupSources = [
+														...editingMashupSources,
+														editingMashupSourcePicker
 													];
 												}
-												(e.target as HTMLSelectElement).value = '';
+												editingMashupSourcePicker = '';
 											}}
 										>
 											<option value="">— add source track —</option>
-											{#each data.tracks.filter((t) => !(mashupEditSources[mashup.id] ?? []).includes(t.id)) as t (t.id)}
+											{#each data.tracks.filter((t) => !editingMashupSources.includes(t.id)) as t (t.id)}
 												<option value={t.id}>{t.artist} — {t.title} ({t.year})</option>
 											{/each}
 										</select>
@@ -1457,7 +1456,8 @@
 									<button
 										type="button"
 										onclick={() => {
-											mashupEditSources[mashup.id] = sources.map((s) => s.track_id);
+											editingMashupSources = sources.map((s) => s.track_id);
+											editingMashupSourcePicker = '';
 											editingMashup = mashup.id;
 										}}
 										class="shrink-0 rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
