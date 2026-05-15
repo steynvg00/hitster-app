@@ -182,6 +182,8 @@
 	let activeTabIndex = $state(0);
 	const activeTab = $derived(data.tabs[activeTabIndex]);
 	const isMultiTab = $derived(data.tabs.length > 1);
+	// Answer slot tabs (mashup + fragments only)
+	let activeSlotIndex = $state(0);
 
 	// ── Audio player ──────────────────────────────────────────────────────────
 	let waveformRef = $state<Waveform | undefined>(undefined);
@@ -198,10 +200,11 @@
 		waveformRef?.playPause();
 	}
 
-	// Reset clip index when tab changes
+	// Reset clip + slot index when tab changes
 	$effect(() => {
 		void activeTabIndex;
 		activeClipIndex = 0;
+		activeSlotIndex = 0;
 		isPlaying = false;
 	});
 
@@ -962,117 +965,127 @@
 
 			{#key activeTabIndex}
 				{#if isMultiSource && activeTab}
-					<!-- Multi-slot layout: one block per source track slot -->
-					{#each Array.from({ length: Math.max(activeTab.sourceTracks.length, 1) }, (_, si) => si) as slotIdx (slotIdx)}
-						<div class="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
-							{#if activeTab.sourceTracks.length > 1}
-								<div class="mb-3 text-xs font-bold tracking-widest text-zinc-500 uppercase">
-									Track {slotIdx + 1}
-								</div>
-							{/if}
-
-							{#each variantFields.filter((f) => f !== 'grouping') as field (field)}
-								{@const mode = data.fieldModes[field] as InputMode}
-								<div class="mb-4">
-									<label class="mb-1.5 block text-sm font-semibold text-zinc-400"
-										>{fieldLabel(field)}</label
-									>
-
-									{#if field === 'artist' && hasArtistCombobox}
-										{#each collabArtists[activeTabIndex]?.[slotIdx] ?? [''] as _, artistIdx}
-											<div class="mb-2 flex items-start gap-2">
-												<div class="min-w-0 flex-1">
-													<Combobox
-														name="artist_slot_{slotIdx}_{artistIdx}"
-														pool={data.pools['artist'] ?? []}
-														{teamHex}
-														bind:value={collabArtists[activeTabIndex][slotIdx][artistIdx]}
-													/>
-												</div>
-												{#if (collabArtists[activeTabIndex]?.[slotIdx]?.length ?? 0) > 1}
-													<button
-														type="button"
-														onclick={() => removeArtistSlot(activeTabIndex, slotIdx, artistIdx)}
-														class="mt-2 shrink-0 text-lg leading-none text-zinc-600 hover:text-red-400"
-														aria-label="Remove artist">−</button
-													>
-												{/if}
-											</div>
-										{/each}
-										{#if (collabArtists[activeTabIndex]?.[slotIdx]?.length ?? 0) < 3}
-											<button
-												type="button"
-												onclick={() => addArtistSlot(activeTabIndex, slotIdx)}
-												class="mt-1 text-xs font-semibold underline underline-offset-2"
-												style="color: {teamHex};">+ Add collab artist</button
-											>
-										{/if}
-									{:else if mode === 'combobox'}
-										<Combobox
-											name="{field}_{slotIdx}"
-											pool={data.pools[field] ?? []}
-											{teamHex}
-											bind:value={allDrafts[activeTabIndex][slotIdx].fieldValues[field]}
-										/>
-									{:else if mode === 'multiple_choice'}
-										<MultipleChoice
-											name="{field}_{slotIdx}"
-											options={data.multipleChoiceOptions[field] ?? []}
-											{teamHex}
-											bind:value={allDrafts[activeTabIndex][slotIdx].fieldValues[field]}
-										/>
-									{:else if mode === 'open_text'}
-										<OpenText
-											name="{field}_{slotIdx}"
-											{teamHex}
-											bind:value={allDrafts[activeTabIndex][slotIdx].fieldValues[field]}
-										/>
-									{:else if mode === 'slider'}
-										<YearInput
-											name="{field}_{slotIdx}"
-											mode="slider"
-											{teamHex}
-											bind:value={allYearValues[activeTabIndex][slotIdx]}
-										/>
-									{:else if mode === 'typeable_number'}
-										<YearInput
-											name="{field}_{slotIdx}"
-											mode="typeable_number"
-											{teamHex}
-											bind:value={allYearValues[activeTabIndex][slotIdx]}
-										/>
-									{/if}
-								</div>
+					<!-- Answer slot tabs (one per source track: mashup + fragments) -->
+					{#if activeTab.sourceTracks.length > 1}
+						<div class="mb-4 flex gap-1 overflow-x-auto pb-1">
+							{#each Array.from({ length: activeTab.sourceTracks.length }, (_, i) => i) as si}
+								<button
+									type="button"
+									onclick={() => (activeSlotIndex = si)}
+									class="shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors {activeSlotIndex ===
+									si
+										? 'text-white'
+										: 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}"
+									style={activeSlotIndex === si ? `background-color: ${teamHex};` : ''}
+								>
+									{si + 1}
+								</button>
 							{/each}
-
-							<!-- Fragment grouping chips -->
-							{#if hasGrouping && activeTab}
-								<div>
-									<label class="mb-1.5 block text-sm font-semibold text-zinc-400"
-										>Which fragments belong to this track?</label
-									>
-									<div class="flex flex-wrap gap-2">
-										{#each activeTab.clips as clipItem, ci}
-											{@const fragNum = clipItem.fragmentNumber ?? ci + 1}
-											{@const selected = (
-												allDrafts[activeTabIndex]?.[slotIdx]?.fragments ?? []
-											).includes(fragNum)}
-											<button
-												type="button"
-												onclick={() => toggleFragment(activeTabIndex, slotIdx, fragNum)}
-												class="rounded-full px-3 py-1 text-sm font-bold transition-colors"
-												style={selected
-													? `background-color: ${teamHex}; color: white;`
-													: 'background-color: #27272a; color: #a1a1aa;'}
-											>
-												{fragNum}
-											</button>
-										{/each}
-									</div>
-								</div>
-							{/if}
 						</div>
-					{/each}
+					{/if}
+					{@const slotIdx = Math.min(activeSlotIndex, Math.max(activeTab.sourceTracks.length, 1) - 1)}
+					<div class="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+						{#each variantFields.filter((f) => f !== 'grouping') as field (field)}
+							{@const mode = data.fieldModes[field] as InputMode}
+							<div class="mb-4">
+								<label class="mb-1.5 block text-sm font-semibold text-zinc-400"
+									>{fieldLabel(field)}</label
+								>
+
+								{#if field === 'artist' && hasArtistCombobox}
+									{#each collabArtists[activeTabIndex]?.[slotIdx] ?? [''] as _, artistIdx}
+										<div class="mb-2 flex items-start gap-2">
+											<div class="min-w-0 flex-1">
+												<Combobox
+													name="artist_slot_{slotIdx}_{artistIdx}"
+													pool={data.pools['artist'] ?? []}
+													{teamHex}
+													bind:value={collabArtists[activeTabIndex][slotIdx][artistIdx]}
+												/>
+											</div>
+											{#if (collabArtists[activeTabIndex]?.[slotIdx]?.length ?? 0) > 1}
+												<button
+													type="button"
+													onclick={() => removeArtistSlot(activeTabIndex, slotIdx, artistIdx)}
+													class="mt-2 shrink-0 text-lg leading-none text-zinc-600 hover:text-red-400"
+													aria-label="Remove artist">−</button
+												>
+											{/if}
+										</div>
+									{/each}
+									{#if (collabArtists[activeTabIndex]?.[slotIdx]?.length ?? 0) < 3}
+										<button
+											type="button"
+											onclick={() => addArtistSlot(activeTabIndex, slotIdx)}
+											class="mt-1 text-xs font-semibold underline underline-offset-2"
+											style="color: {teamHex};">+ Add collab artist</button
+										>
+									{/if}
+								{:else if mode === 'combobox'}
+									<Combobox
+										name="{field}_{slotIdx}"
+										pool={data.pools[field] ?? []}
+										{teamHex}
+										bind:value={allDrafts[activeTabIndex][slotIdx].fieldValues[field]}
+									/>
+								{:else if mode === 'multiple_choice'}
+									<MultipleChoice
+										name="{field}_{slotIdx}"
+										options={data.multipleChoiceOptions[field] ?? []}
+										{teamHex}
+										bind:value={allDrafts[activeTabIndex][slotIdx].fieldValues[field]}
+									/>
+								{:else if mode === 'open_text'}
+									<OpenText
+										name="{field}_{slotIdx}"
+										{teamHex}
+										bind:value={allDrafts[activeTabIndex][slotIdx].fieldValues[field]}
+									/>
+								{:else if mode === 'slider'}
+									<YearInput
+										name="{field}_{slotIdx}"
+										mode="slider"
+										{teamHex}
+										bind:value={allYearValues[activeTabIndex][slotIdx]}
+									/>
+								{:else if mode === 'typeable_number'}
+									<YearInput
+										name="{field}_{slotIdx}"
+										mode="typeable_number"
+										{teamHex}
+										bind:value={allYearValues[activeTabIndex][slotIdx]}
+									/>
+								{/if}
+							</div>
+						{/each}
+
+						<!-- Fragment grouping chips -->
+						{#if hasGrouping && activeTab}
+							<div>
+								<label class="mb-1.5 block text-sm font-semibold text-zinc-400"
+									>Which fragments belong to this track?</label
+								>
+								<div class="flex flex-wrap gap-2">
+									{#each activeTab.clips as clipItem, ci}
+										{@const fragNum = clipItem.fragmentNumber ?? ci + 1}
+										{@const selected = (
+											allDrafts[activeTabIndex]?.[slotIdx]?.fragments ?? []
+										).includes(fragNum)}
+										<button
+											type="button"
+											onclick={() => toggleFragment(activeTabIndex, slotIdx, fragNum)}
+											class="rounded-full px-3 py-1 text-sm font-bold transition-colors"
+											style={selected
+												? `background-color: ${teamHex}; color: white;`
+												: 'background-color: #27272a; color: #a1a1aa;'}
+										>
+											{fragNum}
+										</button>
+									{/each}
+								</div>
+							</div>
+						{/if}
+					</div>
 				{:else}
 					<!-- Single-slot layout (standard / anthem / label) -->
 					{#each variantFields as field (field)}
