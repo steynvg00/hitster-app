@@ -109,7 +109,12 @@
 	<!-- ── Meta form ── -->
 	<section class="mb-8 rounded-xl border border-zinc-800 bg-zinc-900 p-5">
 		<h2 class="mb-4 text-sm font-bold tracking-widest text-amber-400 uppercase">Details</h2>
-		<form method="POST" action="?/updateMeta" use:enhance class="space-y-3">
+		<form
+			method="POST"
+			action="?/updateMeta"
+			use:enhance={() => async ({ update }) => update({ reset: false })}
+			class="space-y-3"
+		>
 			<div class="grid grid-cols-2 gap-3">
 				<div>
 					<label class="mb-1 block text-xs text-zinc-400">Title</label>
