@@ -12,6 +12,8 @@
 	import Waveform from '$lib/components/ui/Waveform.svelte';
 	import BonusTracker from '$lib/components/game/BonusTracker.svelte';
 	import TutorialOverlay from '$lib/components/game/TutorialOverlay.svelte';
+	import HeldPowerups from '$lib/components/game/HeldPowerups.svelte';
+	import PowerupRevealModal from '$lib/components/game/PowerupRevealModal.svelte';
 	import { getTypeIcon, getTypeColor } from '$lib/variants';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -312,6 +314,18 @@
 		f?.submitted ? (f.result as ChallengeResult) : (data.priorResult ?? null)
 	);
 
+	// ── Powerup reveal modal ──────────────────────────────────────────────────
+	type EarnedPowerup = { teamPowerupId: string; type: { id: string; name: string; icon: string | null; description: string | null; holdable: boolean; immediate_use: boolean } };
+	let showPowerupModal = $state(false);
+	let currentEarnedPowerup = $state<EarnedPowerup | null>(null);
+
+	$effect(() => {
+		if (f?.earnedPowerup && f.earnedPowerup.teamPowerupId && f.earnedPowerup.type) {
+			currentEarnedPowerup = f.earnedPowerup as EarnedPowerup;
+			showPowerupModal = true;
+		}
+	});
+
 	// ── Validation ────────────────────────────────────────────────────────────
 	const canSubmit = $derived(!submitting && !result);
 	const formError = $derived<string | null>(f?.formError ?? null);
@@ -451,6 +465,14 @@
 		tutorials={tutorialEntry}
 		onclose={() => (showTutorial = false)}
 		primaryLabel="Start"
+	/>
+{/if}
+
+{#if showPowerupModal && currentEarnedPowerup}
+	<PowerupRevealModal
+		teamPowerupId={currentEarnedPowerup.teamPowerupId}
+		type={currentEarnedPowerup.type}
+		onclose={() => { showPowerupModal = false; currentEarnedPowerup = null; }}
 	/>
 {/if}
 
@@ -778,7 +800,7 @@
 {:else}
 	<!-- ── Challenge form ─────────────────────────────────────────────────────── -->
 	<div class="mx-auto min-h-screen max-w-lg p-4">
-		<div class="flex items-center justify-between pt-4 pb-6">
+		<div class="flex items-center justify-between pt-4 pb-3">
 			<span
 				class="rounded-full px-3 py-1 text-xs font-bold tracking-widest text-white uppercase"
 				style="background-color: {teamHex};">{data.team.display_name}</span
@@ -793,6 +815,16 @@
 				>
 			{/if}
 		</div>
+
+		{#if data.activeSetId && data.heldPowerups}
+			<div class="pb-3">
+				<HeldPowerups
+					teamId={data.team.id}
+					setId={data.activeSetId}
+					powerups={data.heldPowerups}
+				/>
+			</div>
+		{/if}
 
 		<div class="mb-4 flex items-start justify-between gap-3">
 			<h1 class="text-2xl font-black">{data.challenge.title}</h1>

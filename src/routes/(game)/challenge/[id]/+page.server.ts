@@ -417,6 +417,29 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		}
 	}
 
+	// Held powerups for this team in the active set
+	let heldPowerups: Array<{
+		id: string;
+		powerup_type_id: string;
+		granted_at: string;
+		type: { id: string; name: string; icon: string | null; description: string | null; holdable: boolean; immediate_use: boolean };
+	}> = [];
+	if (activeSetId && locals.teamId) {
+		const { data: hpRows } = await admin
+			.from('team_powerups')
+			.select('id, powerup_type_id, granted_at, powerup_types(id, name, icon, description, holdable, immediate_use)')
+			.eq('team_id', locals.teamId)
+			.eq('set_id', activeSetId)
+			.eq('status', 'held')
+			.order('granted_at');
+		heldPowerups = (hpRows ?? []).map((r) => ({
+			id: r.id,
+			powerup_type_id: r.powerup_type_id,
+			granted_at: r.granted_at ?? '',
+			type: (r as unknown as { powerup_types: { id: string; name: string; icon: string | null; description: string | null; holdable: boolean; immediate_use: boolean } }).powerup_types
+		}));
+	}
+
 	return {
 		challenge,
 		tabs: tabList,
@@ -433,7 +456,8 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		activeSetRecapState,
 		showHint,
 		hintUsed,
-		tutorialText
+		tutorialText,
+		heldPowerups
 	};
 };
 
