@@ -15,7 +15,6 @@ type NfcTagPurpose =
 	| 'team_identity'
 	| 'team_entry'
 	| 'challenge'
-	| 'randomizer'
 	| 'hint'
 	| 'challenge_unlock';
 type SubmissionStatus =
@@ -446,7 +445,7 @@ export type Database = {
 					recap_reveal_index: number;
 					scores_hidden: boolean;
 					nfc_lock_enabled: boolean;
-					randomizer_enabled: boolean;
+					team_selection_mode: 'random' | 'selectable';
 					last_results: Json | null;
 					powerups_enabled: boolean;
 					powerup_mode: 'threshold' | 'token_shop';
@@ -473,7 +472,7 @@ export type Database = {
 					recap_reveal_index?: number;
 					scores_hidden?: boolean;
 					nfc_lock_enabled?: boolean;
-					randomizer_enabled?: boolean;
+					team_selection_mode?: 'random' | 'selectable';
 					last_results?: Json | null;
 					powerups_enabled?: boolean;
 					powerup_mode?: 'threshold' | 'token_shop';
@@ -500,7 +499,7 @@ export type Database = {
 					recap_reveal_index?: number;
 					scores_hidden?: boolean;
 					nfc_lock_enabled?: boolean;
-					randomizer_enabled?: boolean;
+					team_selection_mode?: 'random' | 'selectable';
 					last_results?: Json | null;
 					powerups_enabled?: boolean;
 					powerup_mode?: 'threshold' | 'token_shop';

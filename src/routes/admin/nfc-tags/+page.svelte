@@ -5,7 +5,6 @@
 	let { data }: { data: PageData } = $props();
 
 	const PURPOSE_LABEL: Record<string, string> = {
-		randomizer: 'Randomizer',
 		challenge: 'Challenge',
 		hint: 'Hint',
 		challenge_unlock: 'NFC Unlock',
@@ -14,14 +13,6 @@
 	};
 
 	function boundResource(tag: (typeof data.tags)[0]): { label: string; href: string | null } {
-		if (tag.purpose === 'randomizer') {
-			if (tag.set_id)
-				return {
-					label: `Gameset: ${tag.set_name ?? tag.set_id}`,
-					href: `/admin/sets/${tag.set_id}`
-				};
-			return { label: '(orphan — no set)', href: null };
-		}
 		if (
 			tag.purpose === 'challenge' ||
 			tag.purpose === 'hint' ||
@@ -85,15 +76,13 @@
 							<td class="px-4 py-3">
 								<span
 									class="rounded-full px-2 py-0.5 text-xs font-semibold
-									{tag.purpose === 'randomizer'
-										? 'bg-amber-900/40 text-amber-400'
-										: tag.purpose === 'challenge'
-											? 'bg-blue-900/40 text-blue-400'
-											: tag.purpose === 'hint'
-												? 'bg-purple-900/40 text-purple-400'
-												: tag.purpose === 'challenge_unlock'
-													? 'bg-teal-900/40 text-teal-400'
-													: 'bg-zinc-700 text-zinc-300'}"
+									{tag.purpose === 'challenge'
+										? 'bg-blue-900/40 text-blue-400'
+										: tag.purpose === 'hint'
+											? 'bg-purple-900/40 text-purple-400'
+											: tag.purpose === 'challenge_unlock'
+												? 'bg-teal-900/40 text-teal-400'
+												: 'bg-zinc-700 text-zinc-300'}"
 								>
 									{PURPOSE_LABEL[tag.purpose] ?? tag.purpose}
 								</span>
