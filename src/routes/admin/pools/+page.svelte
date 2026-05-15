@@ -89,7 +89,15 @@
 			{:else}
 				<div class="divide-y divide-zinc-800">
 					{#each data.entries as entry (entry.id)}
-						<div class="flex items-center gap-3 px-4 py-2.5">
+						<div
+							class="flex items-center gap-3 px-4 py-2.5 {editingId !== entry.id
+								? 'cursor-pointer hover:bg-zinc-800/50'
+								: ''}"
+							onclick={() => { if (editingId !== entry.id) editingId = entry.id; }}
+							role="button"
+							tabindex="0"
+							onkeydown={(e) => { if (e.key === 'Enter' && editingId !== entry.id) editingId = entry.id; }}
+						>
 							{#if editingId === entry.id}
 								<form method="POST" action="?/update" use:enhance class="flex flex-1 gap-2">
 									<input type="hidden" name="pool" value={data.active} />
@@ -100,10 +108,10 @@
 										required
 										class="input-field flex-1 text-sm"
 									/>
-									<button type="submit" class="btn-primary text-xs">Save</button>
+									<button type="submit" class="btn-primary text-xs" onclick={(e) => e.stopPropagation()}>Save</button>
 									<button
 										type="button"
-										onclick={() => (editingId = null)}
+										onclick={(e) => { e.stopPropagation(); editingId = null; }}
 										class="btn-ghost text-xs"
 									>
 										Cancel
@@ -112,7 +120,7 @@
 							{:else}
 								<span class="flex-1 text-sm text-zinc-200">{entry.name}</span>
 								<button
-									onclick={() => (editingId = entry.id)}
+									onclick={(e) => { e.stopPropagation(); editingId = entry.id; }}
 									class="text-xs text-zinc-500 transition-colors hover:text-zinc-300"
 								>
 									Edit
@@ -123,6 +131,7 @@
 									<button
 										type="submit"
 										onclick={(e) => {
+											e.stopPropagation();
 											if (!confirm(`Remove "${entry.name}"?`)) e.preventDefault();
 										}}
 										class="text-xs text-red-700 transition-colors hover:text-red-400"

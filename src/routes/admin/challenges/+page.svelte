@@ -141,7 +141,11 @@
 		<div class="space-y-2">
 			{#each data.challenges as challenge (challenge.id)}
 				<div
-					class="flex items-center gap-4 rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 transition-colors hover:border-zinc-700"
+					role="button"
+					tabindex="0"
+					onclick={() => goto(`/admin/challenges/${challenge.id}`)}
+					onkeydown={(e) => e.key === 'Enter' && goto(`/admin/challenges/${challenge.id}`)}
+					class="flex cursor-pointer items-center gap-4 rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 transition-colors hover:border-zinc-700 hover:bg-zinc-800/50"
 				>
 					<div
 						class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg {getTypeColor(
@@ -183,9 +187,10 @@
 
 					<a
 						href="/admin/challenges/{challenge.id}"
-						class="shrink-0 text-sm font-medium text-amber-400 transition-colors hover:text-amber-300"
+						onclick={(e) => e.stopPropagation()}
+						class="shrink-0 rounded px-2 py-1 text-xs font-medium text-amber-400 transition-colors hover:bg-zinc-800 hover:text-amber-300"
 					>
-						Edit →
+						Edit
 					</a>
 
 					<form method="POST" action="?/delete" use:enhance>
@@ -193,6 +198,7 @@
 						<button
 							type="submit"
 							onclick={(e) => {
+								e.stopPropagation();
 								if (!confirm(`Delete "${challenge.title}"?`)) e.preventDefault();
 							}}
 							class="rounded px-2 py-1 text-sm text-red-700 transition-colors hover:bg-zinc-800 hover:text-red-400"

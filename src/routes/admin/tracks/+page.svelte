@@ -677,14 +677,16 @@
 		{#each data.tracks as track (track.id)}
 			<div class="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
 				<!-- Track header row -->
-				<div class="flex items-center gap-3 px-4 py-3">
-					<button
-						onclick={() => toggleExpand(track.id)}
-						class="w-5 shrink-0 text-center text-zinc-500 transition-colors hover:text-zinc-300"
-						title="Expand clips"
-					>
+				<div
+					class="flex cursor-pointer items-center gap-3 px-4 py-3 transition-colors hover:bg-zinc-800/50"
+					onclick={() => editingTrack !== track.id && toggleExpand(track.id)}
+					role="button"
+					tabindex="0"
+					onkeydown={(e) => e.key === 'Enter' && editingTrack !== track.id && toggleExpand(track.id)}
+				>
+					<span class="w-5 shrink-0 text-center text-zinc-500">
 						{expandedTrack === track.id ? '▾' : '▸'}
-					</button>
+					</span>
 
 					{#if editingTrack === track.id}
 						<form
@@ -756,7 +758,7 @@
 
 					{#if editingTrack !== track.id}
 						<button
-							onclick={() => (editingTrack = track.id)}
+							onclick={(e) => { e.stopPropagation(); editingTrack = track.id; }}
 							class="rounded px-2 py-1 text-xs text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
 						>
 							Edit
@@ -766,6 +768,7 @@
 							<button
 								type="submit"
 								onclick={(e) => {
+									e.stopPropagation();
 									if (!confirm(`Delete "${track.title}" and all its clips?`)) e.preventDefault();
 								}}
 								class="rounded px-2 py-1 text-xs text-red-600 transition-colors hover:bg-zinc-800 hover:text-red-400"
