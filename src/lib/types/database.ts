@@ -870,6 +870,33 @@ export type Database = {
 				};
 				Relationships: [];
 			};
+			effect_presets: {
+				Row: {
+					id: string;
+					name: string;
+					effects: Json;
+					is_builtin: boolean;
+					created_by: string | null;
+					created_at: string;
+				};
+				Insert: {
+					id?: string;
+					name: string;
+					effects: Json;
+					is_builtin?: boolean;
+					created_by?: string | null;
+					created_at?: string;
+				};
+				Update: {
+					id?: string;
+					name?: string;
+					effects?: Json;
+					is_builtin?: boolean;
+					created_by?: string | null;
+					created_at?: string;
+				};
+				Relationships: [];
+			};
 		};
 		Views: { [_ in never]: never };
 		Functions: { [_ in never]: never };
@@ -908,3 +935,4 @@ export type AnswerPoolVocalSourceRow =
 export type PowerupRow = Database['public']['Tables']['powerups']['Row'];
 export type SetPowerupRow = Database['public']['Tables']['set_powerups']['Row'];
 export type PowerupUsageRow = Database['public']['Tables']['powerup_usages']['Row'];
+export type EffectPresetRow = Database['public']['Tables']['effect_presets']['Row'];

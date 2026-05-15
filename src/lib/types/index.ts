@@ -48,13 +48,34 @@ export interface Challenge {
 // ─── Effects chain config (stored as challenge_tabs.effects JSONB) ───────────
 
 export interface EffectsConfig {
-	pitch?: { enabled: boolean; semitones: number }; // -12 to +12
-	tempo?: { enabled: boolean; rate: number }; // 0.5 to 2.0
-	lowpass?: { enabled: boolean; cutoff_hz: number }; // 20 to 20000
-	highpass?: { enabled: boolean; cutoff_hz: number }; // 20 to 20000
-	bandpass?: { enabled: boolean; freq_hz: number; q: number };
-	phaser?: { enabled: boolean; rate_hz: number; depth: number }; // depth 0–1
-	flanger?: { enabled: boolean; rate_hz: number; depth: number };
+	pitch?: { enabled: boolean; semitones: number; window_size: number }; // semitones: -24 to +24
+	tempo?: { enabled: boolean; rate: number }; // 0.25 to 4.0
+	lowpass?: { enabled: boolean; cutoff_hz: number; q: number }; // 20 to 20000
+	highpass?: { enabled: boolean; cutoff_hz: number; q: number }; // 20 to 20000
+	bandpass?: { enabled: boolean; freq_hz: number; q: number; mod_rate_hz: number };
+	phaser?: {
+		enabled: boolean;
+		rate_hz: number;
+		depth: number;
+		stages: number;
+		feedback: number;
+		stereo_offset_deg: number;
+	};
+	flanger?: { enabled: boolean; rate_hz: number; depth: number; feedback: number };
+	bitcrusher?: { enabled: boolean; bits: number; sample_rate_reduction: number };
+	ring_mod?: { enabled: boolean; freq_hz: number; depth: number };
+	delay?: { enabled: boolean; time_ms: number; feedback: number; wet: number };
+	reverb?: { enabled: boolean; decay_s: number; pre_delay_ms: number; wet: number };
+	reverse?: { enabled: boolean };
+}
+
+export interface EffectPreset {
+	id: string;
+	name: string;
+	effects: EffectsConfig;
+	is_builtin: boolean;
+	created_by: string | null;
+	created_at: string;
 }
 
 // ─── Mashup library ──────────────────────────────────────────────────────────
