@@ -310,29 +310,7 @@
 	);
 
 	// ── Validation ────────────────────────────────────────────────────────────
-	const comboboxFields = $derived(
-		variantFields.filter((f: AnswerField) => data.fieldModes[f] === 'combobox')
-	);
-
-	const canSubmit = $derived(
-		!submitting &&
-			!result &&
-			(timerMs === null || timerMs > 0) &&
-			data.tabs.every((tab, ti) => {
-				const slotCount = Math.max(tab.sourceTracks.length, 1);
-				return Array.from({ length: slotCount }, (_, si) => {
-					const otherComboFields = comboboxFields.filter(
-						(ff: AnswerField) => !(ff === 'artist' && hasArtistCombobox)
-					);
-					const otherOk = otherComboFields.every(
-						(ff: AnswerField) => (allDrafts[ti]?.[si]?.fieldValues[ff] ?? '').length > 0
-					);
-					const artistOk =
-						!hasArtistCombobox || collabArtists[ti]?.[si]?.some((a) => a.trim().length > 0);
-					return otherOk && artistOk;
-				}).every(Boolean);
-			})
-	);
+	const canSubmit = $derived(!submitting && !result);
 	const formError = $derived<string | null>(f?.formError ?? null);
 	const reviewError = $derived<string | null>(f?.reviewError ?? null);
 
@@ -1181,10 +1159,6 @@
 			>
 				{submitting ? 'Submitting…' : 'Submit'}
 			</button>
-
-			{#if comboboxFields.length > 0 && !canSubmit && !submitting}
-				<p class="text-center text-xs text-zinc-600">Fill in all fields to enable submit</p>
-			{/if}
 		</form>
 	</div>
 {/if}
