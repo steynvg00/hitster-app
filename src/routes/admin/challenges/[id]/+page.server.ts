@@ -3,7 +3,7 @@ import type { PageServerLoad, Actions } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
 import { CHALLENGE_TYPES } from '$lib/variants';
 
-export const load: PageServerLoad = async ({ params }) => {
+export const load: PageServerLoad = async ({ params, locals }) => {
 	const db = createAdminClient();
 
 	const { data: challenge, error: cErr } = await db
@@ -72,6 +72,18 @@ export const load: PageServerLoad = async ({ params }) => {
 		};
 	});
 
+	const userPresets =
+		challenge.variant === 'effects'
+			? ((
+					await db
+						.from('effect_presets')
+						.select('*')
+						.eq('is_builtin', false)
+						.eq('created_by', locals.user?.id ?? '')
+						.order('created_at')
+				).data ?? [])
+			: [];
+
 	return {
 		challenge,
 		tabs: tabs ?? [],
@@ -86,7 +98,8 @@ export const load: PageServerLoad = async ({ params }) => {
 				? db.storage.from('audio').getPublicUrl(m.audio_storage_path).data.publicUrl
 				: ''
 		})),
-		mashupSources: mashupSourcesResult.data ?? []
+		mashupSources: mashupSourcesResult.data ?? [],
+		userPresets: userPresets ?? []
 	};
 };
 
@@ -580,5 +593,70 @@ export const actions: Actions = {
 		}
 
 		redirect(303, `/admin/challenges/${newChallenge.id}`);
+	},
+
+	// ── Effect preset management ────────────────────────────────────────────────
+
+	savePreset: async ({ request, locals }) => {
+		const db = createAdminClient();
+		const data = await request.formData();
+		const name = (data.get('name') as string)?.trim();
+		const effects_json = data.get('effects_json') as string;
+
+		if (!name) return fail(400, { error: 'Preset name is required' });
+		if (!locals.user?.id) return fail(401, { error: 'Not authenticated' });
+
+		let effects: unknown;
+		try {
+			effects = JSON.parse(effects_json);
+		} catch {
+			return fail(400, { error: 'Invalid effects JSON' });
+		}
+
+		const { error: e } = await db.from('effect_presets').insert({
+			name,
+			effects: effects as never,
+			is_builtin: false,
+			created_by: locals.user.id
+		});
+		if (e) return fail(500, { error: e.message });
+		return { success: true, action: 'savePreset' };
+	},
+
+	updatePreset: async ({ request, locals }) => {
+		const db = createAdminClient();
+		const data = await request.formData();
+		const preset_id = data.get('preset_id') as string;
+		const name = (data.get('name') as string)?.trim();
+
+		if (!preset_id) return fail(400, { error: 'Missing preset_id' });
+		if (!locals.user?.id) return fail(401, { error: 'Not authenticated' });
+		if (!name) return fail(400, { error: 'Name is required' });
+
+		const { error: e } = await db
+			.from('effect_presets')
+			.update({ name })
+			.eq('id', preset_id)
+			.eq('created_by', locals.user.id);
+		if (e) return fail(500, { error: e.message });
+		return { success: true, action: 'updatePreset' };
+	},
+
+	deletePreset: async ({ request, locals }) => {
+		const db = createAdminClient();
+		const data = await request.formData();
+		const preset_id = data.get('preset_id') as string;
+
+		if (!preset_id) return fail(400, { error: 'Missing preset_id' });
+		if (!locals.user?.id) return fail(401, { error: 'Not authenticated' });
+
+		const { error: e } = await db
+			.from('effect_presets')
+			.delete()
+			.eq('id', preset_id)
+			.eq('created_by', locals.user.id)
+			.eq('is_builtin', false);
+		if (e) return fail(500, { error: e.message });
+		return { success: true, action: 'deletePreset' };
 	}
 };

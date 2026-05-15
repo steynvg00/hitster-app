@@ -265,6 +265,7 @@
 				clips={data.clips}
 				{pointsConfig}
 				fieldModes={savedFieldModes}
+				userPresets={(data as unknown as { userPresets?: import('$lib/types/index.js').EffectPreset[] }).userPresets ?? []}
 			/>
 		{/if}
 	</div>
