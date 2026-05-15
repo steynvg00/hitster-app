@@ -146,7 +146,6 @@
 							<th class="px-4 py-3 text-left font-semibold text-zinc-400">Status</th>
 							<th class="px-4 py-3 text-right font-semibold text-zinc-400">Teams</th>
 							<th class="px-4 py-3 text-right font-semibold text-zinc-400">Challenges</th>
-							<th class="px-4 py-3 text-right font-semibold text-zinc-400">Cards</th>
 							<th class="px-4 py-3 text-right font-semibold text-zinc-400">Players</th>
 							<th class="px-4 py-3 text-right font-semibold text-zinc-400">Actions</th>
 						</tr>
@@ -201,7 +200,6 @@
 								</td>
 								<td class="px-4 py-3 text-right text-zinc-300">{s.team_count}</td>
 								<td class="px-4 py-3 text-right text-zinc-300">{s.challenge_count}</td>
-								<td class="px-4 py-3 text-right text-zinc-300">{s.card_count}</td>
 								<td class="px-4 py-3 text-right text-zinc-300">{s.player_count}</td>
 								<td class="px-4 py-3 text-right">
 									<div class="flex items-center justify-end gap-2">

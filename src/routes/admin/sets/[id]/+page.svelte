@@ -47,7 +47,7 @@
 						play_state?: string;
 						recap_state?: string;
 						nfc_lock_enabled?: boolean;
-						randomizer_enabled?: boolean;
+						team_selection_mode?: string;
 						status?: string;
 					};
 					const p = payload.new as GSUpdate;
@@ -55,7 +55,7 @@
 					if (p.recap_state) liveRecapState = p.recap_state;
 					// Sync toggle state so both fields update after form actions
 					if (p.nfc_lock_enabled !== undefined) nfcLockEnabled = p.nfc_lock_enabled;
-					if (p.randomizer_enabled !== undefined) randomizerEnabled = p.randomizer_enabled;
+					if (p.team_selection_mode) teamSelectionMode = p.team_selection_mode as typeof teamSelectionMode;
 				}
 			)
 			.subscribe();
@@ -86,7 +86,7 @@
 					filter: `set_id=eq.${data.gameSet.id}`
 				},
 				(payload) => {
-					// Fires when a player's set_id is SET to this set (join via randomizer or UI flow).
+					// Fires when a player's set_id is SET to this set (join via /sets/[id]/join).
 					// Players are inserted without set_id, so INSERT filter never matches — this catches joins.
 					const p = payload.new as { id?: string; set_id?: string | null; display_name?: string };
 					if (p.set_id === data.gameSet.id && p.id && !knownPlayerIds.has(p.id)) {
@@ -187,10 +187,22 @@
 
 	// ── Toggles ───────────────────────────────────────────────────────────────
 	let nfcLockEnabled = $state(data.gameSet.nfc_lock_enabled ?? false);
-	let randomizerEnabled = $state(data.gameSet.randomizer_enabled ?? false);
+	let teamSelectionMode = $state<'random' | 'selectable'>(
+		(data.gameSet.team_selection_mode as 'random' | 'selectable') ?? 'random'
+	);
 
-	// ── Randomizer card state ─────────────────────────────────────────────────
-	let newSlug = $state('');
+	// ── Join URL copy ─────────────────────────────────────────────────────────
+	let copiedJoinUrl = $state(false);
+	let copiedTimer: ReturnType<typeof setTimeout> | null = null;
+	function copyJoinUrl() {
+		const url = `${window.location.origin}/sets/${data.gameSet.id}/join`;
+		navigator.clipboard.writeText(url).then(() => {
+			copiedJoinUrl = true;
+			if (copiedTimer) clearTimeout(copiedTimer);
+			copiedTimer = setTimeout(() => (copiedJoinUrl = false), 2000);
+		});
+	}
+
 	let savingChallenges = $state(false);
 
 	// ── NFC slug blur-to-save ─────────────────────────────────────────────────
@@ -718,105 +730,75 @@
 			{/if}
 		</div>
 
-		<!-- Randomizer card toggle (bottom of console) -->
-		{#if isActive}
-			<div class="border-t border-zinc-800 px-5 py-4">
-				<div class="mb-3 flex items-center justify-between">
-					<span class="flex items-center text-sm font-semibold text-zinc-300">
-						Randomizer card
-						<HelpTooltip
-							text="Enables the team randomization NFC card flow for this set. Teams scan the card to be auto-assigned to a team."
-						/>
-					</span>
-					<form
-						method="POST"
-						action="?/toggleRandomizer"
-						use:enhance={() =>
-							async ({ update }) =>
-								update({ reset: false })}
-					>
-						<button
-							type="submit"
-							class="rounded-full px-3 py-1 text-xs font-semibold transition-colors
-								{randomizerEnabled
-								? 'bg-green-800/60 text-green-400 hover:bg-green-800'
-								: 'bg-zinc-800 text-zinc-500 hover:text-zinc-300'}"
-						>
-							{randomizerEnabled ? 'ON' : 'OFF'}
-						</button>
-					</form>
+		<!-- Join URL + team selection mode (always visible, always canonical join method) -->
+		<div class="space-y-4 border-t border-zinc-800 px-5 py-4">
+			<!-- Join URL -->
+			<div>
+				<div class="mb-1.5 flex items-center text-sm font-semibold text-zinc-300">
+					Join URL
+					<HelpTooltip
+						text="Share this URL with players to join this set. Encode it onto an NFC tag with any NFC writer for a physical scan option."
+					/>
 				</div>
+				<div class="flex items-center gap-2 rounded-lg bg-zinc-800/70 px-3 py-2">
+					<span class="flex-1 truncate font-mono text-xs text-zinc-400"
+						>/sets/{data.gameSet.id}/join</span
+					>
+					<button
+						type="button"
+						onclick={copyJoinUrl}
+						class="shrink-0 text-xs font-semibold transition-colors
+							{copiedJoinUrl ? 'text-green-400' : 'text-zinc-500 hover:text-zinc-300'}"
+					>
+						{copiedJoinUrl ? 'Copied ✓' : 'Copy link'}
+					</button>
+				</div>
+				<p class="mt-1 text-xs text-zinc-600">
+					Encode this URL onto an NFC tag with any NFC writer for a tap-to-join option.
+				</p>
+			</div>
 
-				{#if randomizerEnabled}
-					{#if data.cards.length > 0}
-						<div class="space-y-2">
-							{#each data.cards as card}
-								<div
-									class="flex items-center justify-between rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2"
-								>
-									<span class="font-mono text-sm text-zinc-300">{card.slug}</span>
-									<div class="flex items-center gap-2">
-										<button
-											type="button"
-											onclick={() => copyNfcUrl(card.slug)}
-											class="rounded px-2 py-0.5 text-xs font-semibold transition-colors
-												{copiedSlug === card.slug ? 'text-green-400' : 'text-zinc-500 hover:text-zinc-300'}"
-										>
-											{copiedSlug === card.slug ? 'Copied ✓' : 'Copy'}
-										</button>
-										<form method="POST" action="?/removeCard" use:enhance>
-											<input type="hidden" name="slug" value={card.slug} />
-											<button
-												type="submit"
-												class="rounded px-2 py-0.5 text-xs font-semibold text-zinc-500 transition-colors hover:bg-red-900/40 hover:text-red-400"
-											>
-												Remove
-											</button>
-										</form>
-									</div>
-								</div>
-							{/each}
-						</div>
-					{:else}
+			<!-- Team selection mode -->
+			<div>
+				<div class="mb-2 flex items-center text-sm font-semibold text-zinc-300">
+					Team selection
+					<HelpTooltip
+						text="Random assigns players to teams using snake order. Selectable lets players choose their team when they join."
+					/>
+				</div>
+				<div class="flex gap-2">
+					{#each [['random', 'Random'], ['selectable', 'Selectable']] as [val, label]}
 						<form
 							method="POST"
-							action="?/addCard"
-							use:enhance={({ formData: _fd }) =>
-								async ({ result, update }) => {
-									if (result.type !== 'failure') newSlug = '';
-									await update();
+							action="?/setTeamSelectionMode"
+							use:enhance={() =>
+								async ({ update }) => {
+									teamSelectionMode = val as typeof teamSelectionMode;
+									await update({ reset: false });
 								}}
-							class="flex gap-2"
 						>
-							<input
-								name="slug"
-								bind:value={newSlug}
-								class="admin-input flex-1"
-								placeholder="NFC tag slug, e.g. random-stage-1"
-								required
-							/>
-							<button
-								type="button"
-								disabled={!newSlug}
-								onclick={() => copyNfcUrl(newSlug)}
-								class="rounded-lg border border-zinc-700 px-3 py-2 text-sm font-semibold transition-colors
-									{copiedSlug === newSlug && newSlug
-									? 'border-green-800 text-green-400'
-									: 'text-zinc-400 hover:text-white disabled:cursor-not-allowed disabled:opacity-30'}"
-							>
-								{copiedSlug === newSlug && newSlug ? 'Copied ✓' : 'Copy'}
-							</button>
+							<input type="hidden" name="mode" value={val} />
 							<button
 								type="submit"
-								class="rounded-lg bg-zinc-700 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-zinc-600"
+								class="rounded-full px-3 py-1 text-xs font-semibold transition-colors
+									{teamSelectionMode === val
+									? 'bg-amber-500/20 text-amber-400 ring-1 ring-amber-500/40'
+									: 'bg-zinc-800 text-zinc-500 hover:text-zinc-300'}"
 							>
-								Add
+								{label}
 							</button>
 						</form>
+					{/each}
+				</div>
+				<p class="mt-1 text-xs text-zinc-600">
+					{#if teamSelectionMode === 'selectable'}
+						Players see a team picker and choose their own team.
+					{:else}
+						Players are snake-assigned to teams automatically.
 					{/if}
-				{/if}
+				</p>
 			</div>
-		{/if}
+		</div>
 	</section>
 
 	<!-- ── Last results panel ────────────────────────────────────────────────── -->
