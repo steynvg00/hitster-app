@@ -2,6 +2,7 @@ import { error, fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { createPublicClient, createAdminClient } from '$lib/server/supabase';
 import { isNfcUnlockRequired } from '$lib/server/nfc';
+import { maybeAwardPowerup, resolvePowerupChoice } from '$lib/server/powerups';
 import type {
 	AnswerField,
 	InputMode,
@@ -599,6 +600,7 @@ export const actions: Actions = {
 			: null;
 
 		let challengeMultiplier = 1;
+		let playerSetId: string | null = null;
 		if (locals.playerId) {
 			const { data: playerRow } = await admin
 				.from('players')
@@ -606,6 +608,7 @@ export const actions: Actions = {
 				.eq('id', locals.playerId)
 				.maybeSingle();
 			if (playerRow?.set_id) {
+				playerSetId = playerRow.set_id;
 				const { data: sc } = await admin
 					.from('set_challenges')
 					.select('challenge_multiplier')
@@ -702,8 +705,28 @@ export const actions: Actions = {
 				.eq('id', teamId)
 		]);
 
+		// Powerup earning: score above threshold → award a random powerup
+		let earnedPowerup = null;
+		if (playerSetId) {
+			const maxTotal = scoredResult.maxTotal ?? 0;
+			const scorePercent = maxTotal > 0 ? (scoredResult.total / maxTotal) * 100 : 0;
+			earnedPowerup = await maybeAwardPowerup(admin, teamId, playerSetId, params.id, scorePercent);
+		}
+
 		const result: ChallengeResult = { ...scoredResult, submissionId: sub.id, isFinal: true };
-		return { submitted: true, result };
+		return { submitted: true, result, earnedPowerup };
+	},
+
+	resolveEarnedPowerup: async ({ request }) => {
+		const admin = createAdminClient();
+		const fd = await request.formData();
+		const teamPowerupId = (fd.get('team_powerup_id') as string | null)?.trim();
+		const choice = fd.get('choice') as 'store' | 'lose' | null;
+		if (!teamPowerupId || (choice !== 'store' && choice !== 'lose'))
+			return fail(400, { error: 'Invalid request' });
+		const res = await resolvePowerupChoice(admin, teamPowerupId, choice);
+		if (!res.ok) return fail(400, { error: res.error });
+		return { resolved: true };
 	},
 
 	startChallenge: async ({ params, locals }) => {
