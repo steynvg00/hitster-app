@@ -66,11 +66,6 @@ export const GET: RequestHandler = async ({ params, cookies }) => {
 		redirect(302, `/challenge/${nfcTag.challenge_id}`);
 	}
 
-	// ── Set randomizer card ────────────────────────────────────────────────────
-	if (nfcTag.purpose === 'randomizer' && nfcTag.set_id) {
-		redirect(302, `/nfc/randomize/${nfcTag.set_id}`);
-	}
-
 	// ── Hint card ──────────────────────────────────────────────────────────────
 	if (nfcTag.purpose === 'hint' && nfcTag.challenge_id) {
 		redirect(302, `/nfc/hint/${nfcTag.challenge_id}`);

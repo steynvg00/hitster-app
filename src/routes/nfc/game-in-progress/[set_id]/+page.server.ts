@@ -12,9 +12,9 @@ export const load: PageServerLoad = async ({ params }) => {
 
 	if (!gameSet || gameSet.status !== 'active') redirect(302, '/');
 
-	// If set has moved back to joining (e.g. host reset), let them join normally
+	// If set has moved back to joining, let them join
 	if (gameSet.play_state === 'joining') {
-		redirect(302, `/nfc/randomize/${params.set_id}`);
+		redirect(302, `/sets/${params.set_id}/join`);
 	}
 
 	return { setName: gameSet.name };
