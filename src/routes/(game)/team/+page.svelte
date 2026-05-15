@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { supabaseBrowser } from '$lib/supabase-browser';
 	import TutorialOverlay from '$lib/components/game/TutorialOverlay.svelte';
+	import HeldPowerups from '$lib/components/game/HeldPowerups.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -272,6 +273,15 @@
 				<span class="font-bold text-white">{data.setCompletedCount}</span>
 				/ {data.setTotalCount} challenges done
 			</div>
+		{/if}
+
+		<!-- Held powerups -->
+		{#if data.playerSetId && data.heldPowerups}
+			<HeldPowerups
+				teamId={data.team.id}
+				setId={data.playerSetId}
+				powerups={data.heldPowerups}
+			/>
 		{/if}
 
 		<!-- Action buttons row -->
