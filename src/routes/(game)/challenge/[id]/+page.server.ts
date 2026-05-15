@@ -115,12 +115,15 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 	}
 
 	// ── Clip URLs ─────────────────────────────────────────────────────────────
+	// For 'effects' variant, apply challenge-level EffectsConfig (from points_config.effects).
+	// For all other variants, fall back to per-clip legacy effects { pitch, tempo }.
+	const challengeEffects = variant === 'effects' ? (pcRaw.effects ?? {}) : null;
 	const trackList = challengeTracks.map((ct) => {
 		const clip = clipMap.get(ct.clip_id)!;
 		const clipUrl = clip.storage_path.startsWith('http')
 			? clip.storage_path
 			: supabase.storage.from('clips').getPublicUrl(clip.storage_path).data.publicUrl;
-		const effects = (clip.effects as { pitch?: number; tempo?: number } | null) ?? {};
+		const effects = challengeEffects ?? (clip.effects as { pitch?: number; tempo?: number } | null) ?? {};
 		return { id: ct.id, trackId: ct.track_id, sortOrder: ct.sort_order, clipUrl, effects };
 	});
 
