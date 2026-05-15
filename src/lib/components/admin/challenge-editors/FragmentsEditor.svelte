@@ -70,6 +70,27 @@
 	// Per-tab track selection for the two-step add-fragment picker (local UI state only)
 	let selectedAddTrack = $state<Record<string, string>>({});
 
+	// Audio preview — only one clip plays at a time
+	let audioEls = $state<Record<string, HTMLAudioElement>>({});
+	let playingClipId = $state<string | null>(null);
+
+	function playPreview(clipId: string) {
+		// Stop whatever is currently playing
+		if (playingClipId && playingClipId !== clipId && audioEls[playingClipId]) {
+			audioEls[playingClipId].pause();
+			audioEls[playingClipId].currentTime = 0;
+		}
+		const el = audioEls[clipId];
+		if (!el) return;
+		if (el.paused) {
+			el.play();
+			playingClipId = clipId;
+		} else {
+			el.pause();
+			el.currentTime = 0;
+			playingClipId = null;
+		}
+	}
 
 </script>
 
@@ -141,7 +162,29 @@
 										<span class="flex-1 text-zinc-300">
 											{parentTrack ? `${parentTrack.artist} — ${parentTrack.title}` : 'unknown'}
 											{c ? `[${c.type}]` : ''}
+											{#if c?.duration}
+												<span class="ml-1 text-zinc-500">{formatDur(c.duration)}</span>
+											{/if}
 										</span>
+										{#if c?.storage_path}
+											<button
+												type="button"
+												onclick={() => playPreview(tc.clip_id)}
+												class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold transition-colors
+													{playingClipId === tc.clip_id
+													? 'bg-amber-400 text-zinc-950'
+													: 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'}"
+												title={playingClipId === tc.clip_id ? 'Stop' : 'Play'}
+											>
+												{playingClipId === tc.clip_id ? '■' : '▶'}
+											</button>
+											<audio
+												bind:this={audioEls[tc.clip_id]}
+												src={c.storage_path}
+												crossorigin="anonymous"
+												onended={() => (playingClipId = null)}
+											></audio>
+										{/if}
 										<form method="POST" action="?/removeTabClip" use:enhance class="inline">
 											<input type="hidden" name="tc_id" value={tc.id} />
 											<button type="submit" class="ml-1 text-red-700 hover:text-red-400">✕</button>
