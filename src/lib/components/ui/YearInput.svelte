@@ -12,9 +12,9 @@
 		name,
 		mode = 'slider',
 		teamHex = '#ef4444',
-		min = 1950,
-		max = 2025,
-		value = $bindable(1990)
+		min = 2000,
+		max = 2026,
+		value = $bindable(2013)
 	}: Props = $props();
 </script>
 

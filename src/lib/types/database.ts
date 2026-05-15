@@ -451,6 +451,8 @@ export type Database = {
 					powerup_mode: 'threshold' | 'token_shop';
 					powerup_config: Json;
 					preset_slug: string | null;
+					crown_holder_team_id: string | null;
+					hard_gaan_window_minutes: number;
 					created_by: string | null;
 					created_at: string;
 				};
@@ -478,6 +480,8 @@ export type Database = {
 					powerup_mode?: 'threshold' | 'token_shop';
 					powerup_config?: Json;
 					preset_slug?: string | null;
+					crown_holder_team_id?: string | null;
+					hard_gaan_window_minutes?: number;
 					created_by?: string | null;
 					created_at?: string;
 				};
@@ -505,6 +509,8 @@ export type Database = {
 					powerup_mode?: 'threshold' | 'token_shop';
 					powerup_config?: Json;
 					preset_slug?: string | null;
+					crown_holder_team_id?: string | null;
+					hard_gaan_window_minutes?: number;
 					created_by?: string | null;
 					created_at?: string;
 				};
@@ -894,6 +900,123 @@ export type Database = {
 					is_builtin?: boolean;
 					created_by?: string | null;
 					created_at?: string;
+				};
+				Relationships: [];
+			};
+			powerup_types: {
+				Row: {
+					id: string;
+					name: string;
+					category: 'defensive' | 'self' | 'information' | 'offensive' | 'social' | 'punishment' | 'wildcard';
+					description: string | null;
+					immediate_use: boolean;
+					holdable: boolean;
+					default_min_score_pct: number;
+					default_max_score_pct: number;
+					sort_order: number;
+					icon: string | null;
+					enabled_by_default: boolean;
+					created_at: string;
+				};
+				Insert: {
+					id: string;
+					name: string;
+					category: 'defensive' | 'self' | 'information' | 'offensive' | 'social' | 'punishment' | 'wildcard';
+					description?: string | null;
+					immediate_use?: boolean;
+					holdable?: boolean;
+					default_min_score_pct?: number;
+					default_max_score_pct?: number;
+					sort_order?: number;
+					icon?: string | null;
+					enabled_by_default?: boolean;
+					created_at?: string;
+				};
+				Update: {
+					id?: string;
+					name?: string;
+					category?: 'defensive' | 'self' | 'information' | 'offensive' | 'social' | 'punishment' | 'wildcard';
+					description?: string | null;
+					immediate_use?: boolean;
+					holdable?: boolean;
+					default_min_score_pct?: number;
+					default_max_score_pct?: number;
+					sort_order?: number;
+					icon?: string | null;
+					enabled_by_default?: boolean;
+					created_at?: string;
+				};
+				Relationships: [];
+			};
+			team_powerups: {
+				Row: {
+					id: string;
+					team_id: string;
+					set_id: string | null;
+					powerup_type_id: string;
+					granted_at: string;
+					granted_from_challenge_id: string | null;
+					used_at: string | null;
+					status: 'pending' | 'held' | 'used' | 'lost';
+					payload: Json;
+				};
+				Insert: {
+					id?: string;
+					team_id: string;
+					set_id?: string | null;
+					powerup_type_id: string;
+					granted_at?: string;
+					granted_from_challenge_id?: string | null;
+					used_at?: string | null;
+					status?: 'pending' | 'held' | 'used' | 'lost';
+					payload?: Json;
+				};
+				Update: {
+					id?: string;
+					team_id?: string;
+					set_id?: string | null;
+					powerup_type_id?: string;
+					granted_at?: string;
+					granted_from_challenge_id?: string | null;
+					used_at?: string | null;
+					status?: 'pending' | 'held' | 'used' | 'lost';
+					payload?: Json;
+				};
+				Relationships: [];
+			};
+			team_effects: {
+				Row: {
+					id: string;
+					team_id: string;
+					set_id: string | null;
+					effect_type: string;
+					payload: Json;
+					activated_at: string;
+					expires_at: string | null;
+					consumed_at: string | null;
+					consumed_challenge_id: string | null;
+				};
+				Insert: {
+					id?: string;
+					team_id: string;
+					set_id?: string | null;
+					effect_type: string;
+					payload?: Json;
+					activated_at?: string;
+					expires_at?: string | null;
+					consumed_at?: string | null;
+					consumed_challenge_id?: string | null;
+				};
+				Update: {
+					id?: string;
+					team_id?: string;
+					set_id?: string | null;
+					effect_type?: string;
+					payload?: Json;
+					activated_at?: string;
+					expires_at?: string | null;
+					consumed_at?: string | null;
+					consumed_challenge_id?: string | null;
 				};
 				Relationships: [];
 			};

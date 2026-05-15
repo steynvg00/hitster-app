@@ -202,6 +202,29 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		}
 	}
 
+	// Held powerups for this team in the active set
+	let heldPowerups: Array<{
+		id: string;
+		powerup_type_id: string;
+		granted_at: string;
+		type: { id: string; name: string; icon: string | null; description: string | null; holdable: boolean; immediate_use: boolean };
+	}> = [];
+	if (playerSetId) {
+		const { data: hpRows } = await admin
+			.from('team_powerups')
+			.select('id, powerup_type_id, granted_at, powerup_types(id, name, icon, description, holdable, immediate_use)')
+			.eq('team_id', locals.teamId)
+			.eq('set_id', playerSetId)
+			.eq('status', 'held')
+			.order('granted_at');
+		heldPowerups = (hpRows ?? []).map((r) => ({
+			id: r.id,
+			powerup_type_id: r.powerup_type_id,
+			granted_at: r.granted_at ?? '',
+			type: (r as unknown as { powerup_types: { id: string; name: string; icon: string | null; description: string | null; holdable: boolean; immediate_use: boolean } }).powerup_types
+		}));
+	}
+
 	return {
 		team,
 		position,
@@ -213,6 +236,8 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		setTutorials,
 		setCompletedCount,
 		setTotalCount,
-		challengeUnlocks
+		challengeUnlocks,
+		heldPowerups,
+		playerSetId
 	};
 };

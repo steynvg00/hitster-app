@@ -2,6 +2,7 @@ import { error, fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { createPublicClient, createAdminClient } from '$lib/server/supabase';
 import { isNfcUnlockRequired } from '$lib/server/nfc';
+import { maybeAwardPowerup, resolvePowerupChoice } from '$lib/server/powerups';
 import type {
 	AnswerField,
 	InputMode,
@@ -416,6 +417,29 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		}
 	}
 
+	// Held powerups for this team in the active set
+	let heldPowerups: Array<{
+		id: string;
+		powerup_type_id: string;
+		granted_at: string;
+		type: { id: string; name: string; icon: string | null; description: string | null; holdable: boolean; immediate_use: boolean };
+	}> = [];
+	if (activeSetId && locals.teamId) {
+		const { data: hpRows } = await admin
+			.from('team_powerups')
+			.select('id, powerup_type_id, granted_at, powerup_types(id, name, icon, description, holdable, immediate_use)')
+			.eq('team_id', locals.teamId)
+			.eq('set_id', activeSetId)
+			.eq('status', 'held')
+			.order('granted_at');
+		heldPowerups = (hpRows ?? []).map((r) => ({
+			id: r.id,
+			powerup_type_id: r.powerup_type_id,
+			granted_at: r.granted_at ?? '',
+			type: (r as unknown as { powerup_types: { id: string; name: string; icon: string | null; description: string | null; holdable: boolean; immediate_use: boolean } }).powerup_types
+		}));
+	}
+
 	return {
 		challenge,
 		tabs: tabList,
@@ -432,7 +456,8 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		activeSetRecapState,
 		showHint,
 		hintUsed,
-		tutorialText
+		tutorialText,
+		heldPowerups
 	};
 };
 
@@ -599,6 +624,7 @@ export const actions: Actions = {
 			: null;
 
 		let challengeMultiplier = 1;
+		let playerSetId: string | null = null;
 		if (locals.playerId) {
 			const { data: playerRow } = await admin
 				.from('players')
@@ -606,6 +632,7 @@ export const actions: Actions = {
 				.eq('id', locals.playerId)
 				.maybeSingle();
 			if (playerRow?.set_id) {
+				playerSetId = playerRow.set_id;
 				const { data: sc } = await admin
 					.from('set_challenges')
 					.select('challenge_multiplier')
@@ -702,8 +729,28 @@ export const actions: Actions = {
 				.eq('id', teamId)
 		]);
 
+		// Powerup earning: score above threshold → award a random powerup
+		let earnedPowerup = null;
+		if (playerSetId) {
+			const maxTotal = scoredResult.maxTotal ?? 0;
+			const scorePercent = maxTotal > 0 ? (scoredResult.total / maxTotal) * 100 : 0;
+			earnedPowerup = await maybeAwardPowerup(admin, teamId, playerSetId, params.id, scorePercent);
+		}
+
 		const result: ChallengeResult = { ...scoredResult, submissionId: sub.id, isFinal: true };
-		return { submitted: true, result };
+		return { submitted: true, result, earnedPowerup };
+	},
+
+	resolveEarnedPowerup: async ({ request }) => {
+		const admin = createAdminClient();
+		const fd = await request.formData();
+		const teamPowerupId = (fd.get('team_powerup_id') as string | null)?.trim();
+		const choice = fd.get('choice') as 'store' | 'lose' | null;
+		if (!teamPowerupId || (choice !== 'store' && choice !== 'lose'))
+			return fail(400, { error: 'Invalid request' });
+		const res = await resolvePowerupChoice(admin, teamPowerupId, choice);
+		if (!res.ok) return fail(400, { error: res.error });
+		return { resolved: true };
 	},
 
 	startChallenge: async ({ params, locals }) => {
