@@ -62,29 +62,19 @@
 		return savedFieldModes[field] ?? 'open_text';
 	}
 
-	const fragmentClipItems = $derived(
-		clips
-			.filter((c) => c.type !== 'mashup')
-			.map((c) => {
-				const t = allTracks.find((t) => t.id === c.track_id);
-				const dur =
-					c.duration != null && c.duration > 0
-						? `${Math.floor(c.duration / 60)}:${String(Math.floor(c.duration % 60)).padStart(2, '0')}`
-						: null;
-				return {
-					id: c.id,
-					label: t ? `${t.title} — ${t.artist}` : c.track_id.slice(0, 8),
-					subtitle: dur ? `[${c.type}] ${dur}` : `[${c.type}]`
-				};
-			})
-	);
+	function formatDur(dur: number | null): string | null {
+		if (dur == null || dur <= 0) return null;
+		return `${Math.floor(dur / 60)}:${String(Math.floor(dur % 60)).padStart(2, '0')}`;
+	}
+
+	// Per-tab track selection for the two-step add-fragment picker (local UI state only)
+	let selectedAddTrack = $state<Record<string, string>>({});
 
 	$effect(() => {
 		console.log(
-			'[FragmentsEditor] clip picker items',
-			fragmentClipItems.length,
-			'first few:',
-			fragmentClipItems.slice(0, 3)
+			'[FragmentsEditor] clips available',
+			clips.filter((c) => c.type !== 'mashup').length,
+			'(two-step mode)'
 		);
 	});
 </script>
@@ -167,18 +157,64 @@
 							</div>
 						{/if}
 
-						<!-- Add fragment clip -->
-						<form method="POST" action="?/addTabClip" use:enhance class="flex flex-wrap gap-2">
+						<!-- Add fragment clip — two-step: pick track, then pick clip -->
+						<form
+							method="POST"
+							action="?/addTabClip"
+							use:enhance={({ formData, cancel }) => {
+								if (!formData.get('clip_id')) {
+									// Track picker fired requestSubmit — just update local state
+									selectedAddTrack[tab.id] =
+										(formData.get('fragment_track_filter') as string) ?? '';
+									cancel();
+									return;
+								}
+								// Clip picked — proceed with addTabClip submission
+								return async ({ update }) => update({ reset: false });
+							}}
+							class="space-y-2"
+						>
 							<input type="hidden" name="tab_id" value={tab.id} />
 							<input type="hidden" name="fragment_number" value={tabClips.length + 1} />
-							<div class="flex-1">
-								<SearchablePicker
-									name="clip_id"
-									items={fragmentClipItems}
-									placeholder="+ Add fragment clip…"
-									emptyLabel="— none —"
-								/>
-							</div>
+							<!-- Step 1: track -->
+							<SearchablePicker
+								name="fragment_track_filter"
+								items={allTracks.map((t) => ({
+									id: t.id,
+									label: `${t.artist} — ${t.title}`,
+									subtitle: String(t.year)
+								}))}
+								value={selectedAddTrack[tab.id] ?? ''}
+								placeholder="1. Pick source track…"
+								emptyLabel="— clear —"
+							/>
+							<!-- Step 2: clip (only once track is chosen; keyed so it remounts on track change) -->
+							{#if selectedAddTrack[tab.id]}
+								{@const trackClips = clips.filter(
+									(c) => c.track_id === selectedAddTrack[tab.id] && c.type !== 'mashup'
+								)}
+								{#key selectedAddTrack[tab.id]}
+									{#if trackClips.length > 0}
+										<SearchablePicker
+											name="clip_id"
+											items={trackClips.map((c) => {
+												const dur = formatDur(c.duration);
+												return {
+													id: c.id,
+													label: dur ? `[${c.type}] ${dur}` : `[${c.type}]`,
+													subtitle: ''
+												};
+											})}
+											placeholder="2. Pick clip…"
+											emptyLabel="— no clip —"
+										/>
+									{:else}
+										<p class="text-xs text-zinc-600 italic">No clips for this track.</p>
+									{/if}
+								{/key}
+							{:else}
+								<p class="text-xs text-zinc-600 italic">Pick a track first to see its clips.</p>
+							{/if}
 							<button
 								type="submit"
 								class="rounded-lg bg-zinc-700 px-3 py-1 text-xs font-semibold text-zinc-200 hover:bg-zinc-600"
