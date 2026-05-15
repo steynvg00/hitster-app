@@ -182,6 +182,7 @@
 		if (!selected.includes(id)) {
 			selected = [...selected, id];
 			if (!multipliers[id]) multipliers = { ...multipliers, [id]: 1 };
+			console.log('[SetPage] challenge added to local state', { id, total: selected.length + 1 });
 		}
 	}
 
@@ -916,13 +917,23 @@
 					bind:this={challengesForm}
 					method="POST"
 					action="?/setChallenges"
-					use:enhance={() => {
+					use:enhance={({ formData }) => {
+						// Explicitly sync reactive state into formData before the request fires.
+						// This bypasses any Svelte 5 scheduler timing between state mutation and DOM
+						// flush, and also prevents form.reset() from ever sending stale defaultValues.
+						formData.set('challenge_ids', selected.join(','));
+						formData.set('multipliers_json', JSON.stringify(multipliers));
+						formData.set('nfc_slugs_json', JSON.stringify(nfcSlugs));
+						console.log('[SetPage] setChallenges submit', {
+							challenge_ids: selected.join(','),
+							count: selected.length
+						});
 						savingChallenges = true;
 						const blurredId = slugSavingId;
 						slugSavingId = null;
 						return async ({ result, update }) => {
 							savingChallenges = false;
-							await update();
+							await update({ reset: false });
 							if (blurredId && result.type !== 'failure') {
 								slugSavedId = blurredId;
 								setTimeout(() => {
