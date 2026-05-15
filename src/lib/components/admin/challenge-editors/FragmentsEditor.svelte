@@ -169,8 +169,11 @@
 									cancel();
 									return;
 								}
-								// Clip picked — proceed with addTabClip submission
-								return async ({ update }) => update({ reset: false });
+								// Clip picked — proceed with addTabClip submission, then reset pickers
+								return async ({ update }) => {
+									await update({ reset: false });
+									selectedAddTrack[tab.id] = '';
+								};
 							}}
 							class="space-y-2"
 						>
