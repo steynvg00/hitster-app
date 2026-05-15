@@ -72,12 +72,17 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		};
 	});
 
-	const { data: userPresets } = await db
-		.from('effect_presets')
-		.select('*')
-		.eq('is_builtin', false)
-		.eq('created_by', locals.user?.id ?? '')
-		.order('created_at');
+	const userPresets =
+		challenge.variant === 'effects'
+			? ((
+					await db
+						.from('effect_presets')
+						.select('*')
+						.eq('is_builtin', false)
+						.eq('created_by', locals.user?.id ?? '')
+						.order('created_at')
+				).data ?? [])
+			: [];
 
 	return {
 		challenge,

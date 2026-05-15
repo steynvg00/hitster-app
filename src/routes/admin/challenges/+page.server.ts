@@ -114,6 +114,7 @@ export const actions: Actions = {
 			.single();
 
 		if (error) return fail(500, { error: error.message });
+		if (!created) return fail(500, { error: 'Challenge creation returned no data' });
 		redirect(302, `/admin/challenges/${created.id}`);
 	},
 
