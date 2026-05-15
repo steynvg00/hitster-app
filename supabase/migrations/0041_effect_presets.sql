@@ -23,6 +23,9 @@ CREATE POLICY "effect_presets_insert" ON effect_presets
 CREATE POLICY "effect_presets_delete" ON effect_presets
   FOR DELETE USING (auth.uid() = created_by AND is_builtin = false);
 
+CREATE POLICY "users_update_own_presets" ON effect_presets
+  FOR UPDATE USING (auth.uid() = created_by);
+
 DO $$ BEGIN
   ALTER PUBLICATION supabase_realtime ADD TABLE effect_presets;
 EXCEPTION WHEN others THEN null;
