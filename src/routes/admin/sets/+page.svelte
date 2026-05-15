@@ -152,10 +152,14 @@
 					</thead>
 					<tbody class="divide-y divide-zinc-800 bg-zinc-950">
 						{#each data.sets as s (s.id)}
-							<tr class="hover:bg-zinc-900/50">
+							<tr
+								class="cursor-pointer hover:bg-zinc-900/50"
+								onclick={() => goto(`/admin/sets/${s.id}`)}
+							>
 								<td class="px-4 py-3">
 									<a
 										href="/admin/sets/{s.id}"
+										onclick={(e) => e.stopPropagation()}
 										class="font-semibold text-white transition-colors hover:text-amber-400"
 									>
 										{s.name}
@@ -173,7 +177,7 @@
 										{presetBadge(s.preset_slug).label}
 									</span>
 								</td>
-								<td class="px-4 py-3">
+								<td class="px-4 py-3" onclick={(e) => e.stopPropagation()}>
 									<form
 										method="POST"
 										action="?/toggle"
@@ -201,7 +205,7 @@
 								<td class="px-4 py-3 text-right text-zinc-300">{s.team_count}</td>
 								<td class="px-4 py-3 text-right text-zinc-300">{s.challenge_count}</td>
 								<td class="px-4 py-3 text-right text-zinc-300">{s.player_count}</td>
-								<td class="px-4 py-3 text-right">
+								<td class="px-4 py-3 text-right" onclick={(e) => e.stopPropagation()}>
 									<div class="flex items-center justify-end gap-2">
 										<a
 											href="/admin/sets/{s.id}"
