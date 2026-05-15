@@ -82,7 +82,7 @@
 					<input type="hidden" name="team_id" value={team.id} />
 					<button
 						type="submit"
-						disabled={joining !== null}
+						disabled={joining !== null || team.is_full}
 						class="w-full rounded-2xl border p-4 text-left transition-all active:scale-[0.98]
 							disabled:opacity-60
 							{team.is_full
