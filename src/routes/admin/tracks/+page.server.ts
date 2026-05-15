@@ -2,6 +2,17 @@ import { fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
 
+async function ensureInPool(
+	db: ReturnType<typeof createAdminClient>,
+	table: string,
+	name: string | null
+) {
+	if (!name) return;
+	await db
+		.from(table as never)
+		.upsert({ name } as never, { onConflict: 'name', ignoreDuplicates: true });
+}
+
 export const load: PageServerLoad = async ({ url }) => {
 	const db = createAdminClient();
 
@@ -116,6 +127,11 @@ export const actions: Actions = {
 			.select('id')
 			.single();
 		if (error) return fail(500, { error: error.message });
+		await Promise.all([
+			ensureInPool(db, 'answer_pool_artists', artist),
+			ensureInPool(db, 'answer_pool_labels', record_label),
+			ensureInPool(db, 'answer_pool_festivals', festival)
+		]);
 		return { success: true, id: inserted.id };
 	},
 
@@ -151,6 +167,11 @@ export const actions: Actions = {
 			})
 			.eq('id', id);
 		if (error) return fail(500, { error: error.message });
+		await Promise.all([
+			ensureInPool(db, 'answer_pool_artists', artist),
+			ensureInPool(db, 'answer_pool_labels', record_label),
+			ensureInPool(db, 'answer_pool_festivals', festival)
+		]);
 		return { success: true };
 	},
 
