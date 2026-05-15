@@ -255,7 +255,7 @@ export interface ChallengeResult {
 
 // ─── NFC ─────────────────────────────────────────────────────────────────────
 
-export type NfcTagPurpose = 'team_identity' | 'team_entry' | 'challenge' | 'randomizer';
+export type NfcTagPurpose = 'team_identity' | 'team_entry' | 'challenge' | 'hint' | 'challenge_unlock';
 
 export interface NfcTag {
 	id: string;

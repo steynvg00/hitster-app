@@ -19,7 +19,6 @@ export const load: PageServerLoad = async ({ params }) => {
 		{ data: gameSet },
 		{ data: setChallengesRaw },
 		{ data: allChallenges },
-		{ data: cards },
 		{ data: powerupsRaw },
 		{ data: setPowerupsRaw }
 	] = await Promise.all([
@@ -30,7 +29,6 @@ export const load: PageServerLoad = async ({ params }) => {
 			.eq('set_id', id)
 			.order('position'),
 		db.from('challenges').select('id, title, variant, is_active, nfc_lock_override').order('title'),
-		db.from('nfc_tags').select('id, slug, set_id').eq('purpose', 'randomizer').eq('set_id', id),
 		db.from('powerups').select('*').order('sort_order'),
 		db.from('set_powerups').select('*').eq('set_id', id)
 	]);
@@ -116,7 +114,6 @@ export const load: PageServerLoad = async ({ params }) => {
 		gameSet,
 		setChallenges,
 		allChallenges: allChallenges ?? [],
-		cards: cards ?? [],
 		playerCount,
 		playerIds,
 		recentPlayers,
@@ -288,18 +285,13 @@ export const actions: Actions = {
 		return { success: true };
 	},
 
-	toggleRandomizer: async ({ params }) => {
+	setTeamSelectionMode: async ({ request, params }) => {
 		const db = createAdminClient();
-		const { data: gs } = await db
-			.from('game_sets')
-			.select('randomizer_enabled')
-			.eq('id', params.id)
-			.maybeSingle();
-		if (!gs) return fail(404, { error: 'Set not found' });
-		await db
-			.from('game_sets')
-			.update({ randomizer_enabled: !gs.randomizer_enabled })
-			.eq('id', params.id);
+		const fd = await request.formData();
+		const mode = (fd.get('mode') as string | null)?.trim();
+		if (mode !== 'random' && mode !== 'selectable')
+			return fail(400, { error: 'Invalid team selection mode' });
+		await db.from('game_sets').update({ team_selection_mode: mode }).eq('id', params.id);
 		return { success: true };
 	},
 
@@ -639,58 +631,6 @@ export const actions: Actions = {
 		redirect(303, '/admin/sets');
 	},
 
-	addCard: async ({ request, params, locals }) => {
-		const db = createAdminClient();
-		const formData = await request.formData();
-		const slug = (formData.get('slug') as string | null)?.trim() ?? '';
-		const userId = locals.user?.id ?? null;
-
-		if (!slug) return fail(400, { error: 'Card slug is required' });
-
-		// Per-user duplicate check: only conflict within this user's tags
-		if (userId) {
-			const { data: existing } = await db
-				.from('nfc_tags')
-				.select('id')
-				.eq('slug', slug)
-				.eq('created_by', userId)
-				.maybeSingle();
-			if (existing) {
-				return fail(400, {
-					error: `Tag '${slug}' already in use`,
-					existingTagUrl: `/admin/nfc-tags?slug=${encodeURIComponent(slug)}`
-				});
-			}
-		}
-
-		const { error } = await db
-			.from('nfc_tags')
-			.insert({ slug, purpose: 'randomizer', set_id: params.id, created_by: userId });
-
-		if (error) {
-			if (error.code === '23505') {
-				return fail(400, {
-					error: `Tag '${slug}' already in use`,
-					existingTagUrl: `/admin/nfc-tags?slug=${encodeURIComponent(slug)}`
-				});
-			}
-			return fail(500, { error: 'Could not add card' });
-		}
-		return { success: true };
-	},
-
-	removeCard: async ({ request, locals }) => {
-		const db = createAdminClient();
-		const formData = await request.formData();
-		const slug = formData.get('slug') as string | null;
-		if (!slug) return fail(400, { error: 'Missing slug' });
-
-		let q = db.from('nfc_tags').delete().eq('slug', slug).eq('purpose', 'randomizer');
-		if (locals.user?.id) q = q.eq('created_by', locals.user.id);
-		await q;
-		return { success: true };
-	},
-
 	duplicateSet: async ({ params, locals }) => {
 		const db = createAdminClient();
 
@@ -710,7 +650,7 @@ export const actions: Actions = {
 				powerup_mode: source.powerup_mode,
 				powerup_config: source.powerup_config as never,
 				nfc_lock_enabled: source.nfc_lock_enabled,
-				randomizer_enabled: source.randomizer_enabled,
+				team_selection_mode: source.team_selection_mode,
 				status: 'inactive',
 				play_state: 'joining',
 				started_at: null,

@@ -7,15 +7,10 @@ export const load: PageServerLoad = async ({ params }) => {
 	const { data: gameSet } = await db
 		.from('game_sets')
 		.select('id, name, play_state, status')
-		.eq('id', params.set_id)
+		.eq('id', params.id)
 		.maybeSingle();
 
-	if (!gameSet || gameSet.status !== 'active') redirect(302, '/');
-
-	// If set has moved back to joining, let them join
-	if (gameSet.play_state === 'joining') {
-		redirect(302, `/sets/${params.set_id}/join`);
-	}
+	if (!gameSet) redirect(302, '/');
 
 	return { setName: gameSet.name };
 };

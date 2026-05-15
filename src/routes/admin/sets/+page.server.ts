@@ -33,22 +33,17 @@ export const load: PageServerLoad = async ({ url }) => {
 		setsQuery = setsQuery.order('created_at', { ascending: false });
 	}
 
-	const [{ data: sets }, { data: scRows }, { data: nfcRows }, { data: playerRows }] =
+	const [{ data: sets }, { data: scRows }, { data: playerRows }] =
 		await Promise.all([
 			setsQuery,
 			db.from('set_challenges').select('set_id'),
-			db.from('nfc_tags').select('set_id').eq('purpose', 'randomizer'),
 			db.from('players').select('set_id').not('set_id', 'is', null)
 		]);
 
 	const challengeCount: Record<string, number> = {};
-	const cardCount: Record<string, number> = {};
 	const playerCount: Record<string, number> = {};
 
 	for (const r of scRows ?? []) challengeCount[r.set_id] = (challengeCount[r.set_id] ?? 0) + 1;
-	for (const r of nfcRows ?? []) {
-		if (r.set_id) cardCount[r.set_id] = (cardCount[r.set_id] ?? 0) + 1;
-	}
 	for (const r of playerRows ?? []) {
 		if (r.set_id) playerCount[r.set_id] = (playerCount[r.set_id] ?? 0) + 1;
 	}
@@ -57,7 +52,6 @@ export const load: PageServerLoad = async ({ url }) => {
 		sets: (sets ?? []).map((s) => ({
 			...s,
 			challenge_count: challengeCount[s.id] ?? 0,
-			card_count: cardCount[s.id] ?? 0,
 			player_count: playerCount[s.id] ?? 0
 		})),
 		presetFilter,

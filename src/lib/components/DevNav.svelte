@@ -107,14 +107,11 @@
 			id: 'nfc',
 			title: 'NFC handlers',
 			links: [
-				{ label: '/nfc/randomize/[set_id]', setPath: (id) => `/nfc/randomize/${id}` },
 				{ label: '/nfc/hint/[challenge_id]', challengePath: (id) => `/nfc/hint/${id}` },
 				{ label: '/nfc/unlock/[challenge_id]', challengePath: (id) => `/nfc/unlock/${id}` },
-				{
-					label: '/nfc/game-in-progress/[set_id]',
-					setPath: (id) => `/nfc/game-in-progress/${id}`
-				},
-				{ label: '/nfc/game-over/[set_id]', setPath: (id) => `/nfc/game-over/${id}` }
+				{ label: '/sets/[id]/join', setPath: (id) => `/sets/${id}/join` },
+				{ label: '/sets/[id]/in-progress', setPath: (id) => `/sets/${id}/in-progress` },
+				{ label: '/sets/[id]/over', setPath: (id) => `/sets/${id}/over` }
 			]
 		},
 		{
