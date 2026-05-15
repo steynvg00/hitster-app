@@ -223,10 +223,32 @@ export const actions: Actions = {
 		const data = await request.formData();
 		const id = (data.get('id') as string)?.trim();
 		const name = (data.get('name') as string)?.trim();
+		const source_track_ids_raw = data.get('source_track_ids') as string;
+
 		if (!id) return fail(400, { error: 'Missing id' });
 		if (!name) return fail(400, { error: 'Name is required' });
-		const { error } = await db.from('mashups').update({ name }).eq('id', id);
-		if (error) return fail(500, { error: error.message });
+
+		let source_track_ids: string[] = [];
+		try {
+			const parsed = JSON.parse(source_track_ids_raw || '[]');
+			if (Array.isArray(parsed))
+				source_track_ids = parsed.filter((x): x is string => typeof x === 'string');
+		} catch {
+			/* ignore */
+		}
+
+		const { error: nameError } = await db.from('mashups').update({ name }).eq('id', id);
+		if (nameError) return fail(500, { error: nameError.message });
+
+		// Replace source tracks
+		await db.from('mashup_sources').delete().eq('mashup_id', id);
+		if (source_track_ids.length > 0) {
+			const { error: sourcesError } = await db
+				.from('mashup_sources')
+				.insert(source_track_ids.map((track_id, i) => ({ mashup_id: id, track_id, sort_order: i })));
+			if (sourcesError) return fail(500, { error: sourcesError.message });
+		}
+
 		return { success: true, action: 'updateMashup' };
 	},
 

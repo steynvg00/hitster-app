@@ -39,6 +39,16 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		data: { publicUrl }
 	} = db.storage.from(BUCKET).getPublicUrl(objectPath);
 
+	const source_track_ids_raw = formData.get('source_track_ids') as string;
+	let source_track_ids: string[] = [];
+	try {
+		const parsed = JSON.parse(source_track_ids_raw || '[]');
+		if (Array.isArray(parsed))
+			source_track_ids = parsed.filter((x): x is string => typeof x === 'string');
+	} catch {
+		/* ignore malformed JSON */
+	}
+
 	const { error: insertError } = await db.from('mashups').insert({
 		id: mashup_id,
 		name,
@@ -51,6 +61,18 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		// Roll back the storage upload so we don't leave orphans
 		await db.storage.from(BUCKET).remove([objectPath]);
 		error(500, `DB insert failed: ${insertError.message}`);
+	}
+
+	if (source_track_ids.length > 0) {
+		const { error: sourcesError } = await db
+			.from('mashup_sources')
+			.insert(source_track_ids.map((track_id, i) => ({ mashup_id, track_id, sort_order: i })));
+		if (sourcesError) {
+			// Roll back mashup row + storage
+			await db.from('mashups').delete().eq('id', mashup_id);
+			await db.storage.from(BUCKET).remove([objectPath]);
+			error(500, `Source tracks insert failed: ${sourcesError.message}`);
+		}
 	}
 
 	return json({ success: true, path: objectPath, url: publicUrl });

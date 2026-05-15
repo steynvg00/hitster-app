@@ -220,7 +220,13 @@
 	let expandedMashup = $state<string | null>(null);
 	let editingMashup = $state<string | null>(null);
 	let showCreateMashup = $state(false);
-	let mashupAddTrack = $state<Record<string, string>>({});
+
+	// Create modal source track state
+	let mashupUploadSources = $state<string[]>([]);
+	let mashupCreateSourcePicker = $state('');
+
+	// Edit form source track state (per-mashup)
+	let mashupEditSources = $state<Record<string, string[]>>({});
 
 	// Mashup upload state (new mashup create flow)
 	let mashupUploadName = $state('');
@@ -250,6 +256,7 @@
 		fd.append('mashup_id', mashupId);
 		fd.append('name', mashupUploadName.trim());
 		fd.append('duration', String(mashupUploadDuration));
+		fd.append('source_track_ids', JSON.stringify(mashupUploadSources));
 
 		try {
 			const res = await fetch('/admin/mashups/upload', { method: 'POST', body: fd });
@@ -258,6 +265,8 @@
 				mashupUploadFile = null;
 				mashupUploadName = '';
 				mashupUploadDuration = 0;
+				mashupUploadSources = [];
+				mashupCreateSourcePicker = '';
 				showCreateMashup = false;
 				await invalidateAll();
 			} else {
@@ -1145,6 +1154,8 @@
 					mashupUploadName = '';
 					mashupUploadStatus = 'idle';
 					mashupUploadError = null;
+					mashupUploadSources = [];
+					mashupCreateSourcePicker = '';
 				}
 			}}
 			class="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-300 hover:bg-zinc-700"
@@ -1215,6 +1226,46 @@
 					</div>
 				{/if}
 			</div>
+			<!-- Source tracks -->
+			<div class="mb-3">
+				<label class="mb-1 block text-xs text-zinc-400">Source Tracks</label>
+				{#if mashupUploadSources.length > 0}
+					<div class="mb-2 flex flex-wrap gap-1.5">
+						{#each mashupUploadSources as tid (tid)}
+							{@const t = data.tracks.find((tr) => tr.id === tid)}
+							<span
+								class="flex items-center gap-1 rounded-full bg-zinc-700 px-2.5 py-0.5 text-xs text-zinc-200"
+							>
+								{t ? `${t.artist} — ${t.title}` : tid}
+								<button
+									type="button"
+									onclick={() =>
+										(mashupUploadSources = mashupUploadSources.filter((id) => id !== tid))}
+									class="text-zinc-400 hover:text-red-400">✕</button
+								>
+							</span>
+						{/each}
+					</div>
+				{/if}
+				<select
+					class="input-field text-xs"
+					bind:value={mashupCreateSourcePicker}
+					onchange={() => {
+						if (
+							mashupCreateSourcePicker &&
+							!mashupUploadSources.includes(mashupCreateSourcePicker)
+						) {
+							mashupUploadSources = [...mashupUploadSources, mashupCreateSourcePicker];
+						}
+						mashupCreateSourcePicker = '';
+					}}
+				>
+					<option value="">— add source track —</option>
+					{#each data.tracks.filter((t) => !mashupUploadSources.includes(t.id)) as t (t.id)}
+						<option value={t.id}>{t.artist} — {t.title} ({t.year})</option>
+					{/each}
+				</select>
+			</div>
 			{#if mashupUploadError}
 				<p class="mb-2 text-xs text-red-400">{mashupUploadError}</p>
 			{/if}
@@ -1227,6 +1278,8 @@
 						mashupUploadName = '';
 						mashupUploadStatus = 'idle';
 						mashupUploadError = null;
+						mashupUploadSources = [];
+						mashupCreateSourcePicker = '';
 					}}
 					class="rounded px-3 py-1.5 text-xs text-zinc-500 hover:text-zinc-300"
 				>
@@ -1296,105 +1349,123 @@
 								></audio>
 							{/if}
 
-							<!-- Edit name -->
+							<!-- Edit name + sources (combined) -->
 							{#if editingMashup === mashup.id}
 								<form
 									method="POST"
 									action="?/updateMashup"
-									use:enhance={() =>
-										async ({ update }) => {
+									use:enhance={({ formData }) => {
+										formData.set(
+											'source_track_ids',
+											JSON.stringify(mashupEditSources[mashup.id] ?? [])
+										);
+										return async ({ update }) => {
 											await update({ reset: false });
 											editingMashup = null;
-										}}
-									class="flex gap-2"
+										};
+									}}
+									class="space-y-3"
 								>
 									<input type="hidden" name="id" value={mashup.id} />
-									<input
-										type="text"
-										name="name"
-										value={mashup.name}
-										required
-										class="input-field flex-1"
-									/>
-									<button
-										type="button"
-										onclick={() => (editingMashup = null)}
-										class="rounded px-3 py-1 text-xs text-zinc-500 hover:text-zinc-300"
-									>
-										Cancel
-									</button>
-									<button
-										type="submit"
-										class="rounded bg-amber-400 px-3 py-1 text-xs font-bold text-zinc-950 hover:bg-amber-300"
-									>
-										Save
-									</button>
+									<div>
+										<label class="mb-1 block text-xs text-zinc-400">Name</label>
+										<input
+											type="text"
+											name="name"
+											value={mashup.name}
+											required
+											class="input-field"
+										/>
+									</div>
+									<div>
+										<label class="mb-1 block text-xs text-zinc-400">Source Tracks</label>
+										{#if (mashupEditSources[mashup.id] ?? []).length > 0}
+											<div class="mb-2 flex flex-wrap gap-1.5">
+												{#each mashupEditSources[mashup.id] ?? [] as tid (tid)}
+													{@const t = data.tracks.find((tr) => tr.id === tid)}
+													<span
+														class="flex items-center gap-1 rounded-full bg-zinc-700 px-2.5 py-0.5 text-xs text-zinc-200"
+													>
+														{t ? `${t.artist} — ${t.title}` : tid}
+														<button
+															type="button"
+															onclick={() => {
+																mashupEditSources[mashup.id] = (
+																	mashupEditSources[mashup.id] ?? []
+																).filter((id) => id !== tid);
+															}}
+															class="text-zinc-400 hover:text-red-400">✕</button
+														>
+													</span>
+												{/each}
+											</div>
+										{/if}
+										<select
+											class="input-field text-xs"
+											onchange={(e) => {
+												const val = (e.target as HTMLSelectElement).value;
+												if (val && !(mashupEditSources[mashup.id] ?? []).includes(val)) {
+													mashupEditSources[mashup.id] = [
+														...(mashupEditSources[mashup.id] ?? []),
+														val
+													];
+												}
+												(e.target as HTMLSelectElement).value = '';
+											}}
+										>
+											<option value="">— add source track —</option>
+											{#each data.tracks.filter((t) => !(mashupEditSources[mashup.id] ?? []).includes(t.id)) as t (t.id)}
+												<option value={t.id}>{t.artist} — {t.title} ({t.year})</option>
+											{/each}
+										</select>
+									</div>
+									<div class="flex justify-end gap-2">
+										<button
+											type="button"
+											onclick={() => (editingMashup = null)}
+											class="rounded px-3 py-1 text-xs text-zinc-500 hover:text-zinc-300"
+										>
+											Cancel
+										</button>
+										<button
+											type="submit"
+											class="rounded bg-amber-400 px-3 py-1 text-xs font-bold text-zinc-950 hover:bg-amber-300"
+										>
+											Save
+										</button>
+									</div>
 								</form>
 							{:else}
-								<button
-									type="button"
-									onclick={() => (editingMashup = mashup.id)}
-									class="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
-								>
-									Rename
-								</button>
-							{/if}
-
-							<!-- Source tracks -->
-							<div>
-								<span class="mb-2 block text-xs font-semibold text-zinc-400">Source Tracks</span>
-								{#if sources.length === 0}
-									<p class="mb-2 text-xs text-zinc-600 italic">No source tracks yet.</p>
-								{:else}
-									<div class="mb-2 space-y-1">
-										{#each sources as src (src.id)}
-											{@const srcTrack = data.tracks.find((t) => t.id === src.track_id)}
-											<div
-												class="flex items-center justify-between rounded bg-zinc-800 px-3 py-1.5 text-xs text-zinc-300"
-											>
-												<span>
+								<!-- Read-only sources + Edit button -->
+								<div class="flex items-start justify-between gap-3">
+									{#if sources.length > 0}
+										<div class="flex flex-wrap gap-1.5">
+											{#each sources as src (src.id)}
+												{@const srcTrack = data.tracks.find((t) => t.id === src.track_id)}
+												<span
+													class="rounded-full bg-zinc-800 px-2.5 py-0.5 text-xs text-zinc-300"
+												>
 													{srcTrack
 														? `${srcTrack.artist} — ${srcTrack.title} (${srcTrack.year})`
 														: src.track_id.slice(0, 8)}
 												</span>
-												<form
-													method="POST"
-													action="?/removeMashupSource"
-													use:enhance
-													class="inline"
-												>
-													<input type="hidden" name="id" value={src.id} />
-													<button type="submit" class="ml-2 text-red-700 hover:text-red-400"
-														>✕</button
-													>
-												</form>
-											</div>
-										{/each}
-									</div>
-								{/if}
-								<form method="POST" action="?/addMashupSource" use:enhance class="flex gap-2">
-									<input type="hidden" name="mashup_id" value={mashup.id} />
-									<div class="flex-1">
-										<SearchablePicker
-											name="track_id"
-											items={data.tracks.map((t) => ({
-												id: t.id,
-												label: `${t.artist} — ${t.title}`,
-												subtitle: String(t.year)
-											}))}
-											bind:value={mashupAddTrack[mashup.id]}
-											placeholder="+ Add source track…"
-											emptyLabel="— none —"
-										/>
-									</div>
+											{/each}
+										</div>
+									{:else}
+										<p class="text-xs text-zinc-600 italic">No source tracks.</p>
+									{/if}
 									<button
-										type="submit"
-										class="rounded-lg bg-zinc-700 px-3 py-1 text-xs font-semibold text-zinc-200 hover:bg-zinc-600"
+										type="button"
+										onclick={() => {
+											mashupEditSources[mashup.id] = sources.map((s) => s.track_id);
+											editingMashup = mashup.id;
+										}}
+										class="shrink-0 rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
 									>
-										Add
+										Edit
 									</button>
-								</form>
-							</div>
+								</div>
+							{/if}
 						</div>
 					{/if}
 				</div>
