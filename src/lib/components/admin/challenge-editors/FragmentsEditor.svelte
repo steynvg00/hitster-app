@@ -61,6 +61,32 @@
 	function currentMode(field: string): string {
 		return savedFieldModes[field] ?? 'open_text';
 	}
+
+	const fragmentClipItems = $derived(
+		clips
+			.filter((c) => c.type !== 'mashup')
+			.map((c) => {
+				const t = allTracks.find((t) => t.id === c.track_id);
+				const dur =
+					c.duration != null && c.duration > 0
+						? `${Math.floor(c.duration / 60)}:${String(Math.floor(c.duration % 60)).padStart(2, '0')}`
+						: null;
+				return {
+					id: c.id,
+					label: t ? `${t.title} — ${t.artist}` : c.track_id.slice(0, 8),
+					subtitle: dur ? `[${c.type}] ${dur}` : `[${c.type}]`
+				};
+			})
+	);
+
+	$effect(() => {
+		console.log(
+			'[FragmentsEditor] clip picker items',
+			fragmentClipItems.length,
+			'first few:',
+			fragmentClipItems.slice(0, 3)
+		);
+	});
 </script>
 
 <!-- ── Tabs ── -->
@@ -148,20 +174,7 @@
 							<div class="flex-1">
 								<SearchablePicker
 									name="clip_id"
-									items={clips
-										.filter((c) => c.type !== 'mashup')
-										.map((c) => {
-											const t = allTracks.find((t) => t.id === c.track_id);
-											const dur =
-												c.duration != null && c.duration > 0
-													? `${Math.floor(c.duration / 60)}:${String(Math.floor(c.duration % 60)).padStart(2, '0')}`
-													: null;
-											return {
-												id: c.id,
-												label: t ? `${t.artist} — ${t.title}` : c.track_id.slice(0, 8),
-												subtitle: dur ? `[${c.type}] ${dur}` : `[${c.type}]`
-											};
-										})}
+									items={fragmentClipItems}
 									placeholder="+ Add fragment clip…"
 									emptyLabel="— none —"
 								/>
