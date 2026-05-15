@@ -34,12 +34,20 @@ export const load: PageServerLoad = async ({ params }) => {
 		.select('*')
 		.eq('challenge_id', params.id);
 
+	// Load effect presets (built-ins shown client-side; load user-saved from DB)
+	const { data: userPresets } = await db
+		.from('effect_presets')
+		.select('*')
+		.eq('is_builtin', false)
+		.order('created_at', { ascending: false });
+
 	return {
 		challenge,
 		challengeTracks: challengeTracks,
 		allTracks,
 		clips: clips ?? [],
-		answerOptions: answerOptions ?? []
+		answerOptions: answerOptions ?? [],
+		userPresets: userPresets ?? []
 	};
 };
 
@@ -335,6 +343,75 @@ export const actions: Actions = {
 		}
 
 		redirect(303, `/admin/challenges/${newChallenge.id}`);
+	},
+
+	saveEffects: async ({ request, params }) => {
+		const db = createAdminClient();
+		const data = await request.formData();
+		const effectsRaw = (data.get('effects') as string)?.trim();
+		if (!effectsRaw) return fail(400, { error: 'Missing effects JSON' });
+
+		let effects: object;
+		try {
+			effects = JSON.parse(effectsRaw);
+		} catch {
+			return fail(400, { error: 'Invalid effects JSON' });
+		}
+
+		const { data: challenge } = await db
+			.from('challenges')
+			.select('points_config')
+			.eq('id', params.id)
+			.single();
+		if (!challenge) return fail(404, { error: 'Challenge not found' });
+
+		const pc = (challenge.points_config ?? {}) as Record<string, unknown>;
+		const { error: e } = await db
+			.from('challenges')
+			.update({ points_config: { ...pc, effects } as never })
+			.eq('id', params.id);
+		if (e) return fail(500, { error: e.message });
+		return { success: true, action: 'saveEffects' };
+	},
+
+	savePreset: async ({ request, locals }) => {
+		const db = createAdminClient();
+		const data = await request.formData();
+		const name = (data.get('name') as string)?.trim();
+		const effectsRaw = (data.get('effects') as string)?.trim();
+		if (!name || !effectsRaw) return fail(400, { error: 'Missing name or effects' });
+
+		let effects: object;
+		try {
+			effects = JSON.parse(effectsRaw);
+		} catch {
+			return fail(400, { error: 'Invalid effects JSON' });
+		}
+
+		const { error: e } = await db.from('effect_presets').insert({
+			name,
+			effects: effects as never,
+			is_builtin: false,
+			created_by: locals.user?.id ?? null
+		});
+		if (e) return fail(500, { error: e.message });
+		return { success: true, action: 'savePreset' };
+	},
+
+	deletePreset: async ({ request, locals }) => {
+		const db = createAdminClient();
+		const data = await request.formData();
+		const id = data.get('id') as string;
+		if (!id) return fail(400, { error: 'Missing id' });
+
+		const { error: e } = await db
+			.from('effect_presets')
+			.delete()
+			.eq('id', id)
+			.eq('is_builtin', false)
+			.eq('created_by', locals.user?.id ?? '');
+		if (e) return fail(500, { error: e.message });
+		return { success: true, action: 'deletePreset' };
 	},
 
 	saveInputMode: async ({ request, params }) => {

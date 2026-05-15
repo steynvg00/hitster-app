@@ -3,6 +3,8 @@
 	import type { PageData, ActionData } from './$types';
 	import { getVariantIcon, getVariantColor } from '$lib/variants';
 	import HelpTooltip from '$lib/components/ui/HelpTooltip.svelte';
+	import EffectsEditor from '$lib/components/admin/EffectsEditor.svelte';
+	import type { EffectsConfig, EffectPreset } from '$lib/types/index.js';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -14,7 +16,8 @@
 		'fragments',
 		'kick',
 		'mashup',
-		'battle'
+		'battle',
+		'effects'
 	] as const;
 	const STATUS_OPTIONS = ['draft', 'active', 'completed'] as const;
 	const INPUT_MODES = [
@@ -36,7 +39,8 @@
 		fragments: ['title', 'artist'],
 		kick: ['artist'],
 		mashup: ['artist', 'title'],
-		battle: ['artist', 'title', 'year']
+		battle: ['artist', 'title', 'year'],
+		effects: ['artist', 'title', 'year']
 	};
 
 	// Default input modes per variant (must stay in sync with +page.server.ts)
@@ -48,7 +52,8 @@
 		fragments: { title: 'open_text', artist: 'combobox' },
 		kick: { artist: 'multiple_choice' },
 		mashup: { artist: 'combobox', title: 'open_text' },
-		battle: { artist: 'combobox', title: 'open_text', year: 'slider' }
+		battle: { artist: 'combobox', title: 'open_text', year: 'slider' },
+		effects: { artist: 'combobox', title: 'open_text', year: 'slider' }
 	};
 
 	function currentMode(field: string): string {
@@ -507,6 +512,19 @@
 			</div>
 		{/each}
 	</section>
+
+	<!-- ── Section 3b: Effects editor (effects variant only) ──────── -->
+	{#if data.challenge.variant === 'effects'}
+		<section class="mb-5 rounded-xl border border-cyan-900/40 bg-zinc-900 p-5">
+			<h2 class="admin-section-title mb-4">Audio Effects</h2>
+			<EffectsEditor
+				initial={((data.challenge.points_config as Record<string, unknown> | null)?.effects ??
+					{}) as EffectsConfig}
+				userPresets={data.userPresets as EffectPreset[]}
+				previewSrc={previewUrl}
+			/>
+		</section>
+	{/if}
 
 	<!-- ── Section 4: Answer options ──────────────────────────────── -->
 	<section class="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
