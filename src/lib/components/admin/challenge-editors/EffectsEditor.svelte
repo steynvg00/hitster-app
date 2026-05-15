@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { TYPE_FIELDS } from '$lib/variants';
-	import type { EffectsConfig } from '$lib/types/index.js';
+	import type { EffectsConfig, EffectPreset } from '$lib/types/index.js';
+	import { BUILTIN_PRESETS } from '$lib/effects-presets.js';
 	import SearchablePicker from '$lib/components/admin/SearchablePicker.svelte';
 	import Waveform from '$lib/components/ui/Waveform.svelte';
 
@@ -30,7 +31,8 @@
 		allTracks,
 		clips,
 		pointsConfig,
-		fieldModes: savedFieldModes
+		fieldModes: savedFieldModes,
+		userPresets = []
 	}: {
 		tabs: Tab[];
 		sourceTracksByTab: Src[];
@@ -39,6 +41,7 @@
 		clips: Clip[];
 		pointsConfig: Record<string, number>;
 		fieldModes: Record<string, string>;
+		userPresets?: EffectPreset[];
 	} = $props();
 
 	function srcsForTab(tabId: string): Src[] {
@@ -68,36 +71,60 @@
 		return savedFieldModes[field] ?? 'open_text';
 	}
 
-	// Local effects state per tab — initialised from server data
+	// ── Accessor functions — return cfg value or full-default object ──────────────
+	function pitchOf(cfg: EffectsConfig) {
+		return cfg.pitch ?? { enabled: false, semitones: 0, window_size: 0.1 };
+	}
+	function tempoOf(cfg: EffectsConfig) {
+		return cfg.tempo ?? { enabled: false, rate: 1.0 };
+	}
+	function lowpassOf(cfg: EffectsConfig) {
+		return cfg.lowpass ?? { enabled: false, cutoff_hz: 2000, q: 1.0 };
+	}
+	function highpassOf(cfg: EffectsConfig) {
+		return cfg.highpass ?? { enabled: false, cutoff_hz: 200, q: 1.0 };
+	}
+	function bandpassOf(cfg: EffectsConfig) {
+		return cfg.bandpass ?? { enabled: false, freq_hz: 1000, q: 1.0, mod_rate_hz: 0 };
+	}
+	function phaserOf(cfg: EffectsConfig) {
+		return (
+			cfg.phaser ?? {
+				enabled: false,
+				rate_hz: 0.5,
+				depth: 0.5,
+				stages: 4,
+				feedback: 0.5,
+				stereo_offset_deg: 0
+			}
+		);
+	}
+	function flangerOf(cfg: EffectsConfig) {
+		return cfg.flanger ?? { enabled: false, rate_hz: 0.25, depth: 0.5, feedback: 0.3 };
+	}
+	function bitcrusherOf(cfg: EffectsConfig) {
+		return cfg.bitcrusher ?? { enabled: false, bits: 8, sample_rate_reduction: 0 };
+	}
+	function ringModOf(cfg: EffectsConfig) {
+		return cfg.ring_mod ?? { enabled: false, freq_hz: 30, depth: 1 };
+	}
+	function delayOf(cfg: EffectsConfig) {
+		return cfg.delay ?? { enabled: false, time_ms: 250, feedback: 0.3, wet: 0.3 };
+	}
+	function reverbOf(cfg: EffectsConfig) {
+		return cfg.reverb ?? { enabled: false, decay_s: 2, pre_delay_ms: 20, wet: 0.5 };
+	}
+	function reverseOf(cfg: EffectsConfig) {
+		return cfg.reverse ?? { enabled: false };
+	}
+
+	// ── Local effects state per tab ───────────────────────────────────────────────
 	let tabEffects = $state<Record<string, EffectsConfig>>(
 		Object.fromEntries(tabs.map((t) => [t.id, (t.effects as EffectsConfig) ?? {}]))
 	);
 
 	let saveTimers: Record<string, ReturnType<typeof setTimeout>> = {};
 
-	function pitchOf(cfg: EffectsConfig) {
-		return cfg.pitch ?? { enabled: false, semitones: 0 };
-	}
-	function tempoOf(cfg: EffectsConfig) {
-		return cfg.tempo ?? { enabled: false, rate: 1.0 };
-	}
-	function lowpassOf(cfg: EffectsConfig) {
-		return cfg.lowpass ?? { enabled: false, cutoff_hz: 2000 };
-	}
-	function highpassOf(cfg: EffectsConfig) {
-		return cfg.highpass ?? { enabled: false, cutoff_hz: 200 };
-	}
-	function bandpassOf(cfg: EffectsConfig) {
-		return cfg.bandpass ?? { enabled: false, freq_hz: 1000, q: 1.0 };
-	}
-	function phaserOf(cfg: EffectsConfig) {
-		return cfg.phaser ?? { enabled: false, rate_hz: 0.5, depth: 0.5 };
-	}
-	function flangerOf(cfg: EffectsConfig) {
-		return cfg.flanger ?? { enabled: false, rate_hz: 0.25, depth: 0.5 };
-	}
-
-	// Auto-save with 600 ms debounce — posts to ?/saveTabEffects
 	function schedSave(tabId: string) {
 		clearTimeout(saveTimers[tabId]);
 		saveTimers[tabId] = setTimeout(() => doSave(tabId), 600);
@@ -110,8 +137,6 @@
 		await fetch('?/saveTabEffects', { method: 'POST', body: fd });
 	}
 
-	// Toggle an effect on/off — writes enabled:false rather than removing the entry,
-	// so slider values survive a disable/re-enable cycle.
 	function toggleEffect(tabId: string, key: keyof EffectsConfig) {
 		const cfg = tabEffects[tabId] ?? {};
 		switch (key) {
@@ -151,6 +176,30 @@
 					flanger: { ...flangerOf(cfg), enabled: !flangerOf(cfg).enabled }
 				};
 				break;
+			case 'bitcrusher':
+				tabEffects[tabId] = {
+					...cfg,
+					bitcrusher: { ...bitcrusherOf(cfg), enabled: !bitcrusherOf(cfg).enabled }
+				};
+				break;
+			case 'ring_mod':
+				tabEffects[tabId] = {
+					...cfg,
+					ring_mod: { ...ringModOf(cfg), enabled: !ringModOf(cfg).enabled }
+				};
+				break;
+			case 'delay':
+				tabEffects[tabId] = { ...cfg, delay: { ...delayOf(cfg), enabled: !delayOf(cfg).enabled } };
+				break;
+			case 'reverb':
+				tabEffects[tabId] = {
+					...cfg,
+					reverb: { ...reverbOf(cfg), enabled: !reverbOf(cfg).enabled }
+				};
+				break;
+			case 'reverse':
+				tabEffects[tabId] = { ...cfg, reverse: { enabled: !reverseOf(cfg).enabled } };
+				break;
 		}
 		schedSave(tabId);
 	}
@@ -162,8 +211,14 @@
 		'highpass',
 		'bandpass',
 		'phaser',
-		'flanger'
+		'flanger',
+		'bitcrusher',
+		'ring_mod',
+		'delay',
+		'reverb',
+		'reverse'
 	];
+
 	const EFFECT_LABELS: Record<keyof EffectsConfig, string> = {
 		pitch: 'Pitch',
 		tempo: 'Tempo',
@@ -171,12 +226,38 @@
 		highpass: 'Highpass',
 		bandpass: 'Bandpass',
 		phaser: 'Phaser',
-		flanger: 'Flanger'
+		flanger: 'Flanger',
+		bitcrusher: 'Bitcrusher',
+		ring_mod: 'Ring Mod',
+		delay: 'Delay',
+		reverb: 'Reverb',
+		reverse: 'Reverse'
 	};
 
-	// WET preview — per-tab Waveform refs + playing state.
-	// wetRefs stores the component instance (exported playPause/pause/getIsPlaying).
-	// Typed as any to avoid Svelte 5 bind:this variance issues.
+	// ── Preset UI state (per-tab) ─────────────────────────────────────────────────
+	let tabPresetSelected = $state<Record<string, string>>({});
+	let tabShowSavePreset = $state<Record<string, boolean>>({});
+	let tabPresetSaveName = $state<Record<string, string>>({});
+	let tabShowManagePresets = $state<Record<string, boolean>>({});
+
+	function applyPreset(tabId: string) {
+		const presetId = tabPresetSelected[tabId];
+		if (!presetId) return;
+		const preset =
+			BUILTIN_PRESETS.find((p) => p.id === presetId) ?? userPresets.find((p) => p.id === presetId);
+		if (!preset) return;
+		const cfg = tabEffects[tabId] ?? {};
+		const anyEnabled = EFFECT_KEYS.some(
+			(k) => !!(cfg[k] as { enabled?: boolean } | undefined)?.enabled
+		);
+		if (anyEnabled && !confirm(`Apply "${preset.name}"? This will replace all current effects.`)) {
+			return;
+		}
+		tabEffects[tabId] = { ...preset.effects };
+		schedSave(tabId);
+	}
+
+	// ── WET preview ───────────────────────────────────────────────────────────────
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const wetRefs: Record<string, any> = {};
 	let wetPlaying = $state<Record<string, boolean>>({});
@@ -215,7 +296,10 @@
 				{@const src = srcs[0]}
 				{@const tabClip = tabClips[0]}
 				{@const previewClip = tabClip?.clip_id ? clips.find((c) => c.id === tabClip.clip_id) : null}
-				{@const anyEnabled = EFFECT_KEYS.some((k) => !!(cfg[k] as { enabled?: boolean } | undefined)?.enabled)}
+				{@const anyEnabled = EFFECT_KEYS.some(
+					(k) => !!(cfg[k] as { enabled?: boolean } | undefined)?.enabled
+				)}
+				{@const reverseOn = reverseOf(cfg).enabled}
 
 				<div class="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
 					<!-- Tab header -->
@@ -279,7 +363,7 @@
 						{/if}
 					</div>
 
-					<!-- 3. DRY preview (original, no effects) -->
+					<!-- 3. DRY preview -->
 					{#if previewClip}
 						<div class="mb-4">
 							<span class="text-xs text-zinc-600">Original (dry)</span>
@@ -292,31 +376,157 @@
 						</div>
 					{/if}
 
-					<!-- 4. Toggle pill row -->
+					<!-- 4. Preset picker -->
+					<div class="mb-3 rounded-lg border border-zinc-700/50 bg-zinc-800/40 p-3">
+						<div class="mb-2 flex items-center justify-between">
+							<span class="text-xs font-semibold text-zinc-400">Presets</span>
+							<div class="flex gap-1.5">
+								<button
+									type="button"
+									onclick={() =>
+										(tabShowManagePresets[tab.id] = !tabShowManagePresets[tab.id])}
+									class="text-xs text-zinc-600 hover:text-zinc-400"
+								>
+									{tabShowManagePresets[tab.id] ? 'Hide manage' : 'Manage'}
+								</button>
+							</div>
+						</div>
+						<div class="flex gap-2">
+							<select
+								class="flex-1 rounded border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-xs text-white"
+								bind:value={tabPresetSelected[tab.id]}
+							>
+								<option value="">— select a preset —</option>
+								<optgroup label="Built-in">
+									{#each BUILTIN_PRESETS as preset}
+										<option value={preset.id}>{preset.name}</option>
+									{/each}
+								</optgroup>
+								{#if userPresets.length > 0}
+									<optgroup label="My presets">
+										{#each userPresets as preset}
+											<option value={preset.id}>{preset.name}</option>
+										{/each}
+									</optgroup>
+								{/if}
+							</select>
+							<button
+								type="button"
+								onclick={() => applyPreset(tab.id)}
+								disabled={!tabPresetSelected[tab.id]}
+								class="rounded border border-zinc-600 px-3 py-1.5 text-xs font-semibold text-zinc-300 transition-colors hover:border-zinc-400 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+							>
+								Apply
+							</button>
+						</div>
+
+						<!-- Save as preset -->
+						<div class="mt-2">
+							{#if tabShowSavePreset[tab.id]}
+								<form
+									method="POST"
+									action="?/savePreset"
+									use:enhance={() =>
+										async ({ update }) => {
+											tabShowSavePreset[tab.id] = false;
+											tabPresetSaveName[tab.id] = '';
+											await update();
+										}}
+									class="flex gap-2"
+								>
+									<input type="hidden" name="effects_json" value={JSON.stringify(cfg)} />
+									<input
+										type="text"
+										name="name"
+										bind:value={tabPresetSaveName[tab.id]}
+										placeholder="Preset name…"
+										required
+										class="flex-1 rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-white placeholder-zinc-600"
+									/>
+									<button
+										type="submit"
+										class="rounded border border-amber-600 px-3 py-1 text-xs font-semibold text-amber-400 hover:border-amber-400"
+									>
+										Save
+									</button>
+									<button
+										type="button"
+										onclick={() => (tabShowSavePreset[tab.id] = false)}
+										class="text-xs text-zinc-600 hover:text-zinc-400"
+									>
+										Cancel
+									</button>
+								</form>
+							{:else}
+								<button
+									type="button"
+									onclick={() => (tabShowSavePreset[tab.id] = true)}
+									class="text-xs text-zinc-600 hover:text-zinc-400"
+								>
+									+ Save current as preset
+								</button>
+							{/if}
+						</div>
+
+						<!-- Manage user presets -->
+						{#if tabShowManagePresets[tab.id] && userPresets.length > 0}
+							<div class="mt-3 space-y-1.5 border-t border-zinc-700 pt-2">
+								{#each userPresets as preset}
+									<div class="flex items-center gap-2">
+										<span class="flex-1 truncate text-xs text-zinc-300">{preset.name}</span>
+										<form method="POST" action="?/deletePreset" use:enhance class="inline">
+											<input type="hidden" name="preset_id" value={preset.id} />
+											<button
+												type="submit"
+												onclick={(e) => {
+													if (!confirm(`Delete preset "${preset.name}"?`)) e.preventDefault();
+												}}
+												class="text-xs text-red-700 hover:text-red-400">Delete</button
+											>
+										</form>
+									</div>
+								{/each}
+							</div>
+						{:else if tabShowManagePresets[tab.id]}
+							<p class="mt-2 text-xs text-zinc-600 italic">No saved presets yet.</p>
+						{/if}
+					</div>
+
+					<!-- 5. Toggle pill row -->
 					<div class="mb-3">
 						<span class="mb-2 block text-xs text-zinc-500">Effects</span>
 						<div class="flex flex-wrap gap-1.5">
 							{#each EFFECT_KEYS as fxKey}
 								{@const on = !!(cfg[fxKey] as { enabled?: boolean } | undefined)?.enabled}
+								{@const isReverse = fxKey === 'reverse'}
+								{@const disabledByReverse = reverseOn && !isReverse}
 								<button
 									type="button"
 									onclick={() => toggleEffect(tab.id, fxKey)}
-									class="rounded-full border px-3 py-1 text-xs font-semibold transition-all"
-									class:border-zinc-700={!on}
-									class:text-zinc-500={!on}
-									class:hover:border-zinc-500={!on}
-									class:hover:text-zinc-400={!on}
-									style={on
-										? 'border-color: #00e5ff44; background-color: #00e5ff18; color: #00e5ff;'
-										: ''}
+									disabled={disabledByReverse}
+									class="rounded-full border px-3 py-1 text-xs font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-30"
+									class:border-zinc-700={!on && !disabledByReverse}
+									class:text-zinc-500={!on && !disabledByReverse}
+									class:hover:border-zinc-500={!on && !disabledByReverse}
+									class:hover:text-zinc-400={!on && !disabledByReverse}
+									style={on && isReverse
+										? 'border-color: #ff7f1144; background-color: #ff7f1118; color: #ff7f11;'
+										: on
+											? 'border-color: #00e5ff44; background-color: #00e5ff18; color: #00e5ff;'
+											: ''}
 								>
 									{EFFECT_LABELS[fxKey]}
 								</button>
 							{/each}
 						</div>
+						{#if reverseOn}
+							<p class="mt-2 text-xs" style="color: #ff7f11;">
+								Reverse mode — other effects are disabled while Reverse is active
+							</p>
+						{/if}
 					</div>
 
-					<!-- 5. Expanded control cards for enabled effects only -->
+					<!-- 6. Control cards for enabled effects -->
 					{#if anyEnabled}
 						<div class="mb-4 space-y-2">
 							<!-- Pitch -->
@@ -328,24 +538,52 @@
 											{pitchOf(cfg).semitones > 0 ? '+' : ''}{pitchOf(cfg).semitones} st
 										</span>
 									</div>
-									<input
-										type="range"
-										min="-12"
-										max="12"
-										step="1"
-										class="w-full accent-[#00e5ff]"
-										value={pitchOf(cfg).semitones}
-										oninput={(e) => {
-											tabEffects[tab.id] = {
-												...cfg,
-												pitch: {
-													...pitchOf(cfg),
-													semitones: Number((e.target as HTMLInputElement).value)
-												}
-											};
-											schedSave(tab.id);
-										}}
-									/>
+									<div class="space-y-1.5">
+										<div>
+											<span class="mb-0.5 block text-xs text-zinc-600">Semitones (−24 to +24)</span>
+											<input
+												type="range"
+												min="-24"
+												max="24"
+												step="1"
+												class="w-full accent-[#00e5ff]"
+												value={pitchOf(cfg).semitones}
+												oninput={(e) => {
+													tabEffects[tab.id] = {
+														...cfg,
+														pitch: {
+															...pitchOf(cfg),
+															semitones: Number((e.target as HTMLInputElement).value)
+														}
+													};
+													schedSave(tab.id);
+												}}
+											/>
+										</div>
+										<div>
+											<span class="mb-0.5 block text-xs text-zinc-600"
+												>Window size ({pitchOf(cfg).window_size.toFixed(2)} s)</span
+											>
+											<input
+												type="range"
+												min="0.03"
+												max="0.5"
+												step="0.01"
+												class="w-full accent-[#00e5ff]"
+												value={pitchOf(cfg).window_size}
+												oninput={(e) => {
+													tabEffects[tab.id] = {
+														...cfg,
+														pitch: {
+															...pitchOf(cfg),
+															window_size: Number((e.target as HTMLInputElement).value)
+														}
+													};
+													schedSave(tab.id);
+												}}
+											/>
+										</div>
+									</div>
 								</div>
 							{/if}
 
@@ -354,12 +592,14 @@
 								<div class="rounded-lg border border-zinc-700 bg-zinc-800/50 p-3">
 									<div class="mb-2 flex items-center justify-between">
 										<span class="text-xs font-semibold text-zinc-300">Tempo</span>
-										<span class="font-mono text-xs text-zinc-500">{tempoOf(cfg).rate.toFixed(2)}×</span>
+										<span class="font-mono text-xs text-zinc-500"
+											>{tempoOf(cfg).rate.toFixed(2)}×</span
+										>
 									</div>
 									<input
 										type="range"
-										min="0.5"
-										max="2.0"
+										min="0.25"
+										max="4.0"
 										step="0.05"
 										class="w-full accent-[#00e5ff]"
 										value={tempoOf(cfg).rate}
@@ -383,27 +623,55 @@
 									<div class="mb-2 flex items-center justify-between">
 										<span class="text-xs font-semibold text-zinc-300">Lowpass</span>
 										<span class="font-mono text-xs text-zinc-500"
-											>{lowpassOf(cfg).cutoff_hz.toFixed(0)} Hz</span
+											>{lowpassOf(cfg).cutoff_hz.toFixed(0)} Hz · Q {lowpassOf(cfg).q.toFixed(
+												1
+											)}</span
 										>
 									</div>
-									<input
-										type="range"
-										min="100"
-										max="15000"
-										step="100"
-										class="w-full accent-[#00e5ff]"
-										value={lowpassOf(cfg).cutoff_hz}
-										oninput={(e) => {
-											tabEffects[tab.id] = {
-												...cfg,
-												lowpass: {
-													...lowpassOf(cfg),
-													cutoff_hz: Number((e.target as HTMLInputElement).value)
-												}
-											};
-											schedSave(tab.id);
-										}}
-									/>
+									<div class="space-y-1.5">
+										<div>
+											<span class="mb-0.5 block text-xs text-zinc-600">Cutoff</span>
+											<input
+												type="range"
+												min="100"
+												max="15000"
+												step="100"
+												class="w-full accent-[#00e5ff]"
+												value={lowpassOf(cfg).cutoff_hz}
+												oninput={(e) => {
+													tabEffects[tab.id] = {
+														...cfg,
+														lowpass: {
+															...lowpassOf(cfg),
+															cutoff_hz: Number((e.target as HTMLInputElement).value)
+														}
+													};
+													schedSave(tab.id);
+												}}
+											/>
+										</div>
+										<div>
+											<span class="mb-0.5 block text-xs text-zinc-600">Q (resonance)</span>
+											<input
+												type="range"
+												min="0.1"
+												max="10"
+												step="0.1"
+												class="w-full accent-[#00e5ff]"
+												value={lowpassOf(cfg).q}
+												oninput={(e) => {
+													tabEffects[tab.id] = {
+														...cfg,
+														lowpass: {
+															...lowpassOf(cfg),
+															q: Number((e.target as HTMLInputElement).value)
+														}
+													};
+													schedSave(tab.id);
+												}}
+											/>
+										</div>
+									</div>
 								</div>
 							{/if}
 
@@ -413,27 +681,55 @@
 									<div class="mb-2 flex items-center justify-between">
 										<span class="text-xs font-semibold text-zinc-300">Highpass</span>
 										<span class="font-mono text-xs text-zinc-500"
-											>{highpassOf(cfg).cutoff_hz.toFixed(0)} Hz</span
+											>{highpassOf(cfg).cutoff_hz.toFixed(0)} Hz · Q {highpassOf(cfg).q.toFixed(
+												1
+											)}</span
 										>
 									</div>
-									<input
-										type="range"
-										min="20"
-										max="8000"
-										step="20"
-										class="w-full accent-[#00e5ff]"
-										value={highpassOf(cfg).cutoff_hz}
-										oninput={(e) => {
-											tabEffects[tab.id] = {
-												...cfg,
-												highpass: {
-													...highpassOf(cfg),
-													cutoff_hz: Number((e.target as HTMLInputElement).value)
-												}
-											};
-											schedSave(tab.id);
-										}}
-									/>
+									<div class="space-y-1.5">
+										<div>
+											<span class="mb-0.5 block text-xs text-zinc-600">Cutoff</span>
+											<input
+												type="range"
+												min="20"
+												max="8000"
+												step="20"
+												class="w-full accent-[#00e5ff]"
+												value={highpassOf(cfg).cutoff_hz}
+												oninput={(e) => {
+													tabEffects[tab.id] = {
+														...cfg,
+														highpass: {
+															...highpassOf(cfg),
+															cutoff_hz: Number((e.target as HTMLInputElement).value)
+														}
+													};
+													schedSave(tab.id);
+												}}
+											/>
+										</div>
+										<div>
+											<span class="mb-0.5 block text-xs text-zinc-600">Q (resonance)</span>
+											<input
+												type="range"
+												min="0.1"
+												max="10"
+												step="0.1"
+												class="w-full accent-[#00e5ff]"
+												value={highpassOf(cfg).q}
+												oninput={(e) => {
+													tabEffects[tab.id] = {
+														...cfg,
+														highpass: {
+															...highpassOf(cfg),
+															q: Number((e.target as HTMLInputElement).value)
+														}
+													};
+													schedSave(tab.id);
+												}}
+											/>
+										</div>
+									</div>
 								</div>
 							{/if}
 
@@ -443,8 +739,7 @@
 									<div class="mb-2 flex items-center justify-between">
 										<span class="text-xs font-semibold text-zinc-300">Bandpass</span>
 										<span class="font-mono text-xs text-zinc-500">
-											{bandpassOf(cfg).freq_hz.toFixed(0)} Hz · Q
-											{bandpassOf(cfg).q.toFixed(1)}
+											{bandpassOf(cfg).freq_hz.toFixed(0)} Hz · Q {bandpassOf(cfg).q.toFixed(1)}
 										</span>
 									</div>
 									<div class="space-y-1.5">
@@ -470,7 +765,7 @@
 											/>
 										</div>
 										<div>
-											<span class="mb-0.5 block text-xs text-zinc-600">Q (resonance)</span>
+											<span class="mb-0.5 block text-xs text-zinc-600">Q</span>
 											<input
 												type="range"
 												min="0.1"
@@ -490,6 +785,29 @@
 												}}
 											/>
 										</div>
+										<div>
+											<span class="mb-0.5 block text-xs text-zinc-600"
+												>Mod rate ({bandpassOf(cfg).mod_rate_hz.toFixed(2)} Hz — 0 = static)</span
+											>
+											<input
+												type="range"
+												min="0"
+												max="4"
+												step="0.01"
+												class="w-full accent-[#00e5ff]"
+												value={bandpassOf(cfg).mod_rate_hz}
+												oninput={(e) => {
+													tabEffects[tab.id] = {
+														...cfg,
+														bandpass: {
+															...bandpassOf(cfg),
+															mod_rate_hz: Number((e.target as HTMLInputElement).value)
+														}
+													};
+													schedSave(tab.id);
+												}}
+											/>
+										</div>
 									</div>
 								</div>
 							{/if}
@@ -500,8 +818,7 @@
 									<div class="mb-2 flex items-center justify-between">
 										<span class="text-xs font-semibold text-zinc-300">Phaser</span>
 										<span class="font-mono text-xs text-zinc-500">
-											{phaserOf(cfg).rate_hz.toFixed(2)} Hz · d
-											{phaserOf(cfg).depth.toFixed(2)}
+											{phaserOf(cfg).rate_hz.toFixed(2)} Hz · d {phaserOf(cfg).depth.toFixed(2)}
 										</span>
 									</div>
 									<div class="space-y-1.5">
@@ -510,7 +827,7 @@
 											<input
 												type="range"
 												min="0.01"
-												max="4"
+												max="8"
 												step="0.01"
 												class="w-full accent-[#00e5ff]"
 												value={phaserOf(cfg).rate_hz}
@@ -547,18 +864,63 @@
 												}}
 											/>
 										</div>
+										<div>
+											<span class="mb-0.5 block text-xs text-zinc-600"
+												>Stages ({phaserOf(cfg).stages})</span
+											>
+											<input
+												type="range"
+												min="2"
+												max="12"
+												step="2"
+												class="w-full accent-[#00e5ff]"
+												value={phaserOf(cfg).stages}
+												oninput={(e) => {
+													tabEffects[tab.id] = {
+														...cfg,
+														phaser: {
+															...phaserOf(cfg),
+															stages: Number((e.target as HTMLInputElement).value)
+														}
+													};
+													schedSave(tab.id);
+												}}
+											/>
+										</div>
+										<div>
+											<span class="mb-0.5 block text-xs text-zinc-600"
+												>Feedback ({phaserOf(cfg).feedback.toFixed(2)})</span
+											>
+											<input
+												type="range"
+												min="0"
+												max="0.95"
+												step="0.01"
+												class="w-full accent-[#00e5ff]"
+												value={phaserOf(cfg).feedback}
+												oninput={(e) => {
+													tabEffects[tab.id] = {
+														...cfg,
+														phaser: {
+															...phaserOf(cfg),
+															feedback: Number((e.target as HTMLInputElement).value)
+														}
+													};
+													schedSave(tab.id);
+												}}
+											/>
+										</div>
 									</div>
 								</div>
 							{/if}
 
-							<!-- Flanger (stub — audio passes through unmodified) -->
+							<!-- Flanger -->
 							{#if flangerOf(cfg).enabled}
 								<div class="rounded-lg border border-zinc-700 bg-zinc-800/50 p-3">
 									<div class="mb-2 flex items-center justify-between">
 										<span class="text-xs font-semibold text-zinc-300">Flanger</span>
 										<span class="font-mono text-xs text-zinc-500">
-											{flangerOf(cfg).rate_hz.toFixed(2)} Hz · d
-											{flangerOf(cfg).depth.toFixed(2)}
+											{flangerOf(cfg).rate_hz.toFixed(2)} Hz · d {flangerOf(cfg).depth.toFixed(2)}
 										</span>
 									</div>
 									<div class="space-y-1.5">
@@ -604,20 +966,340 @@
 												}}
 											/>
 										</div>
+										<div>
+											<span class="mb-0.5 block text-xs text-zinc-600"
+												>Feedback ({flangerOf(cfg).feedback.toFixed(2)})</span
+											>
+											<input
+												type="range"
+												min="0"
+												max="0.95"
+												step="0.01"
+												class="w-full accent-[#00e5ff]"
+												value={flangerOf(cfg).feedback}
+												oninput={(e) => {
+													tabEffects[tab.id] = {
+														...cfg,
+														flanger: {
+															...flangerOf(cfg),
+															feedback: Number((e.target as HTMLInputElement).value)
+														}
+													};
+													schedSave(tab.id);
+												}}
+											/>
+										</div>
 									</div>
-									<p class="mt-2 text-xs text-zinc-600 italic">Stub — not yet wired</p>
+								</div>
+							{/if}
+
+							<!-- Bitcrusher -->
+							{#if bitcrusherOf(cfg).enabled}
+								<div class="rounded-lg border border-zinc-700 bg-zinc-800/50 p-3">
+									<div class="mb-2 flex items-center justify-between">
+										<span class="text-xs font-semibold text-zinc-300">Bitcrusher</span>
+										<span class="font-mono text-xs text-zinc-500"
+											>{bitcrusherOf(cfg).bits} bits</span
+										>
+									</div>
+									<div class="space-y-1.5">
+										<div>
+											<span class="mb-0.5 block text-xs text-zinc-600">Bit depth (1–16)</span>
+											<input
+												type="range"
+												min="1"
+												max="16"
+												step="1"
+												class="w-full accent-[#00e5ff]"
+												value={bitcrusherOf(cfg).bits}
+												oninput={(e) => {
+													tabEffects[tab.id] = {
+														...cfg,
+														bitcrusher: {
+															...bitcrusherOf(cfg),
+															bits: Number((e.target as HTMLInputElement).value)
+														}
+													};
+													schedSave(tab.id);
+												}}
+											/>
+										</div>
+										<div>
+											<span class="mb-0.5 block text-xs text-zinc-600"
+												>Sample rate reduction ({bitcrusherOf(cfg).sample_rate_reduction})</span
+											>
+											<input
+												type="range"
+												min="0"
+												max="16"
+												step="1"
+												class="w-full accent-[#00e5ff]"
+												value={bitcrusherOf(cfg).sample_rate_reduction}
+												oninput={(e) => {
+													tabEffects[tab.id] = {
+														...cfg,
+														bitcrusher: {
+															...bitcrusherOf(cfg),
+															sample_rate_reduction: Number((e.target as HTMLInputElement).value)
+														}
+													};
+													schedSave(tab.id);
+												}}
+											/>
+										</div>
+									</div>
+								</div>
+							{/if}
+
+							<!-- Ring Mod -->
+							{#if ringModOf(cfg).enabled}
+								<div class="rounded-lg border border-zinc-700 bg-zinc-800/50 p-3">
+									<div class="mb-2 flex items-center justify-between">
+										<span class="text-xs font-semibold text-zinc-300">Ring Mod</span>
+										<span class="font-mono text-xs text-zinc-500"
+											>{ringModOf(cfg).freq_hz.toFixed(0)} Hz</span
+										>
+									</div>
+									<div class="space-y-1.5">
+										<div>
+											<span class="mb-0.5 block text-xs text-zinc-600">Frequency</span>
+											<input
+												type="range"
+												min="1"
+												max="2000"
+												step="1"
+												class="w-full accent-[#00e5ff]"
+												value={ringModOf(cfg).freq_hz}
+												oninput={(e) => {
+													tabEffects[tab.id] = {
+														...cfg,
+														ring_mod: {
+															...ringModOf(cfg),
+															freq_hz: Number((e.target as HTMLInputElement).value)
+														}
+													};
+													schedSave(tab.id);
+												}}
+											/>
+										</div>
+										<div>
+											<span class="mb-0.5 block text-xs text-zinc-600"
+												>Depth ({ringModOf(cfg).depth.toFixed(2)})</span
+											>
+											<input
+												type="range"
+												min="0"
+												max="1"
+												step="0.01"
+												class="w-full accent-[#00e5ff]"
+												value={ringModOf(cfg).depth}
+												oninput={(e) => {
+													tabEffects[tab.id] = {
+														...cfg,
+														ring_mod: {
+															...ringModOf(cfg),
+															depth: Number((e.target as HTMLInputElement).value)
+														}
+													};
+													schedSave(tab.id);
+												}}
+											/>
+										</div>
+									</div>
+								</div>
+							{/if}
+
+							<!-- Delay -->
+							{#if delayOf(cfg).enabled}
+								<div class="rounded-lg border border-zinc-700 bg-zinc-800/50 p-3">
+									<div class="mb-2 flex items-center justify-between">
+										<span class="text-xs font-semibold text-zinc-300">Delay</span>
+										<span class="font-mono text-xs text-zinc-500"
+											>{delayOf(cfg).time_ms} ms · fb {delayOf(cfg).feedback.toFixed(2)}</span
+										>
+									</div>
+									<div class="space-y-1.5">
+										<div>
+											<span class="mb-0.5 block text-xs text-zinc-600">Time (ms)</span>
+											<input
+												type="range"
+												min="10"
+												max="1000"
+												step="10"
+												class="w-full accent-[#00e5ff]"
+												value={delayOf(cfg).time_ms}
+												oninput={(e) => {
+													tabEffects[tab.id] = {
+														...cfg,
+														delay: {
+															...delayOf(cfg),
+															time_ms: Number((e.target as HTMLInputElement).value)
+														}
+													};
+													schedSave(tab.id);
+												}}
+											/>
+										</div>
+										<div>
+											<span class="mb-0.5 block text-xs text-zinc-600">Feedback</span>
+											<input
+												type="range"
+												min="0"
+												max="0.95"
+												step="0.01"
+												class="w-full accent-[#00e5ff]"
+												value={delayOf(cfg).feedback}
+												oninput={(e) => {
+													tabEffects[tab.id] = {
+														...cfg,
+														delay: {
+															...delayOf(cfg),
+															feedback: Number((e.target as HTMLInputElement).value)
+														}
+													};
+													schedSave(tab.id);
+												}}
+											/>
+										</div>
+										<div>
+											<span class="mb-0.5 block text-xs text-zinc-600"
+												>Wet ({delayOf(cfg).wet.toFixed(2)})</span
+											>
+											<input
+												type="range"
+												min="0"
+												max="1"
+												step="0.01"
+												class="w-full accent-[#00e5ff]"
+												value={delayOf(cfg).wet}
+												oninput={(e) => {
+													tabEffects[tab.id] = {
+														...cfg,
+														delay: {
+															...delayOf(cfg),
+															wet: Number((e.target as HTMLInputElement).value)
+														}
+													};
+													schedSave(tab.id);
+												}}
+											/>
+										</div>
+									</div>
+								</div>
+							{/if}
+
+							<!-- Reverb -->
+							{#if reverbOf(cfg).enabled}
+								<div class="rounded-lg border border-zinc-700 bg-zinc-800/50 p-3">
+									<div class="mb-2 flex items-center justify-between">
+										<span class="text-xs font-semibold text-zinc-300">Reverb</span>
+										<span class="font-mono text-xs text-zinc-500"
+											>{reverbOf(cfg).decay_s.toFixed(1)} s · wet {reverbOf(cfg).wet.toFixed(
+												2
+											)}</span
+										>
+									</div>
+									<div class="space-y-1.5">
+										<div>
+											<span class="mb-0.5 block text-xs text-zinc-600">Decay (s)</span>
+											<input
+												type="range"
+												min="0.1"
+												max="10"
+												step="0.1"
+												class="w-full accent-[#00e5ff]"
+												value={reverbOf(cfg).decay_s}
+												oninput={(e) => {
+													tabEffects[tab.id] = {
+														...cfg,
+														reverb: {
+															...reverbOf(cfg),
+															decay_s: Number((e.target as HTMLInputElement).value)
+														}
+													};
+													schedSave(tab.id);
+												}}
+											/>
+										</div>
+										<div>
+											<span class="mb-0.5 block text-xs text-zinc-600"
+												>Pre-delay ({reverbOf(cfg).pre_delay_ms} ms)</span
+											>
+											<input
+												type="range"
+												min="0"
+												max="200"
+												step="5"
+												class="w-full accent-[#00e5ff]"
+												value={reverbOf(cfg).pre_delay_ms}
+												oninput={(e) => {
+													tabEffects[tab.id] = {
+														...cfg,
+														reverb: {
+															...reverbOf(cfg),
+															pre_delay_ms: Number((e.target as HTMLInputElement).value)
+														}
+													};
+													schedSave(tab.id);
+												}}
+											/>
+										</div>
+										<div>
+											<span class="mb-0.5 block text-xs text-zinc-600"
+												>Wet ({reverbOf(cfg).wet.toFixed(2)})</span
+											>
+											<input
+												type="range"
+												min="0"
+												max="1"
+												step="0.01"
+												class="w-full accent-[#00e5ff]"
+												value={reverbOf(cfg).wet}
+												oninput={(e) => {
+													tabEffects[tab.id] = {
+														...cfg,
+														reverb: {
+															...reverbOf(cfg),
+															wet: Number((e.target as HTMLInputElement).value)
+														}
+													};
+													schedSave(tab.id);
+												}}
+											/>
+										</div>
+									</div>
+								</div>
+							{/if}
+
+							<!-- Reverse -->
+							{#if reverseOf(cfg).enabled}
+								<div
+									class="rounded-lg border p-3"
+									style="border-color: #ff7f1133; background-color: #ff7f110a;"
+								>
+									<span class="text-xs font-semibold" style="color: #ff7f11;"
+										>Reverse playback active</span
+									>
+									<p class="mt-1 text-xs text-zinc-500">
+										Audio plays backwards. The WET preview below reflects this.
+									</p>
 								</div>
 							{/if}
 						</div>
 					{/if}
 
-					<!-- 6. WET preview — Waveform with live effects applied -->
+					<!-- 7. WET preview -->
 					{#if previewClip}
-						<div class="rounded-lg border p-3" style="border-color: #00e5ff22; background-color: #00e5ff06;">
+						<div
+							class="rounded-lg border p-3"
+							style="border-color: #00e5ff22; background-color: #00e5ff06;"
+						>
 							<div class="mb-2 flex items-center gap-2">
 								<span class="text-xs font-semibold" style="color: #00e5ff;">Processed (wet)</span>
 								{#if !anyEnabled}
-									<span class="text-xs text-zinc-600 italic">enable an effect to hear the chain</span>
+									<span class="text-xs text-zinc-600 italic"
+										>enable an effect to hear the chain</span
+									>
 								{/if}
 								<button
 									type="button"

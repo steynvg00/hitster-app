@@ -8,8 +8,8 @@ export const BUILTIN_PRESETS: EffectPreset[] = [
 		created_by: null,
 		created_at: '',
 		effects: {
-			lowpass: { enabled: true, frequency: 600, q: 1.5 },
-			reverb: { enabled: true, decay: 3, pre_delay: 0.02, wet: 0.6 }
+			lowpass: { enabled: true, cutoff_hz: 600, q: 1.5 },
+			reverb: { enabled: true, decay_s: 3, pre_delay_ms: 20, wet: 0.6 }
 		} satisfies EffectsConfig
 	},
 	{
@@ -19,9 +19,9 @@ export const BUILTIN_PRESETS: EffectPreset[] = [
 		created_by: null,
 		created_at: '',
 		effects: {
-			highpass: { enabled: true, frequency: 300, q: 1 },
-			lowpass: { enabled: true, frequency: 3500, q: 1 },
-			bitcrusher: { enabled: true, bits: 10 }
+			highpass: { enabled: true, cutoff_hz: 300, q: 1 },
+			lowpass: { enabled: true, cutoff_hz: 3500, q: 1 },
+			bitcrusher: { enabled: true, bits: 10, sample_rate_reduction: 0 }
 		} satisfies EffectsConfig
 	},
 	{
@@ -31,7 +31,7 @@ export const BUILTIN_PRESETS: EffectPreset[] = [
 		created_by: null,
 		created_at: '',
 		effects: {
-			bitcrusher: { enabled: true, bits: 4 },
+			bitcrusher: { enabled: true, bits: 4, sample_rate_reduction: 0 },
 			pitch: { enabled: true, semitones: 5, window_size: 0.1 }
 		} satisfies EffectsConfig
 	},
@@ -42,10 +42,10 @@ export const BUILTIN_PRESETS: EffectPreset[] = [
 		created_by: null,
 		created_at: '',
 		effects: {
-			lowpass: { enabled: true, frequency: 8000, q: 0.5 },
-			highpass: { enabled: true, frequency: 80, q: 0.7 },
-			bandpass: { enabled: true, frequency: 1200, width: 24, mod_rate_hz: 0.1 },
-			bitcrusher: { enabled: true, bits: 12 }
+			lowpass: { enabled: true, cutoff_hz: 8000, q: 0.5 },
+			highpass: { enabled: true, cutoff_hz: 80, q: 0.7 },
+			bandpass: { enabled: true, freq_hz: 1200, q: 1.4, mod_rate_hz: 0.1 },
+			bitcrusher: { enabled: true, bits: 12, sample_rate_reduction: 0 }
 		} satisfies EffectsConfig
 	},
 	{
@@ -55,7 +55,9 @@ export const BUILTIN_PRESETS: EffectPreset[] = [
 		created_by: null,
 		created_at: '',
 		effects: {
-			robot_voice: { enabled: true }
+			ring_mod: { enabled: true, freq_hz: 30, depth: 1 },
+			bitcrusher: { enabled: true, bits: 4, sample_rate_reduction: 0 },
+			highpass: { enabled: true, cutoff_hz: 200, q: 1 }
 		} satisfies EffectsConfig
 	},
 	{
@@ -76,7 +78,7 @@ export const BUILTIN_PRESETS: EffectPreset[] = [
 		created_at: '',
 		effects: {
 			reverse: { enabled: true },
-			reverb: { enabled: true, decay: 4, pre_delay: 0.05, wet: 0.5 },
+			reverb: { enabled: true, decay_s: 4, pre_delay_ms: 50, wet: 0.5 },
 			pitch: { enabled: true, semitones: -3, window_size: 0.15 }
 		} satisfies EffectsConfig
 	},
@@ -87,9 +89,9 @@ export const BUILTIN_PRESETS: EffectPreset[] = [
 		created_by: null,
 		created_at: '',
 		effects: {
-			lowpass: { enabled: true, frequency: 1500, q: 0.8 },
-			reverb: { enabled: true, decay: 5, pre_delay: 0.1, wet: 0.75 },
-			delay: { enabled: true, time: 0.15, feedback: 0.3, wet: 0.3 }
+			lowpass: { enabled: true, cutoff_hz: 1500, q: 0.8 },
+			reverb: { enabled: true, decay_s: 5, pre_delay_ms: 100, wet: 0.75 },
+			delay: { enabled: true, time_ms: 150, feedback: 0.3, wet: 0.3 }
 		} satisfies EffectsConfig
 	},
 	{
@@ -99,8 +101,8 @@ export const BUILTIN_PRESETS: EffectPreset[] = [
 		created_by: null,
 		created_at: '',
 		effects: {
-			reverb: { enabled: true, decay: 8, pre_delay: 0.08, wet: 0.85 },
-			delay: { enabled: true, time: 0.4, feedback: 0.45, wet: 0.4 }
+			reverb: { enabled: true, decay_s: 8, pre_delay_ms: 80, wet: 0.85 },
+			delay: { enabled: true, time_ms: 400, feedback: 0.45, wet: 0.4 }
 		} satisfies EffectsConfig
 	},
 	{
@@ -110,7 +112,14 @@ export const BUILTIN_PRESETS: EffectPreset[] = [
 		created_by: null,
 		created_at: '',
 		effects: {
-			phaser: { enabled: true, frequency: 4, depth: 0.9, stages: 8, feedback: 0.7, stereo_offset: 0.02 }
+			phaser: {
+				enabled: true,
+				rate_hz: 4,
+				depth: 0.9,
+				stages: 8,
+				feedback: 0.7,
+				stereo_offset_deg: 0.02
+			}
 		} satisfies EffectsConfig
 	},
 	{
@@ -120,8 +129,8 @@ export const BUILTIN_PRESETS: EffectPreset[] = [
 		created_by: null,
 		created_at: '',
 		effects: {
-			delay: { enabled: true, time: 0.5, feedback: 0.7, wet: 0.6 },
-			reverb: { enabled: true, decay: 2, pre_delay: 0.02, wet: 0.3 }
+			delay: { enabled: true, time_ms: 500, feedback: 0.7, wet: 0.6 },
+			reverb: { enabled: true, decay_s: 2, pre_delay_ms: 20, wet: 0.3 }
 		} satisfies EffectsConfig
 	},
 	{
@@ -133,8 +142,8 @@ export const BUILTIN_PRESETS: EffectPreset[] = [
 		effects: {
 			pitch: { enabled: true, semitones: -7, window_size: 0.25 },
 			tempo: { enabled: true, rate: 0.6 },
-			bitcrusher: { enabled: true, bits: 6 },
-			reverb: { enabled: true, decay: 3, pre_delay: 0.03, wet: 0.4 }
+			bitcrusher: { enabled: true, bits: 6, sample_rate_reduction: 0 },
+			reverb: { enabled: true, decay_s: 3, pre_delay_ms: 30, wet: 0.4 }
 		} satisfies EffectsConfig
 	}
 ];
