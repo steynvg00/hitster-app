@@ -53,7 +53,14 @@ export interface EffectsConfig {
 	lowpass?: { enabled: boolean; cutoff_hz: number; q: number }; // 20 to 20000
 	highpass?: { enabled: boolean; cutoff_hz: number; q: number }; // 20 to 20000
 	bandpass?: { enabled: boolean; freq_hz: number; q: number; mod_rate_hz: number };
-	phaser?: { enabled: boolean; rate_hz: number; depth: number; stages: number; feedback: number; stereo_offset_deg: number };
+	phaser?: {
+		enabled: boolean;
+		rate_hz: number;
+		depth: number;
+		stages: number;
+		feedback: number;
+		stereo_offset_deg: number;
+	};
 	flanger?: { enabled: boolean; rate_hz: number; depth: number; feedback: number };
 	bitcrusher?: { enabled: boolean; bits: number; sample_rate_reduction: number };
 	ring_mod?: { enabled: boolean; freq_hz: number; depth: number };

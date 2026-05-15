@@ -90,7 +90,9 @@
 		toneBandpass = null;
 		try {
 			toneBandpassLfo?.stop();
-		} catch {}
+		} catch {
+			/* noop — stop may throw if LFO was never started */
+		}
 		toneBandpassLfo?.dispose();
 		toneBandpassLfo = null;
 		toneBitcrusher?.dispose();
@@ -99,7 +101,9 @@
 		toneRingMod = null;
 		try {
 			toneFlangerLfo?.stop();
-		} catch {}
+		} catch {
+			/* noop */
+		}
 		toneFlangerLfo?.dispose();
 		toneFlangerLfo = null;
 		toneFlanger?.dispose();
@@ -114,7 +118,9 @@
 		if (reverseBufSrc) {
 			try {
 				reverseBufSrc.stop();
-			} catch {}
+			} catch {
+				/* noop — stop throws if buffer source has already ended */
+			}
 			reverseBufSrc.disconnect();
 			reverseBufSrc = null;
 		}
@@ -288,11 +294,19 @@
 		const chain: any[] = [];
 
 		if (fx?.lowpass?.enabled) {
-			toneLowpass = new Tone.Filter({ type: 'lowpass', frequency: fx.lowpass.cutoff_hz, Q: fx.lowpass.q });
+			toneLowpass = new Tone.Filter({
+				type: 'lowpass',
+				frequency: fx.lowpass.cutoff_hz,
+				Q: fx.lowpass.q
+			});
 			chain.push(toneLowpass);
 		}
 		if (fx?.highpass?.enabled) {
-			toneHighpass = new Tone.Filter({ type: 'highpass', frequency: fx.highpass.cutoff_hz, Q: fx.highpass.q });
+			toneHighpass = new Tone.Filter({
+				type: 'highpass',
+				frequency: fx.highpass.cutoff_hz,
+				Q: fx.highpass.q
+			});
 			chain.push(toneHighpass);
 		}
 		if (fx?.bandpass?.enabled) {

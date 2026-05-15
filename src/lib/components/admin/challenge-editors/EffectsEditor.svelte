@@ -383,8 +383,7 @@
 							<div class="flex gap-1.5">
 								<button
 									type="button"
-									onclick={() =>
-										(tabShowManagePresets[tab.id] = !tabShowManagePresets[tab.id])}
+									onclick={() => (tabShowManagePresets[tab.id] = !tabShowManagePresets[tab.id])}
 									class="text-xs text-zinc-600 hover:text-zinc-400"
 								>
 									{tabShowManagePresets[tab.id] ? 'Hide manage' : 'Manage'}
