@@ -720,7 +720,14 @@
 			{/if}
 		</div>
 
-		<div class="text-center">
+		<div class="flex flex-col items-center gap-3">
+			<a
+				href="/team"
+				class="w-full rounded-xl py-3 text-center text-sm font-bold text-zinc-950"
+				style="background-color: {teamHex};"
+			>
+				Back to team console
+			</a>
 			<a href="/leaderboard" class="text-sm underline underline-offset-2" style="color: {teamHex};"
 				>View leaderboard →</a
 			>
