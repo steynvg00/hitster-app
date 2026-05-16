@@ -140,16 +140,19 @@
 				<div>
 					<label class="mb-1 block text-xs text-zinc-400">Timer (seconds)</label>
 					<div class="flex items-center gap-2">
-						<input
-							name="timer_seconds"
-							type="number"
-							value={noTimer ? '' : (data.challenge.timer_seconds ?? 60)}
-							min="10"
-							max="600"
-							disabled={noTimer}
-							placeholder={noTimer ? '∞' : '60'}
-							class="input-field flex-1 disabled:opacity-40"
-						/>
+						{#if noTimer}
+							<input type="text" disabled value="–" class="input-field flex-1 disabled:opacity-40" />
+						{:else}
+							<input
+								name="timer_seconds"
+								type="number"
+								value={data.challenge.timer_seconds ?? 60}
+								min="10"
+								max="600"
+								placeholder="60"
+								class="input-field flex-1"
+							/>
+						{/if}
 						<label class="flex shrink-0 cursor-pointer items-center gap-1.5 text-xs text-zinc-400">
 							<input
 								type="checkbox"
