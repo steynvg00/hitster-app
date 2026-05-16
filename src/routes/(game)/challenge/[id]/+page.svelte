@@ -254,7 +254,10 @@
 				},
 				(payload) => {
 					const updated = payload.new as { team_id: string; ended_at: string | null };
-					if (updated.team_id === data.team.id && updated.ended_at && !result)
+					// Guard !submitting: the server sets ended_at during action processing,
+					// before the HTTP response arrives. Reloading here would wipe the action
+					// result (including earnedPowerup) before the enhance callback can apply it.
+					if (updated.team_id === data.team.id && updated.ended_at && !result && !submitting)
 						window.location.reload();
 				}
 			)
@@ -272,7 +275,8 @@
 				},
 				(payload) => {
 					const newSub = payload.new as { team_id: string; is_final: boolean };
-					if (newSub.team_id === data.team.id && newSub.is_final && !result)
+					// Same guard as attemptChannel — don't reload if we're currently submitting.
+					if (newSub.team_id === data.team.id && newSub.is_final && !result && !submitting)
 						window.location.reload();
 				}
 			)

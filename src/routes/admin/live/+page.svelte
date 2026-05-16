@@ -57,7 +57,12 @@
 		return submissions.find((s) => s.challenge_id === challengeId && s.team_id === teamId);
 	}
 
-	type CellStatus = { label: string; color: string; hasAttempt: boolean; phase: 'none' | 'active' | 'done' | 'expired' };
+	type CellStatus = {
+		label: string;
+		color: string;
+		hasAttempt: boolean;
+		phase: 'none' | 'active' | 'done' | 'expired';
+	};
 
 	function cellStatus(challengeId: string, teamId: string, nowMs: number): CellStatus {
 		const attempt = getAttempt(challengeId, teamId);
@@ -81,7 +86,12 @@
 					: remaining < 60_000
 						? 'text-yellow-400'
 						: 'text-blue-400';
-			return { label: `${mins}:${String(secs).padStart(2, '0')}`, color, hasAttempt: true, phase: 'active' };
+			return {
+				label: `${mins}:${String(secs).padStart(2, '0')}`,
+				color,
+				hasAttempt: true,
+				phase: 'active'
+			};
 		}
 
 		return { label: 'Active', color: 'text-blue-400', hasAttempt: true, phase: 'active' };
@@ -176,8 +186,7 @@
 					} else {
 						const at = payload.new as AttemptRow;
 						const idx = attempts.findIndex((x) => x.id === at.id);
-						if (idx >= 0)
-							attempts = [...attempts.slice(0, idx), at, ...attempts.slice(idx + 1)];
+						if (idx >= 0) attempts = [...attempts.slice(0, idx), at, ...attempts.slice(idx + 1)];
 						else attempts = [...attempts, at];
 					}
 				}
@@ -186,27 +195,22 @@
 
 		const subSub = supabaseBrowser
 			.channel(`live-subs-${setId}`)
-			.on(
-				'postgres_changes',
-				{ event: '*', schema: 'public', table: 'submissions' },
-				(payload) => {
-					if (payload.eventType === 'DELETE') {
-						const old = payload.old as SubmissionRow;
-						submissions = submissions.filter(
-							(sub) =>
-								!(sub.challenge_id === old.challenge_id && sub.team_id === old.team_id)
-						);
-					} else {
-						const sub = payload.new as SubmissionRow;
-						const idx = submissions.findIndex(
-							(x) => x.challenge_id === sub.challenge_id && x.team_id === sub.team_id
-						);
-						if (idx >= 0)
-							submissions = [...submissions.slice(0, idx), sub, ...submissions.slice(idx + 1)];
-						else submissions = [...submissions, sub];
-					}
+			.on('postgres_changes', { event: '*', schema: 'public', table: 'submissions' }, (payload) => {
+				if (payload.eventType === 'DELETE') {
+					const old = payload.old as SubmissionRow;
+					submissions = submissions.filter(
+						(sub) => !(sub.challenge_id === old.challenge_id && sub.team_id === old.team_id)
+					);
+				} else {
+					const sub = payload.new as SubmissionRow;
+					const idx = submissions.findIndex(
+						(x) => x.challenge_id === sub.challenge_id && x.team_id === sub.team_id
+					);
+					if (idx >= 0)
+						submissions = [...submissions.slice(0, idx), sub, ...submissions.slice(idx + 1)];
+					else submissions = [...submissions, sub];
 				}
-			)
+			})
 			.subscribe();
 
 		const actSub = supabaseBrowser
@@ -322,7 +326,7 @@
 			</div>
 		{:else}
 			<!-- Single set: just show heading -->
-			<div class="mb-5 flex items-center gap-3 flex-wrap">
+			<div class="mb-5 flex flex-wrap items-center gap-3">
 				<h2 class="text-lg font-bold text-white">{data.selectedSet?.name}</h2>
 				<span
 					class="rounded-full px-2 py-0.5 text-xs font-semibold
@@ -334,11 +338,32 @@
 				>
 					{data.selectedSet?.play_state}
 				</span>
+				{#if data.selectedSetId}
+					<a
+						href="/admin/sets/{data.selectedSetId}"
+						class="rounded-full border border-zinc-700 px-2.5 py-0.5 text-xs font-medium text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200"
+					>
+						Set Console →
+					</a>
+				{/if}
 				{#if data.selectedSet}
-					<form method="POST" action="?/toggleScoresHidden" use:enhance={() => async ({ update }) => { scoresHidden = !scoresHidden; await update({ reset: false }); }}>
+					<form
+						method="POST"
+						action="?/toggleScoresHidden"
+						use:enhance={() =>
+							async ({ update }) => {
+								scoresHidden = !scoresHidden;
+								await update({ reset: false });
+							}}
+					>
 						<input type="hidden" name="set_id" value={data.selectedSet.id} />
-						<button type="submit" class="rounded-full px-2 py-0.5 text-xs font-semibold border transition-colors
-							{scoresHidden ? 'border-amber-600 bg-amber-900/30 text-amber-400' : 'border-zinc-700 text-zinc-400 hover:border-zinc-500'}">
+						<button
+							type="submit"
+							class="rounded-full border px-2 py-0.5 text-xs font-semibold transition-colors
+							{scoresHidden
+								? 'border-amber-600 bg-amber-900/30 text-amber-400'
+								: 'border-zinc-700 text-zinc-400 hover:border-zinc-500'}"
+						>
 							{scoresHidden ? 'Scores hidden' : 'Hide scores'}
 						</button>
 					</form>
@@ -350,7 +375,7 @@
 		<div class="grid gap-5 md:grid-cols-3">
 			<!-- Panel 1: Teams -->
 			<div>
-				<h2 class="mb-3 text-xs font-semibold uppercase tracking-widest text-zinc-400">Teams</h2>
+				<h2 class="mb-3 text-xs font-semibold tracking-widest text-zinc-400 uppercase">Teams</h2>
 				<div class="space-y-2">
 					{#each teams as team (team.id)}
 						{@const tp = teamPlayers(team.id)}
@@ -364,13 +389,15 @@
 									<span class="text-sm font-semibold text-zinc-200">{team.display_name}</span>
 									<span class="text-xs text-zinc-600">({tp.length})</span>
 								</div>
-								<span class="text-lg font-black tabular-nums text-white">{team.score}</span>
+								<span class="text-lg font-black text-white tabular-nums">{team.score}</span>
 							</div>
 							<!-- Score bar -->
 							<div class="mb-2 h-1 w-full rounded-full bg-zinc-800">
 								<div
 									class="h-1 rounded-full transition-all duration-500"
-									style="width: {(team.score / maxScore) * 100}%; background-color: {teamColorHex[team.color] ?? '#666'}"
+									style="width: {(team.score / maxScore) * 100}%; background-color: {teamColorHex[
+										team.color
+									] ?? '#666'}"
 								></div>
 							</div>
 							<!-- Players -->
@@ -405,7 +432,7 @@
 
 			<!-- Panel 2: Challenge progress (compact rows) -->
 			<div>
-				<h2 class="mb-3 text-xs font-semibold uppercase tracking-widest text-zinc-400">
+				<h2 class="mb-3 text-xs font-semibold tracking-widest text-zinc-400 uppercase">
 					Challenges ({data.challenges.length})
 				</h2>
 				{#if data.challenges.length === 0}
@@ -418,13 +445,17 @@
 					<div class="space-y-1">
 						{#each data.challenges as challenge (challenge.id)}
 							<div
-								class="flex items-center rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 gap-2"
+								class="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2"
 							>
 								<!-- Left: name + badge -->
 								<div class="min-w-0 flex-1">
-									<div class="flex items-center gap-1.5 min-w-0">
-										<span class="truncate text-sm text-zinc-200 leading-tight">{challenge.title}</span>
-										<span class="shrink-0 rounded bg-zinc-800 px-1 py-0.5 text-[10px] text-zinc-500">{challenge.variant}</span>
+									<div class="flex min-w-0 items-center gap-1.5">
+										<span class="truncate text-sm leading-tight text-zinc-200"
+											>{challenge.title}</span
+										>
+										<span class="shrink-0 rounded bg-zinc-800 px-1 py-0.5 text-[10px] text-zinc-500"
+											>{challenge.variant}</span
+										>
 									</div>
 									{#if challenge.status !== 'active'}
 										<span class="text-[10px] text-zinc-600">{challenge.status}</span>
@@ -432,7 +463,7 @@
 								</div>
 
 								<!-- Right: team status dots -->
-								<div class="flex items-center gap-1 shrink-0">
+								<div class="flex shrink-0 items-center gap-1">
 									{#each teams as team}
 										{@const cell = cellStatus(challenge.id, team.id, now)}
 										{@const popKey = `${challenge.id}-${team.id}`}
@@ -516,21 +547,19 @@
 
 			<!-- Panel 3: Leaderboard -->
 			<div>
-				<h2 class="mb-3 text-xs font-semibold uppercase tracking-widest text-zinc-400">
+				<h2 class="mb-3 text-xs font-semibold tracking-widest text-zinc-400 uppercase">
 					Leaderboard
 				</h2>
 				<div class="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
 					{#each sortedByScore as team, i (team.id)}
-						<div
-							class="flex items-center gap-3 border-b border-zinc-800 px-4 py-3 last:border-0"
-						>
+						<div class="flex items-center gap-3 border-b border-zinc-800 px-4 py-3 last:border-0">
 							<span class="w-5 text-center text-sm font-black text-zinc-500">#{i + 1}</span>
 							<div
 								class="h-2.5 w-2.5 shrink-0 rounded-full"
 								style="background-color: {teamColorHex[team.color] ?? '#666'}"
 							></div>
 							<span class="flex-1 truncate text-sm text-zinc-200">{team.display_name}</span>
-							<span class="text-xl font-black tabular-nums text-white">{team.score}</span>
+							<span class="text-xl font-black text-white tabular-nums">{team.score}</span>
 						</div>
 					{/each}
 				</div>
@@ -539,7 +568,7 @@
 
 		<!-- Activity ticker -->
 		<div class="mt-6">
-			<h2 class="mb-3 text-xs font-semibold uppercase tracking-widest text-zinc-400">Activity</h2>
+			<h2 class="mb-3 text-xs font-semibold tracking-widest text-zinc-400 uppercase">Activity</h2>
 			<div class="rounded-xl border border-zinc-800 bg-zinc-900 p-3">
 				{#if activity.length === 0}
 					<p class="py-4 text-center text-sm text-zinc-600">No activity yet.</p>

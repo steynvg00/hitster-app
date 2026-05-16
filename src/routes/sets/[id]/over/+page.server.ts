@@ -12,5 +12,5 @@ export const load: PageServerLoad = async ({ params }) => {
 
 	if (!gameSet) redirect(302, '/');
 
-	return { setName: gameSet.name };
+	return { setName: gameSet.name, setId: gameSet.id };
 };

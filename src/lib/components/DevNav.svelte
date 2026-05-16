@@ -180,6 +180,8 @@
 			if (savedOpen !== null) open = JSON.parse(savedOpen);
 			const savedCollapsed = localStorage.getItem('hitster_devnav_sections');
 			if (savedCollapsed !== null) collapsed = JSON.parse(savedCollapsed);
+			const savedForce = localStorage.getItem('dev_force_next_powerup');
+			if (savedForce !== null) forcePowerupTypeId = savedForce;
 		} catch {
 			// ignore malformed storage
 		}
@@ -304,6 +306,67 @@
 		indigo: 'bg-indigo-600',
 		black: 'bg-neutral-700 border border-zinc-500'
 	};
+
+	const POWERUP_TYPES = [
+		{ id: 'shield', name: 'Shield', icon: '🛡️' },
+		{ id: 'time_boost', name: 'Time Boost', icon: '⏱️' },
+		{ id: 'insurance', name: 'Insurance', icon: '🪙' },
+		{ id: 'bonus_points', name: 'Bonus Points', icon: '✨' },
+		{ id: 'hard_gaan', name: 'Hard Gaan', icon: '🔥' },
+		{ id: 'single_event_mult', name: 'Single-Event Mult', icon: '🎲' },
+		{ id: 'free_answer', name: 'Free Answer', icon: '💡' }
+	];
+
+	const TEAM_COLORS = ['blue', 'yellow', 'green', 'red', 'indigo', 'black'];
+
+	// ── Powerup tools state ───────────────────────────────────────────────────
+	let forcePowerupTypeId = $state('');
+	let awardTeamColor = $state('blue');
+	let awardTypeId = $state('shield');
+	let awardStatus = $state<'idle' | 'loading' | 'ok' | 'error'>('idle');
+	let awardError = $state('');
+
+	$effect(() => {
+		try {
+			localStorage.setItem('dev_force_next_powerup', forcePowerupTypeId);
+		} catch {
+			// ignore
+		}
+		// Sync cookie for server-side one-shot override
+		if (forcePowerupTypeId) {
+			document.cookie = `dev_force_powerup=${forcePowerupTypeId}; path=/; SameSite=Strict; Max-Age=86400`;
+		} else {
+			document.cookie = 'dev_force_powerup=; path=/; SameSite=Strict; Max-Age=0';
+		}
+	});
+
+	async function awardPowerup() {
+		if (!activeSetId) {
+			awardError = 'No active set';
+			awardStatus = 'error';
+			return;
+		}
+		awardStatus = 'loading';
+		awardError = '';
+		try {
+			const res = await fetch('/api/dev/award-powerup', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ team_color: awardTeamColor, powerup_type_id: awardTypeId, set_id: activeSetId })
+			});
+			const data = await res.json();
+			if (!res.ok) {
+				awardStatus = 'error';
+				awardError = data.error ?? 'Failed';
+			} else {
+				awardStatus = 'ok';
+				setTimeout(() => (awardStatus = 'idle'), 2000);
+			}
+		} catch {
+			awardStatus = 'error';
+			awardError = 'Network error';
+		}
+	}
 
 	const PLAY_STATE_COLOR: Record<string, string> = {
 		joining: 'text-yellow-400',
@@ -508,6 +571,82 @@
 					<button onclick={fetchState} class="mt-2.5 text-[11px] text-zinc-600 hover:text-zinc-400"
 						>↻ refresh context</button
 					>
+
+					<!-- Powerups tools -->
+					<div class="mt-3 border-t border-zinc-800 pt-3">
+						<div class="mb-2 text-[11px] font-bold tracking-wider text-purple-400 uppercase">
+							Powerups
+						</div>
+
+						<!-- Tool A: Force next powerup -->
+						<div class="mb-2">
+							<div class="mb-1 text-[11px] text-zinc-500">Force next</div>
+							<div class="flex gap-1">
+								<select
+									bind:value={forcePowerupTypeId}
+									class="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-300 outline-none focus:border-purple-600"
+								>
+									<option value="">Random (default)</option>
+									{#each POWERUP_TYPES as pt}
+										<option value={pt.id}>{pt.icon} {pt.name}</option>
+									{/each}
+								</select>
+								{#if forcePowerupTypeId}
+									<button
+										onclick={() => (forcePowerupTypeId = '')}
+										class="shrink-0 rounded border border-zinc-700 px-2 text-[11px] text-zinc-500 hover:border-zinc-500 hover:text-zinc-300"
+										title="Clear override"
+									>✕</button>
+								{/if}
+							</div>
+							{#if forcePowerupTypeId}
+								<div class="mt-0.5 text-[10px] text-purple-500">
+									Cookie set — fires on next earn
+								</div>
+							{/if}
+						</div>
+
+						<!-- Tool B: Award directly -->
+						<div>
+							<div class="mb-1 text-[11px] text-zinc-500">
+								Award direct {#if !activeSetId}<span class="text-red-500">(no active set)</span>{/if}
+							</div>
+							<div class="mb-1 flex gap-1">
+								<select
+									bind:value={awardTeamColor}
+									class="flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-300 outline-none focus:border-purple-600"
+								>
+									{#each TEAM_COLORS as c}
+										<option value={c}>
+											<span class={TEAM_COLOR_BG[c]}></span>{c}
+										</option>
+									{/each}
+								</select>
+								<select
+									bind:value={awardTypeId}
+									class="flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-300 outline-none focus:border-purple-600"
+								>
+									{#each POWERUP_TYPES as pt}
+										<option value={pt.id}>{pt.icon} {pt.name}</option>
+									{/each}
+								</select>
+							</div>
+							<button
+								onclick={awardPowerup}
+								disabled={awardStatus === 'loading' || !activeSetId}
+								class="w-full rounded border border-purple-800 bg-purple-950/50 px-2 py-1 text-[11px] font-semibold text-purple-300 transition hover:bg-purple-900/50 disabled:cursor-not-allowed disabled:opacity-50"
+							>
+								{awardStatus === 'loading'
+									? 'Awarding…'
+									: awardStatus === 'ok'
+										? '✓ Awarded!'
+										: 'Award (held)'}
+							</button>
+							{#if awardStatus === 'error'}
+								<div class="mt-0.5 text-[10px] text-red-400">{awardError}</div>
+							{/if}
+						</div>
+					</div>
 				</div>
 			{/if}
 

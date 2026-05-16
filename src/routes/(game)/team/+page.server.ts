@@ -38,7 +38,7 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		id: string;
 		title: string;
 		variant: string;
-		timer_seconds: number;
+		timer_seconds: number | null;
 		nfc_lock_override: boolean | null;
 	}> = [];
 	if (playerSetId) {
@@ -207,12 +207,21 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		id: string;
 		powerup_type_id: string;
 		granted_at: string;
-		type: { id: string; name: string; icon: string | null; description: string | null; holdable: boolean; immediate_use: boolean };
+		type: {
+			id: string;
+			name: string;
+			icon: string | null;
+			description: string | null;
+			holdable: boolean;
+			immediate_use: boolean;
+		};
 	}> = [];
 	if (playerSetId) {
 		const { data: hpRows } = await admin
 			.from('team_powerups')
-			.select('id, powerup_type_id, granted_at, powerup_types(id, name, icon, description, holdable, immediate_use)')
+			.select(
+				'id, powerup_type_id, granted_at, powerup_types(id, name, icon, description, holdable, immediate_use)'
+			)
 			.eq('team_id', locals.teamId)
 			.eq('set_id', playerSetId)
 			.eq('status', 'held')
@@ -221,7 +230,18 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 			id: r.id,
 			powerup_type_id: r.powerup_type_id,
 			granted_at: r.granted_at ?? '',
-			type: (r as unknown as { powerup_types: { id: string; name: string; icon: string | null; description: string | null; holdable: boolean; immediate_use: boolean } }).powerup_types
+			type: (
+				r as unknown as {
+					powerup_types: {
+						id: string;
+						name: string;
+						icon: string | null;
+						description: string | null;
+						holdable: boolean;
+						immediate_use: boolean;
+					};
+				}
+			).powerup_types
 		}));
 	}
 
