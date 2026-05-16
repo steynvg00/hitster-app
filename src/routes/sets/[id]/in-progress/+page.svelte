@@ -11,11 +11,19 @@
 			<span class="font-semibold text-white">{data.setName}</span> has already started.
 		</p>
 		<p class="mb-8 text-sm text-zinc-500">Ask the host if you can still join.</p>
-		<a
-			href="/"
-			class="rounded-xl bg-zinc-800 px-6 py-3 text-sm font-bold text-zinc-200 transition-colors hover:bg-zinc-700"
-		>
-			Back to home
-		</a>
+		<div class="flex flex-col gap-3">
+			<a
+				href="/leaderboard"
+				class="inline-block rounded-xl bg-amber-400 px-6 py-3 text-sm font-bold text-zinc-950 transition-colors hover:bg-amber-300"
+			>
+				View Game →
+			</a>
+			<a
+				href="/"
+				class="inline-block rounded-xl bg-zinc-800 px-6 py-3 text-sm font-bold text-zinc-200 transition-colors hover:bg-zinc-700"
+			>
+				Back to home
+			</a>
+		</div>
 	</div>
 </div>
