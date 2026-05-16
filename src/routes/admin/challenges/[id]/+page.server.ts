@@ -110,7 +110,8 @@ export const actions: Actions = {
 
 		const title = (data.get('title') as string)?.trim();
 		const stage_label = (data.get('stage_label') as string)?.trim() || null;
-		const timer_seconds = parseInt(data.get('timer_seconds') as string, 10) || 60;
+		const timerRaw = (data.get('timer_seconds') as string | null)?.trim();
+		const timer_seconds = timerRaw ? parseInt(timerRaw, 10) || 60 : null;
 		const variant = data.get('variant') as string;
 		const difficultyRaw = parseInt(data.get('difficulty_rating') as string, 10);
 		const difficulty_rating = difficultyRaw >= 1 && difficultyRaw <= 5 ? difficultyRaw : 3;

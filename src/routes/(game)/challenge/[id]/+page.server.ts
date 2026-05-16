@@ -255,7 +255,7 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 	// ── Timer ─────────────────────────────────────────────────────────────────
 	const timerEndsAt =
 		attempt && !attempt.ended_at && (challenge.timer_seconds ?? 0) > 0
-			? new Date(attempt.started_at).getTime() + challenge.timer_seconds * 1000
+			? new Date(attempt.started_at).getTime() + (challenge.timer_seconds ?? 0) * 1000
 			: null;
 
 	// ── Combobox pools ────────────────────────────────────────────────────────

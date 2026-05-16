@@ -25,6 +25,9 @@
 		(data.challenge as unknown as { difficulty_rating?: number }).difficulty_rating ?? 3
 	);
 
+	// No-timer toggle
+	let noTimer = $state(data.challenge.timer_seconds == null);
+
 	// NFC lock override tri-state
 	type NfcOverride = 'inherit' | 'true' | 'false';
 	const nfcOverrideRaw = (data.challenge as unknown as { nfc_lock_override?: boolean | null })
@@ -136,14 +139,26 @@
 				</div>
 				<div>
 					<label class="mb-1 block text-xs text-zinc-400">Timer (seconds)</label>
-					<input
-						name="timer_seconds"
-						type="number"
-						value={data.challenge.timer_seconds}
-						min="10"
-						max="600"
-						class="input-field"
-					/>
+					<div class="flex items-center gap-2">
+						<input
+							name="timer_seconds"
+							type="number"
+							value={noTimer ? '' : (data.challenge.timer_seconds ?? 60)}
+							min="10"
+							max="600"
+							disabled={noTimer}
+							placeholder={noTimer ? '∞' : '60'}
+							class="input-field flex-1 disabled:opacity-40"
+						/>
+						<label class="flex shrink-0 cursor-pointer items-center gap-1.5 text-xs text-zinc-400">
+							<input
+								type="checkbox"
+								bind:checked={noTimer}
+								class="h-3.5 w-3.5 rounded accent-amber-400"
+							/>
+							No timer
+						</label>
+					</div>
 				</div>
 				<div>
 					<label class="mb-1 block text-xs text-zinc-400">Difficulty (1–5)</label>

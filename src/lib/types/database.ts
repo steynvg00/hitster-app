@@ -11,12 +11,7 @@ type PowerupTargetType = 'self' | 'team' | 'all_others' | 'none';
 type ClipType = 'snippet' | 'fragment' | 'kick' | 'vocal' | 'mashup';
 type ChallengeType = 'standard' | 'anthem' | 'label' | 'mashup' | 'fragments' | 'effects';
 type AnswerField = 'artist' | 'title' | 'year' | 'label' | 'festival' | 'vocal_source' | 'grouping';
-type NfcTagPurpose =
-	| 'team_identity'
-	| 'team_entry'
-	| 'challenge'
-	| 'hint'
-	| 'challenge_unlock';
+type NfcTagPurpose = 'team_identity' | 'team_entry' | 'challenge' | 'hint' | 'challenge_unlock';
 type SubmissionStatus =
 	| 'auto_correct'
 	| 'auto_wrong'
@@ -197,7 +192,7 @@ export type Database = {
 					id: string;
 					variant: ChallengeType;
 					title: string;
-					timer_seconds: number;
+					timer_seconds: number | null;
 					is_active: boolean;
 					stage_label: string | null;
 					status: string;
@@ -213,7 +208,7 @@ export type Database = {
 					id?: string;
 					variant: ChallengeType;
 					title: string;
-					timer_seconds?: number;
+					timer_seconds?: number | null;
 					is_active?: boolean;
 					stage_label?: string | null;
 					status?: string;
@@ -229,7 +224,7 @@ export type Database = {
 					id?: string;
 					variant?: ChallengeType;
 					title?: string;
-					timer_seconds?: number;
+					timer_seconds?: number | null;
 					is_active?: boolean;
 					stage_label?: string | null;
 					status?: string;
@@ -907,7 +902,14 @@ export type Database = {
 				Row: {
 					id: string;
 					name: string;
-					category: 'defensive' | 'self' | 'information' | 'offensive' | 'social' | 'punishment' | 'wildcard';
+					category:
+						| 'defensive'
+						| 'self'
+						| 'information'
+						| 'offensive'
+						| 'social'
+						| 'punishment'
+						| 'wildcard';
 					description: string | null;
 					immediate_use: boolean;
 					holdable: boolean;
@@ -921,7 +923,14 @@ export type Database = {
 				Insert: {
 					id: string;
 					name: string;
-					category: 'defensive' | 'self' | 'information' | 'offensive' | 'social' | 'punishment' | 'wildcard';
+					category:
+						| 'defensive'
+						| 'self'
+						| 'information'
+						| 'offensive'
+						| 'social'
+						| 'punishment'
+						| 'wildcard';
 					description?: string | null;
 					immediate_use?: boolean;
 					holdable?: boolean;
@@ -935,7 +944,14 @@ export type Database = {
 				Update: {
 					id?: string;
 					name?: string;
-					category?: 'defensive' | 'self' | 'information' | 'offensive' | 'social' | 'punishment' | 'wildcard';
+					category?:
+						| 'defensive'
+						| 'self'
+						| 'information'
+						| 'offensive'
+						| 'social'
+						| 'punishment'
+						| 'wildcard';
 					description?: string | null;
 					immediate_use?: boolean;
 					holdable?: boolean;
