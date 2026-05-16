@@ -734,7 +734,20 @@ export const actions: Actions = {
 		if (playerSetId) {
 			const maxTotal = scoredResult.maxTotal ?? 0;
 			const scorePercent = maxTotal > 0 ? (scoredResult.total / maxTotal) * 100 : 0;
-			earnedPowerup = await maybeAwardPowerup(admin, teamId, playerSetId, params.id, scorePercent);
+			const forcePowerupTypeId = import.meta.env.DEV
+				? (cookies.get('dev_force_powerup') ?? undefined)
+				: undefined;
+			earnedPowerup = await maybeAwardPowerup(
+				admin,
+				teamId,
+				playerSetId,
+				params.id,
+				scorePercent,
+				forcePowerupTypeId
+			);
+			if (import.meta.env.DEV && forcePowerupTypeId) {
+				cookies.delete('dev_force_powerup', { path: '/' });
+			}
 		}
 
 		const result: ChallengeResult = { ...scoredResult, submissionId: sub.id, isFinal: true };

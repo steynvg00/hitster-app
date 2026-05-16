@@ -18,7 +18,8 @@ export async function maybeAwardPowerup(
 	teamId: string,
 	setId: string,
 	challengeId: string,
-	scorePercent: number
+	scorePercent: number,
+	forcePowerupTypeId?: string
 ): Promise<EarnedPowerup | null> {
 	const { data: gameSet } = await supabase
 		.from('game_sets')
@@ -29,10 +30,32 @@ export async function maybeAwardPowerup(
 	if (!gameSet?.powerups_enabled) return null;
 
 	const config = (gameSet.powerup_config ?? {}) as Record<string, unknown>;
-	const earnThreshold =
-		typeof config.earn_threshold === 'number' ? config.earn_threshold : 70;
+	const earnThreshold = typeof config.earn_threshold === 'number' ? config.earn_threshold : 70;
 
 	if (scorePercent < earnThreshold) return null;
+
+	// Dev override: pick a specific type if requested (one-shot, cleared by caller)
+	if (forcePowerupTypeId) {
+		const { data: forcedType } = await supabase
+			.from('powerup_types')
+			.select('*')
+			.eq('id', forcePowerupTypeId)
+			.maybeSingle();
+		if (!forcedType) return null;
+		const { data: inserted } = await supabase
+			.from('team_powerups')
+			.insert({
+				team_id: teamId,
+				set_id: setId,
+				powerup_type_id: forcedType.id,
+				granted_from_challenge_id: challengeId,
+				status: 'pending'
+			})
+			.select('id')
+			.single();
+		if (!inserted) return null;
+		return { teamPowerupId: inserted.id, type: forcedType };
+	}
 
 	// Determine eligible types: use set_powerups rows if any exist for this set,
 	// otherwise fall back to all enabled_by_default types.
