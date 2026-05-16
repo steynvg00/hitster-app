@@ -742,6 +742,12 @@
 							>
 								View lobby
 							</a>
+							<a
+								href="/admin/sets/{data.activeSet.id}"
+								class="inline-block rounded-lg border border-zinc-700 px-5 py-2.5 text-sm font-medium text-zinc-300 transition hover:border-zinc-500 hover:text-white"
+							>
+								Set Console
+							</a>
 						</div>
 					</div>
 				{:else if data.activeSet && livePlayState === 'playing'}
@@ -782,6 +788,12 @@
 								class="inline-block rounded-lg bg-green-500 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-green-400"
 							>
 								Open game status →
+							</a>
+							<a
+								href="/admin/sets/{data.activeSet.id}"
+								class="inline-block rounded-lg border border-zinc-700 px-5 py-2.5 text-sm font-medium text-zinc-300 transition hover:border-zinc-500 hover:text-white"
+							>
+								Set Console
 							</a>
 							<form
 								bind:this={endGameForm}
