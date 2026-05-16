@@ -145,8 +145,8 @@ export function scoreField(
 					: [track.title]
 				: [trackValue];
 		const bestSim = Math.max(...targets.map((t) => strSimilarity(submitted, t)));
-		if (bestSim >= 0.85) return { score: maxPoints, fuzzyScore: bestSim };
-		if (bestSim >= 0.75) return { score: Math.round(maxPoints * 0.5), fuzzyScore: bestSim };
+		if (bestSim >= 0.80) return { score: maxPoints, fuzzyScore: bestSim };
+		if (bestSim >= 0.65) return { score: Math.round(maxPoints * 0.5), fuzzyScore: bestSim };
 		return { score: 0, fuzzyScore: bestSim };
 	}
 
