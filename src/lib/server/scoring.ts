@@ -92,9 +92,21 @@ function editDistance(a: string, b: string): number {
 	return dp[n];
 }
 
+// Strip leading articles (EN + NL) and normalize punctuation/whitespace for
+// more forgiving open-text matching at a party game.
+function normalizeAnswer(s: string): string {
+	return s
+		.toLowerCase()
+		.trim()
+		.replace(/^(the|a|an|de|het|een)\s+/i, '')
+		.replace(/[^\w\s]/g, '')
+		.replace(/\s+/g, ' ')
+		.trim();
+}
+
 function strSimilarity(a: string, b: string): number {
-	const s1 = a.toLowerCase().trim();
-	const s2 = b.toLowerCase().trim();
+	const s1 = normalizeAnswer(a);
+	const s2 = normalizeAnswer(b);
 	if (s1 === s2) return 1;
 	const maxLen = Math.max(s1.length, s2.length);
 	if (maxLen === 0) return 1;
@@ -133,7 +145,9 @@ export function scoreField(
 					: [track.title]
 				: [trackValue];
 		const bestSim = Math.max(...targets.map((t) => strSimilarity(submitted, t)));
-		return { score: bestSim >= 0.9 ? maxPoints : 0, fuzzyScore: bestSim };
+		if (bestSim >= 0.85) return { score: maxPoints, fuzzyScore: bestSim };
+		if (bestSim >= 0.75) return { score: Math.round(maxPoints * 0.5), fuzzyScore: bestSim };
+		return { score: 0, fuzzyScore: bestSim };
 	}
 
 	const correct = submitted.trim().toLowerCase() === trackValue.trim().toLowerCase();
