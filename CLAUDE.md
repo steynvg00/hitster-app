@@ -220,6 +220,8 @@ If `play_state = playing` → redirect `/sets/[id]/in-progress`. If `recap` → 
 | 2026-05-15 | Join consolidation (feature/join-consolidation): replaced NFC randomizer with /sets/[id]/join (random + selectable modes); added team_selection_mode to game_sets; removed randomizer_enabled + NFC randomizer tags; /sets/[id]/in-progress + /sets/[id]/over status pages; selectable team picker with overflow safety when expected_player_count is null |
 | 2026-05-15 | UX papercuts (feature/ux-papercuts): row-click nav on challenges/tracks/sets/pools admin pages; per-clip play button with stop-one-when-another-plays in FragmentsEditor |
 | 2026-05-15 | Powerups P3a (feature/powerups-p3a): migration 0044 (powerup_types, team_powerups, team_effects, 7 catalog types seeded); src/lib/server/powerups.ts (maybeAwardPowerup + resolvePowerupChoice); submit action earns powerup when score ≥ threshold; HeldPowerups.svelte (held cards + realtime + "Activation coming soon" toast); PowerupRevealModal.svelte (1.8s slot-machine settle animation, Store/Lose for holdable, Lose for immediate-use); year slider range 2000–2026. Activation effects stubbed for P3b. |
+| 2026-05-17 | Powerups P3b (feature/powerups-p3b): migration 0047 (source_team_powerup_id FK on team_effects; status CHECK expanded); activatePowerup() in powerups.ts — all 7 types fully implemented (bonus_points/single_event_mult/hard_gaan/shield insert team_effects; time_boost stores consumed effect + client reacts via realtime to add 30s; insurance floor before breakdown; free_answer looks up correct answer + stores consumed reveal); additive-delta multiplier formula replaces chain-multiply; scoring open-text thresholds lowered to 80%/65%; PowerupActivationModal.svelte (effect copy per type, field picker for free_answer, challenge-gate warning); ActiveEffectsBanner.svelte (realtime amber pills, hard_gaan countdown); HeldPowerups click → modal; activatePowerup action on /team and /challenge/[id]; challenge page loads activeEffects + freeAnswerReveal; inline 💡 Revealed badge + draft pre-fill on free_answer activation. |
+| 2026-05-17 | Powerups P3c / Crown (feature/powerups-p3c): migration 0048 (crown_payout_applied bool on game_sets); src/lib/server/crown.ts — maybeTransferCrown (+1 steal bonus when team strictly overtakes crown holder, including first-taking; idempotent self-hold guard) + awardCrownPayout (+2 to crown holder at recap, idempotent via crown_payout_applied); both log to activity_log (crown_stolen / crown_payout); hooked into challenge submit action and startRecap admin action; Crown icon (mixup-yellow) shown next to crown holder on /team (banner), /leaderboard (TV), /play/leaderboard, /admin/live (score panel); game_sets realtime subscriptions update crown indicator live; admin/live activityLabel renders ⚔️ crown_stolen and 👑 crown_payout. |
 
 ## Technical notes
 
@@ -369,24 +371,38 @@ Admin `/admin/live` polls `/api/auto-submit` every 10s. The endpoint finds attem
 
 `computeBreakdown(base, bonusParams)` in `src/lib/server/scoring.ts` returns a `ScoreBreakdown` interface. The breakdown is persisted in `submissions.answers[0].breakdown` and surfaced via the `BonusTracker` component.
 
-### Powerups runtime architecture (P3a)
+### Powerups runtime architecture (P3a/P3b/P3c)
 
 Two parallel powerup table families exist — don't confuse them:
 
 | Family | Tables | PK type | Purpose |
 | --- | --- | --- | --- |
 | Legacy (0032) | `powerups`, `set_powerups`, `powerup_usages` | uuid | Old catalog + usage log. Not used by P3a earning flow. |
-| P3a runtime (0044) | `powerup_types`, `team_powerups`, `team_effects` | text (types), uuid (rows) | Active earning, storage, and future activation. |
+| P3a/P3b runtime (0044/0047) | `powerup_types`, `team_powerups`, `team_effects` | text (types), uuid (rows) | Active earning, storage, and activation. |
 
 **Earning flow:** after submission scoring, `maybeAwardPowerup()` in `src/lib/server/powerups.ts` checks `game_sets.powerups_enabled` and `powerup_config.earn_threshold` (default 70%). If score% ≥ threshold, picks a random eligible `powerup_types` row and inserts a `team_powerups` row with `status='pending'`. The submit action returns `earnedPowerup: { teamPowerupId, type }` to the client.
 
 **Resolve choices:** `resolveEarnedPowerup` action wraps `resolvePowerupChoice()`. `'store'` → `status='held'` (holdable types only). `'lose'` → `status='lost'`.
 
-**`team_effects`** table is reserved for P3b/P3c activation effects — nothing writes to it yet.
+**`team_powerups.status`** CHECK: `pending | held | used | lost | active | consumed`. `active` = effect live; `consumed` = single-use effect spent.
 
-**`game_sets.powerup_config`** JSONB key used in earning: `earn_threshold` (number, default 70). Other keys TBD in P3b.
+**`team_effects`** stores active and consumed effects. Key fields: `effect_type`, `payload` (JSONB), `expires_at` (hard_gaan window), `consumed_at`, `source_team_powerup_id` (FK to team_powerups). Queried by `loadActiveEffects()` (non-consumed rows), consumed by `consumeEffects()` after scoring.
 
-**P3b stub:** clicking a held powerup shows a toast "Activation coming soon". Immediate-use powerups (bonus_points, hard_gaan, single_event_mult) show a "Lose" button in the reveal modal with note "Activation in next update". Full activation ships in P3b.
+**`activatePowerup()`** in `src/lib/server/powerups.ts` — all 7 types fully live. `bonus_points / single_event_mult / hard_gaan / shield` insert a team_effects row and set status→`active`. `time_boost` inserts a consumed effect (client reacts via realtime INSERT to add 30 s to countdown). `insurance` inserts an active floor effect consumed at submit. `free_answer` looks up the correct answer from the first tab's source track and inserts a consumed reveal effect with `{field, value, challenge_id}`.
+
+**Additive-delta multiplier formula:** `multiplied = round(base × (1 + Σ(m_i − 1)))` — avoids runaway chain-multiply when multiple powerup multipliers stack. Implemented in `computeBreakdown()` in `scoring.ts`.
+
+**`game_sets.powerup_config`** JSONB key used in earning: `earn_threshold` (number, default 70).
+
+### Crown mechanic (P3c)
+
+`game_sets.crown_holder_team_id` — FK to the team currently leading. `game_sets.crown_payout_applied bool` — prevents double-paying the end-game bonus.
+
+**`maybeTransferCrown(admin, setId, teamId, newScore)`** in `src/lib/server/crown.ts` — called after every team score update. Awards **+1 steal bonus** when `newScore > holderScore` (strict). Guards: no-op if team is already the holder; first crown take (no holder + newScore > 0) also awards +1. Logs `crown_stolen` to `activity_log`.
+
+**`awardCrownPayout(admin, setId)`** — called in `startRecap` action. Awards **+2** to whoever holds the crown. Idempotent via `crown_payout_applied`. Logs `crown_payout` to `activity_log`.
+
+**UI:** `Crown` icon from lucide-svelte (`color: #ffe600`) shown next to crown holder on `/team` (banner), `/leaderboard` (TV), `/play/leaderboard`, `/admin/live` (score panel). All four pages subscribe to `game_sets` UPDATE realtime to update `crownHolderTeamId` live.
 
 ### NFC hint scan flow
 
@@ -433,7 +449,9 @@ SET status = 'inactive',
     recap_state = 'pending',
     scores_hidden = false,
     assignment_slots = '[]'::jsonb,
-    assignment_index = 0;
+    assignment_index = 0,
+    crown_holder_team_id = NULL,
+    crown_payout_applied = false;
 ```
 
 Hard reset additionally: `DELETE FROM nfc_tags WHERE purpose = 'challenge_unlock'; DELETE FROM players;`
