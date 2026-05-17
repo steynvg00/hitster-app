@@ -10,6 +10,7 @@ import {
 	deriveEffectModifiers,
 	consumeEffects
 } from '$lib/server/powerups';
+import { maybeTransferCrown } from '$lib/server/crown';
 import type {
 	AnswerField,
 	InputMode,
@@ -776,6 +777,12 @@ export const actions: Actions = {
 				.update({ score: (teamRow?.score ?? 0) + finalScore, current_streak: newStreak })
 				.eq('id', teamId)
 		]);
+
+		// Crown: check if this team overtook the current crown holder
+		if (playerSetId) {
+			const newTeamScore = (teamRow?.score ?? 0) + finalScore;
+			await maybeTransferCrown(admin, playerSetId, teamId, newTeamScore);
+		}
 
 		// Consume single-use effects (insurance, single_event_mult, bonus_points)
 		if (playerSetId && effectModifiers.toConsume.length > 0) {
