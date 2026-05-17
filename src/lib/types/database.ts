@@ -1036,6 +1036,33 @@ export type Database = {
 				};
 				Relationships: [];
 			};
+			host_whitelist: {
+				Row: {
+					id: string;
+					email: string;
+					added_by: string | null;
+					added_at: string;
+					is_super_admin: boolean;
+					notes: string | null;
+				};
+				Insert: {
+					id?: string;
+					email: string;
+					added_by?: string | null;
+					added_at?: string;
+					is_super_admin?: boolean;
+					notes?: string | null;
+				};
+				Update: {
+					id?: string;
+					email?: string;
+					added_by?: string | null;
+					added_at?: string;
+					is_super_admin?: boolean;
+					notes?: string | null;
+				};
+				Relationships: [];
+			};
 		};
 		Views: { [_ in never]: never };
 		Functions: { [_ in never]: never };
