@@ -9,7 +9,7 @@ export const load: PageServerLoad = async ({ url }) => {
 	// Find active sets that have at least one player joined
 	const { data: activeSets } = await db
 		.from('game_sets')
-		.select('id, name, team_count, play_state, total_timer_seconds, started_at, scores_hidden')
+		.select('id, name, team_count, play_state, total_timer_seconds, started_at, scores_hidden, crown_holder_team_id')
 		.eq('status', 'active');
 
 	const setsWithPlayers: Array<{
@@ -20,6 +20,7 @@ export const load: PageServerLoad = async ({ url }) => {
 		total_timer_seconds: number | null;
 		started_at: string | null;
 		scores_hidden: boolean;
+		crown_holder_team_id: string | null;
 		player_count: number;
 	}> = [];
 
@@ -34,6 +35,7 @@ export const load: PageServerLoad = async ({ url }) => {
 					...set,
 					play_state: (set.play_state ?? 'joining') as 'joining' | 'playing' | 'recap',
 					scores_hidden: (set as unknown as { scores_hidden?: boolean }).scores_hidden ?? false,
+					crown_holder_team_id: (set as unknown as { crown_holder_team_id?: string | null }).crown_holder_team_id ?? null,
 					player_count: count!
 				});
 			}

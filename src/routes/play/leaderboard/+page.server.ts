@@ -24,7 +24,7 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		if (player?.set_id) {
 			const { data: gs } = await admin
 				.from('game_sets')
-				.select('id, status, recap_state, scores_hidden')
+				.select('id, status, recap_state, scores_hidden, crown_holder_team_id')
 				.eq('id', player.set_id)
 				.maybeSingle();
 			if (gs) activeSet = { ...gs, scores_hidden: (gs as unknown as { scores_hidden?: boolean }).scores_hidden ?? false };
@@ -38,6 +38,7 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 	return {
 		teams: teams ?? [],
 		activeSetId: activeSet?.id ?? null,
-		scoresHidden: activeSet?.scores_hidden ?? false
+		scoresHidden: activeSet?.scores_hidden ?? false,
+		crownHolderTeamId: (activeSet as unknown as { crown_holder_team_id?: string | null } | null)?.crown_holder_team_id ?? null
 	};
 };

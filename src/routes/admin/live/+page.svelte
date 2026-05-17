@@ -2,6 +2,7 @@
 	import { enhance } from '$app/forms';
 	import { onMount, untrack } from 'svelte';
 	import { supabaseBrowser } from '$lib/supabase-browser';
+	import { Crown } from 'lucide-svelte';
 	import type { PageData } from './$types';
 	import type { ActivityLogRow } from '$lib/types/database';
 
@@ -23,6 +24,7 @@
 	let pollingActive = $state(false);
 	let lastPolledAt = $state<Date | null>(null);
 	let scoresHidden = $state(data.selectedSet?.scores_hidden ?? false);
+	let crownHolderTeamId = $state(data.selectedSet?.crown_holder_team_id ?? null);
 
 	// ── Live clock for per-attempt timer countdown ────────────────────────────
 	let now = $state(Date.now());
@@ -112,6 +114,14 @@
 			const sign = delta >= 0 ? '+' : '';
 			return `Score adjustment (${sign}${delta}): ${payload.reason ?? ''}`;
 		}
+		if (a.event_type === 'crown_stolen' && payload) {
+			const fromId = payload.from_team_id as string | null;
+			const from = fromId ? (teamLabel(fromId) ?? fromId) : 'nobody';
+			return `⚔️ ${teamLabel(a.team_id)} stole the crown from ${from}`;
+		}
+		if (a.event_type === 'crown_payout' && payload) {
+			return `👑 ${teamLabel(a.team_id)} held the crown — earned 2 bonus points`;
+		}
 		if (a.event_type === 'challenge_closed') return 'Challenge closed';
 		if (a.event_type === 'attempt_reset') return 'Attempt reset';
 		return a.event_type.replace(/_/g, ' ');
@@ -141,6 +151,7 @@
 		submissions = [...s];
 		activity = [...ac];
 		scoresHidden = untrack(() => data.selectedSet)?.scores_hidden ?? false;
+		crownHolderTeamId = untrack(() => data.selectedSet)?.crown_holder_team_id ?? null;
 
 		openPopover = null;
 
@@ -227,12 +238,26 @@
 			)
 			.subscribe();
 
+		const setStateSub = supabaseBrowser
+			.channel(`live-set-state-${setId}`)
+			.on(
+				'postgres_changes',
+				{ event: 'UPDATE', schema: 'public', table: 'game_sets', filter: `id=eq.${setId}` },
+				(payload) => {
+					const gs = payload.new as { crown_holder_team_id?: string | null; scores_hidden?: boolean };
+					if ('crown_holder_team_id' in gs) crownHolderTeamId = gs.crown_holder_team_id ?? null;
+					if (typeof gs.scores_hidden === 'boolean') scoresHidden = gs.scores_hidden;
+				}
+			)
+			.subscribe();
+
 		return () => {
 			supabaseBrowser.removeChannel(teamSub);
 			supabaseBrowser.removeChannel(playerSub);
 			supabaseBrowser.removeChannel(attemptSub);
 			supabaseBrowser.removeChannel(subSub);
 			supabaseBrowser.removeChannel(actSub);
+			supabaseBrowser.removeChannel(setStateSub);
 		};
 	});
 
@@ -559,6 +584,9 @@
 								style="background-color: {teamColorHex[team.color] ?? '#666'}"
 							></div>
 							<span class="flex-1 truncate text-sm text-zinc-200">{team.display_name}</span>
+							{#if crownHolderTeamId === team.id}
+								<Crown size={14} style="color: #ffe600;" />
+							{/if}
 							<span class="text-xl font-black text-white tabular-nums">{team.score}</span>
 						</div>
 					{/each}

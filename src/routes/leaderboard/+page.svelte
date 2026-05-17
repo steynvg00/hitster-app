@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { supabaseBrowser } from '$lib/supabase-browser';
+	import { Crown } from 'lucide-svelte';
 	import type { PageData } from './$types';
 
 	type TeamRow = (typeof data.teams)[number];
@@ -8,6 +9,7 @@
 	let { data }: { data: PageData } = $props();
 	let teams = $state<TeamRow[]>([...data.teams]);
 	let maxScore = $derived(Math.max(...teams.map((t) => t.score), 20));
+	let crownHolderTeamId = $state(data.crownHolderTeamId);
 
 	// Position change tracking
 	let prevRanks = $state<Map<string, number>>(new Map(teams.map((t, i) => [t.id, i])));
@@ -49,7 +51,25 @@
 			})
 			.subscribe();
 
-		return () => supabaseBrowser.removeChannel(channel);
+		let setChannel: ReturnType<typeof supabaseBrowser.channel> | null = null;
+		if (data.activeSetId) {
+			setChannel = supabaseBrowser
+				.channel(`tv-leaderboard-set-${data.activeSetId}`)
+				.on(
+					'postgres_changes',
+					{ event: 'UPDATE', schema: 'public', table: 'game_sets', filter: `id=eq.${data.activeSetId}` },
+					(payload) => {
+						const gs = payload.new as { crown_holder_team_id?: string | null };
+						if ('crown_holder_team_id' in gs) crownHolderTeamId = gs.crown_holder_team_id ?? null;
+					}
+				)
+				.subscribe();
+		}
+
+		return () => {
+			supabaseBrowser.removeChannel(channel);
+			if (setChannel) supabaseBrowser.removeChannel(setChannel);
+		};
 	});
 </script>
 
@@ -102,8 +122,11 @@
 					{/if}
 
 					<!-- Name -->
-					<div class="min-w-0 flex-1">
+					<div class="flex min-w-0 flex-1 items-center gap-2">
 						<div class="truncate text-lg font-bold text-white md:text-xl">{team.display_name}</div>
+						{#if crownHolderTeamId === team.id}
+							<Crown size={18} style="color: #ffe600; flex-shrink: 0;" />
+						{/if}
 					</div>
 
 					<!-- Streak badge -->

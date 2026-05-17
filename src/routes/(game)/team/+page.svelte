@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { supabaseBrowser } from '$lib/supabase-browser';
+	import { Crown } from 'lucide-svelte';
 	import TutorialOverlay from '$lib/components/game/TutorialOverlay.svelte';
 	import HeldPowerups from '$lib/components/game/HeldPowerups.svelte';
 	import ActiveEffectsBanner from '$lib/components/game/ActiveEffectsBanner.svelte';
@@ -11,6 +12,9 @@
 	let liveScore = $state(data.team.score);
 	let livePosition = $state(data.position);
 	let livePlayState = $state(data.activeSet?.play_state ?? 'playing');
+	let crownHolderTeamId = $state(data.crownHolderTeamId);
+
+	const iscrownHolder = $derived(crownHolderTeamId === data.team.id);
 
 	// Lobby realtime: players joining teams
 	type LobbyPlayer = {
@@ -98,14 +102,13 @@
 						filter: `id=eq.${data.activeSet.id}`
 					},
 					(payload) => {
-						const newState = (payload.new as { play_state?: string; recap_state?: string })
-							.play_state;
-						const recapState = (payload.new as { recap_state?: string }).recap_state;
-						if (newState) livePlayState = newState;
-						if (newState === 'recap' && data.activeSet) {
+						const p = payload.new as { play_state?: string; recap_state?: string; crown_holder_team_id?: string | null };
+						if (p.play_state) livePlayState = p.play_state;
+						if ('crown_holder_team_id' in p) crownHolderTeamId = p.crown_holder_team_id ?? null;
+						if (p.play_state === 'recap' && data.activeSet) {
 							window.location.href = `/play/waiting?set_id=${data.activeSet.id}`;
 						}
-						if (recapState === 'complete' && data.activeSet) {
+						if (p.recap_state === 'complete' && data.activeSet) {
 							window.location.href = `/play/thanks?set_id=${data.activeSet.id}`;
 						}
 					}
@@ -247,7 +250,12 @@
 			>
 				You are
 			</div>
-			<h1 class="mt-1 text-4xl font-black" style="color: {c.text};">{data.team.display_name}</h1>
+			<div class="mt-1 flex items-center gap-3">
+				<h1 class="text-4xl font-black" style="color: {c.text};">{data.team.display_name}</h1>
+				{#if iscrownHolder}
+					<Crown size={28} style="color: #ffe600;" />
+				{/if}
+			</div>
 		</div>
 	</div>
 
