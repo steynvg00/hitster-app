@@ -569,7 +569,7 @@
 					{/if}
 
 					<button onclick={fetchState} class="mt-2.5 text-[11px] text-zinc-600 hover:text-zinc-400"
-						>↻ refresh context</button
+						>↻ reload devnav</button
 					>
 
 					<!-- Powerups tools -->
