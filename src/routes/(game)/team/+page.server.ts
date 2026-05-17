@@ -1,6 +1,7 @@
-import { redirect } from '@sveltejs/kit';
-import type { PageServerLoad } from './$types';
+import { fail, redirect } from '@sveltejs/kit';
+import type { PageServerLoad, Actions } from './$types';
 import { createPublicClient, createAdminClient } from '$lib/server/supabase';
+import { activatePowerup, loadActiveEffects } from '$lib/server/powerups';
 import { TEAM_COLOR_ORDER } from '$lib/server/randomize';
 
 export const load: PageServerLoad = async ({ locals, cookies }) => {
@@ -245,6 +246,23 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		}));
 	}
 
+	// Active powerup effects for banner display
+	let activeEffects: Array<{
+		id: string;
+		effect_type: string;
+		payload: Record<string, unknown>;
+		expires_at: string | null;
+	}> = [];
+	if (playerSetId && locals.teamId) {
+		const effects = await loadActiveEffects(admin, locals.teamId, playerSetId);
+		activeEffects = effects.map((e) => ({
+			id: e.id,
+			effect_type: e.effect_type,
+			payload: e.payload,
+			expires_at: e.expires_at
+		}));
+	}
+
 	return {
 		team,
 		position,
@@ -258,6 +276,19 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		setTotalCount,
 		challengeUnlocks,
 		heldPowerups,
-		playerSetId
+		playerSetId,
+		activeEffects
 	};
+};
+
+export const actions: Actions = {
+	activatePowerup: async ({ request }) => {
+		const admin = createAdminClient();
+		const fd = await request.formData();
+		const teamPowerupId = (fd.get('team_powerup_id') as string | null)?.trim();
+		if (!teamPowerupId) return fail(400, { activateError: 'Missing powerup ID' });
+		const result = await activatePowerup(admin, teamPowerupId);
+		if (!result.success) return fail(400, { activateError: result.error });
+		return { activated: true };
+	}
 };

@@ -973,7 +973,7 @@ export type Database = {
 					granted_at: string;
 					granted_from_challenge_id: string | null;
 					used_at: string | null;
-					status: 'pending' | 'held' | 'used' | 'lost';
+					status: 'pending' | 'held' | 'used' | 'lost' | 'active' | 'consumed';
 					payload: Json;
 				};
 				Insert: {
@@ -984,7 +984,7 @@ export type Database = {
 					granted_at?: string;
 					granted_from_challenge_id?: string | null;
 					used_at?: string | null;
-					status?: 'pending' | 'held' | 'used' | 'lost';
+					status?: 'pending' | 'held' | 'used' | 'lost' | 'active' | 'consumed';
 					payload?: Json;
 				};
 				Update: {
@@ -995,7 +995,7 @@ export type Database = {
 					granted_at?: string;
 					granted_from_challenge_id?: string | null;
 					used_at?: string | null;
-					status?: 'pending' | 'held' | 'used' | 'lost';
+					status?: 'pending' | 'held' | 'used' | 'lost' | 'active' | 'consumed';
 					payload?: Json;
 				};
 				Relationships: [];
@@ -1011,6 +1011,7 @@ export type Database = {
 					expires_at: string | null;
 					consumed_at: string | null;
 					consumed_challenge_id: string | null;
+					source_team_powerup_id: string | null;
 				};
 				Insert: {
 					id?: string;
@@ -1022,6 +1023,7 @@ export type Database = {
 					expires_at?: string | null;
 					consumed_at?: string | null;
 					consumed_challenge_id?: string | null;
+					source_team_powerup_id?: string | null;
 				};
 				Update: {
 					id?: string;
@@ -1033,6 +1035,7 @@ export type Database = {
 					expires_at?: string | null;
 					consumed_at?: string | null;
 					consumed_challenge_id?: string | null;
+					source_team_powerup_id?: string | null;
 				};
 				Relationships: [];
 			};
