@@ -159,6 +159,8 @@ All migrations run **manually via Supabase SQL Editor** — no CLI runner. Files
 | 0041 | effect_presets         | `effect_presets` table — builtin + user-saved FX chain presets |
 | 0043 | join_consolidation     | `game_sets.team_selection_mode text` (`random`\|`selectable`); removed `randomizer_enabled`; `nfc_tags.purpose` CHECK updated (removed `'randomizer'`) |
 | 0044 | powerups_runtime       | `powerup_types` (text PK, 7 types seeded), `team_powerups`, `team_effects`; `game_sets.crown_holder_team_id`, `hard_gaan_window_minutes`; RLS + realtime |
+| 0047 | powerups_p3b           | `team_effects.source_team_powerup_id` FK; `team_powerups.status` CHECK expanded to include `active`, `consumed` |
+| 0048 | crown_payout           | `game_sets.crown_payout_applied bool DEFAULT false` — prevents double end-game crown bonus |
 
 ---
 
@@ -202,7 +204,8 @@ All migrations run **manually via Supabase SQL Editor** — no CLI runner. Files
 - `powerups_enabled bool` — master switch for powerup earning
 - `powerup_mode text` (`threshold`|`token_shop`) — earning mechanism
 - `powerup_config jsonb` — threshold mode: `{ "earn_threshold": 70 }` (score% required to earn)
-- `crown_holder_team_id uuid` — FK to leading team (P3c, not yet used)
+- `crown_holder_team_id uuid` — FK to team currently holding the crown (P3c active)
+- `crown_payout_applied bool` — true after the +2 end-game payout fires; prevents double-pay
 - `hard_gaan_window_minutes int` — window for hard_gaan powerup duration (default 15)
 
 ### Challenges
@@ -231,20 +234,26 @@ All migrations run **manually via Supabase SQL Editor** — no CLI runner. Files
 - Hint tap → `/nfc/hint/[challenge_id]` → records usage in `challenge_hints_used` → redirects to `/challenge/[id]?hint=1`
 - `'randomizer'` purpose has been removed (migration 0043). Players join via `/sets/[id]/join` instead.
 
-### Powerups (P3a runtime — migration 0044)
+### Powerups (P3a/P3b runtime — migrations 0044/0047)
 
 Two families — do NOT confuse:
 
 | Family | Tables | Notes |
 | --- | --- | --- |
 | Legacy (0032) | `powerups`, `set_powerups`, `powerup_usages` | Old catalog; not used for earning |
-| Runtime (0044) | `powerup_types`, `team_powerups`, `team_effects` | Active system |
+| Runtime (0044/0047) | `powerup_types`, `team_powerups`, `team_effects` | Active system |
 
 `powerup_types` rows (text PK, 7 seeded): `shield`, `time_boost`, `insurance`, `bonus_points`, `hard_gaan`, `single_event_mult`, `free_answer`. Key fields: `holdable bool`, `immediate_use bool`, `default_min_score_pct`, `icon`.
 
-`team_powerups` tracks each earned powerup: `status` = `pending → held | lost`. `pending` = shown in reveal modal; `held` = stored in the UI row; `lost` = dismissed.
+`team_powerups.status` lifecycle: `pending → held | lost` (earn flow); `held → active | consumed` (activation flow).
 
-`team_effects` reserved for P3b activation — nothing writes to it yet.
+`team_effects` stores live and consumed effects. Fields: `effect_type`, `payload jsonb`, `expires_at` (hard_gaan window), `consumed_at`, `source_team_powerup_id` FK. All 7 powerup types fully activated as of P3b — see `activatePowerup()` in `src/lib/server/powerups.ts`.
+
+**Scoring integration:** additive-delta multiplier formula `base × (1 + Σ(m_i − 1))` prevents runaway stacking. Insurance floor applied before `computeBreakdown`. `bonus_points` value added post-multiply.
+
+### Crown mechanic (P3c — migration 0048)
+
+`game_sets.crown_holder_team_id` tracks the leading team. Transfers on every submission via `maybeTransferCrown()` in `src/lib/server/crown.ts`; winner gets **+1 steal bonus**. At game-end (`startRecap`), `awardCrownPayout()` gives **+2** to the holder (idempotent via `crown_payout_applied`). Both events logged to `activity_log` as `crown_stolen` / `crown_payout`. Crown icon (lucide Crown, `#ffe600`) shown live on `/team`, `/leaderboard`, `/play/leaderboard`, `/admin/live`.
 
 ---
 
@@ -527,7 +536,7 @@ Each non-homepage surface gets its OWN treatment, not the homepage 6-variant sys
 
 ### SQL reset (in CLAUDE.md)
 
-- **Soft reset** — preserves game_sets, set_challenges, challenges, tracks, NFC cards. Clears: submissions, review_requests, activity_log, challenge_attempts, challenge_hints_used, challenge_unlocks, team_powerups, team_effects, team scores. Resets game_sets to `inactive/joining`.
+- **Soft reset** — preserves game_sets, set_challenges, challenges, tracks, NFC cards. Clears: submissions, review_requests, activity_log, challenge_attempts, challenge_hints_used, challenge_unlocks, team_powerups, team_effects, team scores. Resets game_sets to `inactive/joining` and clears `crown_holder_team_id` + `crown_payout_applied`.
 - **Hard reset** — same as soft reset, but also removes `challenge_unlock` NFC cards and all player records. Does NOT delete game_sets or set_challenges — configuration is preserved.
 
 Note: `recap_state` must be set to `'pending'` (not NULL) and `recap_ranking` to `'[]'::jsonb` in reset SQL — NULL/missing values violate CHECK constraints.
