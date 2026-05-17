@@ -206,14 +206,29 @@ export const actions: Actions = {
 				const slugsToCheck = unlockTagRows.map((r) => r.slug);
 				const { data: conflicts } = await db
 					.from('nfc_tags')
-					.select('slug')
+					.select('slug, purpose, challenge_id, set_id')
 					.in('slug', slugsToCheck)
 					.eq('created_by', userId);
 				if (conflicts && conflicts.length > 0) {
-					const s = conflicts[0].slug;
+					const tag = conflicts[0];
+					const s = tag.slug;
+					let existingTagUrl: string;
+					if (
+						tag.challenge_id &&
+						(tag.purpose === 'challenge' ||
+							tag.purpose === 'hint' ||
+							tag.purpose === 'challenge_unlock')
+					) {
+						existingTagUrl = `/admin/challenges/${tag.challenge_id}`;
+					} else if (tag.set_id) {
+						existingTagUrl = `/admin/sets/${tag.set_id}`;
+					} else {
+						existingTagUrl = `/admin/nfc-tags?slug=${encodeURIComponent(s)}`;
+					}
 					return fail(400, {
 						error: `Tag '${s}' already in use`,
-						existingTagUrl: `/admin/nfc-tags?slug=${encodeURIComponent(s)}`
+						existingTagUrl,
+						existingTagPurpose: tag.purpose
 					});
 				}
 			}
