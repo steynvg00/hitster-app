@@ -2,7 +2,7 @@
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
 
-	let { children } = $props();
+	let { children, data } = $props();
 
 	const nav = [
 		{ href: '/admin', label: 'Dashboard', icon: '🏠', exact: true },
@@ -17,13 +17,18 @@
 		{ href: '/admin/live', label: 'Game status', icon: '📡' }
 	];
 
+	const superAdminNav = [{ href: '/admin/whitelist', label: 'Whitelist', icon: '🔐' }];
+
 	function isActive(item: { href: string; exact?: boolean }) {
 		return item.exact
 			? $page.url.pathname === item.href
 			: $page.url.pathname.startsWith(item.href);
 	}
 
-	const isLogin = $derived($page.url.pathname === '/admin/login');
+	const isLogin = $derived(
+		$page.url.pathname === '/admin/login' ||
+			$page.url.pathname.startsWith('/admin/access-denied')
+	);
 
 	let collapsed = $state(false);
 	let mobileOpen = $state(false);
@@ -100,6 +105,24 @@
 						{/if}
 					</a>
 				{/each}
+				{#if data.isSuperAdmin}
+					{#each superAdminNav as item}
+						<a
+							href={item.href}
+							title={collapsed ? item.label : ''}
+							class="flex items-center rounded-lg py-2.5 text-sm transition-colors
+								{collapsed ? 'justify-center px-2' : 'gap-3 px-3'}
+								{isActive(item)
+								? 'bg-amber-400/15 font-medium text-amber-300'
+								: 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'}"
+						>
+							<span class="shrink-0 text-base">{item.icon}</span>
+							{#if !collapsed}
+								<span class="whitespace-nowrap">{item.label}</span>
+							{/if}
+						</a>
+					{/each}
+				{/if}
 			</nav>
 
 			<!-- Logout -->
@@ -164,6 +187,21 @@
 						<span class="whitespace-nowrap">{item.label}</span>
 					</a>
 				{/each}
+				{#if data.isSuperAdmin}
+					{#each superAdminNav as item}
+						<a
+							href={item.href}
+							onclick={closeMobile}
+							class="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors
+								{isActive(item)
+								? 'bg-amber-400/15 font-medium text-amber-300'
+								: 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'}"
+						>
+							<span class="shrink-0 text-base">{item.icon}</span>
+							<span class="whitespace-nowrap">{item.label}</span>
+						</a>
+					{/each}
+				{/if}
 			</nav>
 
 			<!-- Logout -->
