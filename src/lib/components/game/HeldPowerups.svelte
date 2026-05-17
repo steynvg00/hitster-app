@@ -24,13 +24,15 @@
 		setId,
 		powerups: initialPowerups,
 		currentChallengeId,
-		variantFields = []
+		variantFields = [],
+		onactivated
 	}: {
 		teamId: string;
 		setId: string;
 		powerups: HeldPowerup[];
 		currentChallengeId?: string;
 		variantFields?: string[];
+		onactivated?: (revealedValue?: string, revealedField?: string) => void;
 	} = $props();
 
 	let powerups = $state<HeldPowerup[]>(initialPowerups);
@@ -40,10 +42,10 @@
 		selectedPowerup = p;
 	}
 
-	function onModalClose(activated?: boolean) {
+	function onModalClose(activated?: boolean, revealedValue?: string, revealedField?: string) {
 		selectedPowerup = null;
-		if (activated) {
-			// Realtime will update the held list; nothing else to do here
+		if (activated && (revealedValue || revealedField)) {
+			onactivated?.(revealedValue, revealedField);
 		}
 	}
 

@@ -447,6 +447,30 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		}));
 	}
 
+	// Active powerup effects + free-answer reveals
+	let activeEffects: Awaited<ReturnType<typeof loadActiveEffects>> = [];
+	let freeAnswerReveal: Record<string, string> = {};
+	if (activeSetId && locals.teamId) {
+		activeEffects = await loadActiveEffects(admin, locals.teamId, activeSetId);
+
+		const { data: revealRows } = await admin
+			.from('team_effects')
+			.select('payload')
+			.eq('team_id', locals.teamId)
+			.eq('effect_type', 'free_answer')
+			.not('consumed_at', 'is', null);
+		for (const r of revealRows ?? []) {
+			const p = (r.payload ?? {}) as Record<string, unknown>;
+			if (
+				p.challenge_id === params.id &&
+				typeof p.field === 'string' &&
+				typeof p.value === 'string'
+			) {
+				freeAnswerReveal[p.field] = p.value;
+			}
+		}
+	}
+
 	return {
 		challenge,
 		tabs: tabList,
@@ -464,7 +488,9 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		showHint,
 		hintUsed,
 		tutorialText,
-		heldPowerups
+		heldPowerups,
+		activeEffects,
+		freeAnswerReveal
 	};
 };
 
