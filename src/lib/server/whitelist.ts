@@ -34,6 +34,20 @@ export async function bootstrapSuperAdmins(): Promise<void> {
 }
 
 /**
+ * Upserts an email onto the whitelist as super_admin, but only if not already
+ * present (ignoreDuplicates: true). Existing rows keep their current state —
+ * a dev user manually demoted to regular admin won't be silently re-elevated.
+ * Safe to call on every request; no-op after the first successful insert.
+ */
+export async function ensureWhitelisted(email: string): Promise<void> {
+	const admin = createAdminClient();
+	await admin.from('host_whitelist').upsert(
+		{ email: email.toLowerCase(), is_super_admin: true },
+		{ onConflict: 'email', ignoreDuplicates: true }
+	);
+}
+
+/**
  * Returns whether the given email is on the whitelist. Case-insensitive.
  */
 export async function isWhitelisted(
