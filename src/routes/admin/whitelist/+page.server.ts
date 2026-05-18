@@ -98,7 +98,9 @@ export const actions: Actions = {
 			.maybeSingle();
 		if (!row) return fail(404, { error: 'Entry not found' });
 
-		// Prevent demoting the last super_admin
+		// Self-demotion is intentionally allowed — the last-super-admin count guard
+		// below is the real safety net. If you demote yourself and are no longer
+		// super_admin, the layout will redirect you to /admin on the next load.
 		if (row.is_super_admin) {
 			const { count } = await admin
 				.from('host_whitelist')
