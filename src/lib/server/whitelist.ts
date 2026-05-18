@@ -29,7 +29,7 @@ export async function bootstrapSuperAdmins(): Promise<void> {
 	for (const email of emails) {
 		await admin
 			.from('host_whitelist')
-			.upsert({ email, is_super_admin: true }, { onConflict: 'email' });
+			.upsert({ email, is_super_admin: true }, { onConflict: 'email', ignoreDuplicates: true });
 	}
 }
 
