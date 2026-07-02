@@ -13,7 +13,8 @@
 		"lint": "prettier --check . && eslint .",
 		"format": "prettier --write .",
 		"bots:join": "tsx tests/bots/run-join.ts",
-		"bots:play": "tsx tests/bots/run-play.ts"
+		"bots:play": "tsx tests/bots/run-play.ts",
+		"bots:fixtures": "tsx scripts/gen-fixtures.ts"
 	},
 	"devDependencies": {
 		"@eslint/compat": "^2.0.4",

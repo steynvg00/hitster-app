@@ -1,7 +1,23 @@
 # Bot fixtures
 
 Ground-truth answers so the play bots (`npm run bots:play`) can answer
-challenges `correct` or `wrong`. One JSON file per test run.
+challenges correctly (or wrongly). One JSON file per set, named `<setId>.json`
+and auto-loaded by `bots:play`.
+
+## Generate from the DB (preferred)
+
+```bash
+npm run bots:fixtures -- --set <game-set-uuid> --ensure-pool
+```
+
+This reads the set's challenges, resolves each single-track challenge's source
+track, and writes `tests/bots/fixtures/<setId>.json` with full ground truth.
+`--ensure-pool` inserts each correct artist/label/festival into the matching
+`answer_pool_*` table so combobox answers can confirm. mashup / fragments /
+multi-tab challenges are skipped with a log.
+
+`example.json` below is only an illustrative template — real runs use the
+generated `<setId>.json`.
 
 ## Shape
 

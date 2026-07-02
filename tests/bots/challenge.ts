@@ -11,7 +11,7 @@
 import type { Page, Locator } from '@playwright/test';
 import { BOT_BASE_URL } from './config';
 import type { FixtureChallenge, FixtureFields } from './fixtures';
-import type { Plan } from './personality';
+import { type Profile, fieldIsCorrect } from './personality';
 
 // Field lists per variant (mirrors src/lib/server/scoring.ts VARIANT_FIELDS).
 // Kept local so the bot doesn't need SvelteKit's $lib alias resolution.
@@ -32,12 +32,23 @@ const TEXT_DECOY = 'The Decoy Answer';
 
 type InputMode = 'slider' | 'typeable_number' | 'open_text' | 'combobox' | 'multiple_choice';
 
+export type Intent = 'correct' | 'wrong' | 'garbage';
+
+export interface FieldPlay {
+	field: string;
+	mode: InputMode | null;
+	intended: Intent;
+	filled: boolean; // false when the control couldn't confirm the value (e.g. combobox miss)
+}
+
 export interface PlayOutcome {
 	id: string;
 	variant: string;
 	played: boolean; // fields were filled + submit attempted
 	submitted: boolean; // results screen rendered
+	lazy: boolean; // attempt created but deliberately not submitted
 	skipped?: string; // reason, when played === false
+	fields: FieldPlay[]; // per-field intents (non-lazy, handled challenges)
 }
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
@@ -48,29 +59,31 @@ function truthFor(field: string, fields: FixtureFields | undefined): string | un
 	return v === undefined || v === null || v === '' ? undefined : String(v);
 }
 
-/** Compute the value to type for a field, per accuracy. */
-function computeValue(
+/**
+ * Value to type for a field given whether this bot should answer it correctly.
+ * Wrong answers are deterministic FAR decoys (year ±5 → outside the ±2 window,
+ * text → a fixed decoy that can't fuzzy-match) so they score exactly 0. No
+ * ground truth at all → garbage (unknown track).
+ */
+function valueFor(
 	field: string,
 	fields: FixtureFields | undefined,
-	accuracy: Plan['accuracy']
-): { value: string; kind: 'correct' | 'wrong' | 'garbage' } {
+	correct: boolean
+): { value: string; intended: Intent } {
 	const truth = truthFor(field, fields);
 
-	// No ground truth, or explicitly garbage → unknown answer.
-	if (accuracy === 'garbage' || truth === undefined) {
-		return { value: field === 'year' ? String(YEAR_MIN) : 'zzzzzz', kind: 'garbage' };
+	if (truth === undefined) {
+		return { value: field === 'year' ? String(YEAR_MIN) : 'zzzzzz', intended: 'garbage' };
 	}
+	if (correct) return { value: truth, intended: 'correct' };
 
-	if (accuracy === 'correct') return { value: truth, kind: 'correct' };
-
-	// wrong — deterministic decoy
 	if (field === 'year') {
 		const y = parseInt(truth, 10);
 		let w = clamp(y + 5, YEAR_MIN, YEAR_MAX);
 		if (w === y) w = clamp(y - 5, YEAR_MIN, YEAR_MAX);
-		return { value: String(w), kind: 'wrong' };
+		return { value: String(w), intended: 'wrong' };
 	}
-	return { value: TEXT_DECOY, kind: 'wrong' };
+	return { value: TEXT_DECOY, intended: 'wrong' };
 }
 
 /** Detect the input mode of a control by its `name`, reading the live DOM. */
@@ -177,16 +190,23 @@ async function isMultiTab(page: Page): Promise<boolean> {
 const results = (page: Page): Locator => page.getByRole('heading', { name: 'Results' });
 
 /**
- * Play one challenge end-to-end. Returns an outcome describing what happened.
+ * Play one challenge end-to-end for one bot, per its profile.
+ *
+ * All bots know the full ground truth; the profile decides, per field, whether
+ * to give the correct value or a deterministic far decoy (seeded on team +
+ * challenge + field). A `lazy` profile clears the start gate then leaves without
+ * submitting, so the host-side auto-submit fires on the timer.
+ *
  * Never throws for expected states (ended / already submitted / deferred).
  */
 export async function playChallenge(
 	page: Page,
 	challenge: FixtureChallenge,
-	plan: Plan
+	profile: Profile,
+	teamKey: string
 ): Promise<PlayOutcome> {
 	const { id, variant } = challenge;
-	const base: PlayOutcome = { id, variant, played: false, submitted: false };
+	const base: PlayOutcome = { id, variant, played: false, submitted: false, lazy: false, fields: [] };
 
 	if (!HANDLED_VARIANTS.has(variant)) {
 		console.log(`    ⤼ challenge ${id} (${variant}): not handled in v1 — deferred`);
@@ -208,7 +228,8 @@ export async function playChallenge(
 		return { ...base, skipped: 'challenge ended' };
 	}
 
-	// Pre-game gate → start it, then wait for the in-game submit form to mount.
+	// Pre-game gate → start it (creates the attempt), then wait for the in-game
+	// submit form to mount.
 	const submitForm = page.locator('form[action="?/submit"]');
 	const gate = page.locator('form[action="?/startChallenge"]');
 	if (await gate.count()) {
@@ -224,27 +245,35 @@ export async function playChallenge(
 		return { ...base, skipped: 'no gate/form' };
 	}
 
+	// Lazy: attempt is now created; deliberately never submit → host auto-submit.
+	if (profile.lazy) {
+		console.log(`    ⏸ challenge ${id}: lazy — attempt created, no submit (host will auto-submit)`);
+		return { ...base, lazy: true };
+	}
+
 	// Deferred: multi-tab challenges.
 	if (await isMultiTab(page)) {
 		console.log(`    ⤼ challenge ${id}: multi-tab — not handled in v1 — deferred`);
 		return { ...base, skipped: 'multi-tab deferred' };
 	}
 
-	// ── Fill each field ─────────────────────────────────────────────────────
-	const fields = VARIANT_FIELDS[variant] ?? [];
-	for (const field of fields) {
+	// ── Fill each field per the seeded correct/wrong decision ────────────────
+	const played: FieldPlay[] = [];
+	for (const field of VARIANT_FIELDS[variant] ?? []) {
 		if (field === 'grouping') continue; // fragments-only, not reached here
 		const resolved = await resolveField(page, field);
+		const correct = fieldIsCorrect(profile, teamKey, id, field);
+		const { value, intended } = valueFor(field, challenge.fields, correct);
+
 		if (!resolved) {
 			console.log(`      · ${field}: control not found — skipped`);
+			played.push({ field, mode: null, intended, filled: false });
 			continue;
 		}
-		const { value, kind } = computeValue(field, challenge.fields, plan.accuracy);
 		const res = await fillControl(page, resolved.name, resolved.mode, value);
 		const suffix = res.filled ? '' : ` (${res.note})`;
-		console.log(
-			`      · ${field} [${resolved.mode}] ← "${value}" (${kind})${suffix}`
-		);
+		console.log(`      · ${field} [${resolved.mode}] ← "${value}" (${intended})${suffix}`);
+		played.push({ field, mode: resolved.mode, intended, filled: res.filled });
 	}
 
 	// ── Submit + wait for results ───────────────────────────────────────────
@@ -259,5 +288,5 @@ export async function playChallenge(
 	}
 	if (submitted) console.log(`    ✓ challenge ${id}: submitted, results rendered`);
 
-	return { ...base, played: true, submitted };
+	return { ...base, played: true, submitted, fields: played };
 }
