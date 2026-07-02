@@ -14,7 +14,8 @@
 		"format": "prettier --write .",
 		"bots:join": "tsx tests/bots/run-join.ts",
 		"bots:play": "tsx tests/bots/run-play.ts",
-		"bots:fixtures": "tsx scripts/gen-fixtures.ts"
+		"bots:fixtures": "tsx scripts/gen-fixtures.ts",
+		"seed:mechanics": "tsx scripts/seed-mechanics-set.ts"
 	},
 	"devDependencies": {
 		"@eslint/compat": "^2.0.4",
