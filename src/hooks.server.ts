@@ -16,5 +16,21 @@ export const handle: Handle = async ({ event, resolve }) => {
 	event.locals.user = user ?? null;
 	event.locals.isAdmin = event.locals.user !== null;
 
+	// DEV-ONLY: skip host login locally. When there's no real Supabase session,
+	// act as a real existing host user so /admin/* is reachable AND created_by
+	// (FK → auth.users) writes stay valid. The whitelist guard in
+	// admin/+layout.server.ts then passes on its own (it auto-whitelists the
+	// signed-in email in dev). Vite replaces import.meta.env.DEV with false in
+	// production and tree-shakes this block; the dynamic import keeps dev-auth
+	// out of the prod bundle entirely. No production behavior change.
+	if (import.meta.env.DEV && !event.locals.user) {
+		const { resolveDevUser } = await import('$lib/server/dev-auth');
+		const devUser = await resolveDevUser();
+		if (devUser) {
+			event.locals.user = devUser;
+			event.locals.isAdmin = true;
+		}
+	}
+
 	return resolve(event);
 };
