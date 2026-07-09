@@ -15,7 +15,7 @@
 
 import { chromium } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { Player } from './player';
+import { Player, type JoinResult } from './player';
 import { playChallenge, type PlayOutcome } from './challenge';
 import { loadFixtures, fixtureMap, type FixtureFile } from './fixtures';
 import { assignProfiles } from './personality';
@@ -104,20 +104,35 @@ async function main() {
 	try {
 
 		// ── Join ────────────────────────────────────────────────────────────────
-		const joins = await Promise.all(
-			players.map((p) =>
-				p.join(setId).catch((err) => {
-					console.log(`  ✗ ${p.name} → join error: ${err instanceof Error ? err.message : err}`);
-					return null;
-				})
-			)
-		);
+		// Sequential, not Promise.all: assignTeam()'s fallback (unconfigured/overflow
+		// sets) reads team counts with no lock, so simultaneous joins can all read the
+		// same lowest-count team and collide. Joining one-by-one mimics real players
+		// not tapping in the same millisecond. Onboarding internals (context/page
+		// creation) still happen per-bot; only the join call itself is serialized.
+		const joins: (JoinResult | null)[] = [];
+		for (const p of players) {
+			try {
+				joins.push(await p.join(setId));
+			} catch (err) {
+				console.log(`  ✗ ${p.name} → join error: ${err instanceof Error ? err.message : err}`);
+				joins.push(null);
+			}
+		}
 		// Pair each joined bot with its profile (same index as launch order).
 		const joined = players
 			.map((player, i) => ({ player, profile: profiles[i] }))
 			.filter((_, i) => joins[i]?.status === 'joined');
 		for (const { player, profile } of joined) {
 			console.log(`  ✓ ${player.name} joined → ${player.team} [${profile.name}]`);
+		}
+
+		// Distinct-team sanity check: bot count should map 1:1 to distinct teams.
+		const teamCounts = new Map<string, number>();
+		for (const { player } of joined) {
+			if (player.team) teamCounts.set(player.team, (teamCounts.get(player.team) ?? 0) + 1);
+		}
+		for (const [team, n] of teamCounts) {
+			if (n > 1) console.warn(`  ⚠ WARNING: ${n} bots landed on team ${team} — expected 1:1 bot→team`);
 		}
 
 		if (joined.length === 0) {

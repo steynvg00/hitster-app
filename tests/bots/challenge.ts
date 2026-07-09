@@ -52,6 +52,27 @@ export interface PlayOutcome {
 }
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Retry a field interaction that can fail because Svelte's {#key activeTabIndex}
+ * block (see CLAUDE.md) remounts the whole field set — on the post-startChallenge
+ * `window.location.reload()` settling, and again on any tab/slot switch. Each
+ * attempt re-resolves its locators from scratch (the caller re-queries inside
+ * `action`), so a stale/detached handle never survives into a retry.
+ */
+async function withRemountRetry<T>(action: () => Promise<T>, attempts = 3): Promise<T> {
+	let lastErr: unknown;
+	for (let i = 0; i < attempts; i++) {
+		try {
+			return await action();
+		} catch (err) {
+			lastErr = err;
+			if (i < attempts - 1) await sleep(250);
+		}
+	}
+	throw lastErr;
+}
 
 function truthFor(field: string, fields: FixtureFields | undefined): string | undefined {
 	const key = field === 'label' ? 'record_label' : field;
@@ -130,52 +151,74 @@ async function fillControl(
 ): Promise<{ filled: boolean; note?: string }> {
 	switch (mode) {
 		case 'open_text':
-			await page.fill(`input[type="text"][name="${name}"]`, value);
+			await withRemountRetry(async () => {
+				const field = page.locator(`input[type="text"][name="${name}"]`);
+				await field.waitFor({ state: 'visible' });
+				await field.fill(value);
+			});
 			return { filled: true };
 
 		case 'typeable_number':
-			await page.fill(`input[type="number"][name="${name}"]`, value);
+			await withRemountRetry(async () => {
+				const field = page.locator(`input[type="number"][name="${name}"]`);
+				await field.waitFor({ state: 'visible' });
+				await field.fill(value);
+			});
 			return { filled: true };
 
 		case 'slider': {
 			// Playwright's fill() doesn't drive <input type=range>; set the value via
 			// the native setter + dispatch input/change so Svelte's bind:value reacts.
-			await page.locator(`input[type="range"][name="${name}"]`).evaluate((el, v) => {
-				const input = el as HTMLInputElement;
-				const setter = Object.getOwnPropertyDescriptor(
-					HTMLInputElement.prototype,
-					'value'
-				)?.set;
-				setter?.call(input, String(v));
-				input.dispatchEvent(new Event('input', { bubbles: true }));
-				input.dispatchEvent(new Event('change', { bubbles: true }));
-			}, value);
+			await withRemountRetry(async () => {
+				const field = page.locator(`input[type="range"][name="${name}"]`);
+				await field.waitFor({ state: 'visible' });
+				await field.evaluate((el, v) => {
+					const input = el as HTMLInputElement;
+					const setter = Object.getOwnPropertyDescriptor(
+						HTMLInputElement.prototype,
+						'value'
+					)?.set;
+					setter?.call(input, String(v));
+					input.dispatchEvent(new Event('input', { bubbles: true }));
+					input.dispatchEvent(new Event('change', { bubbles: true }));
+				}, value);
+			});
 			return { filled: true };
 		}
 
 		case 'combobox': {
-			const hidden = page.locator(`input[type="hidden"][name="${name}"]`);
-			const container = hidden.locator('xpath=..');
-			await container.locator('input[type="text"]').fill(value);
-			// The confirmed value only sticks on an exact option match (typing alone
-			// leaves it blank). Click the matching dropdown option if present.
-			const option = container.getByRole('button', { name: value, exact: true });
-			if (await option.count()) {
-				await option.first().click();
-				return { filled: true };
-			}
-			return { filled: false, note: 'no matching combobox option — left blank' };
+			let matched = false;
+			await withRemountRetry(async () => {
+				const hidden = page.locator(`input[type="hidden"][name="${name}"]`);
+				const container = hidden.locator('xpath=..');
+				const text = container.locator('input[type="text"]');
+				await text.waitFor({ state: 'visible' });
+				await text.fill(value);
+				// The confirmed value only sticks on an exact option match (typing
+				// alone leaves it blank). The option list re-renders on every
+				// keystroke, so re-query it fresh right before clicking rather than
+				// reusing a locator captured before the fill.
+				const option = container.getByRole('button', { name: value, exact: true });
+				matched = (await option.count()) > 0;
+				if (matched) await option.first().click();
+			});
+			return matched
+				? { filled: true }
+				: { filled: false, note: 'no matching combobox option — left blank' };
 		}
 
 		case 'multiple_choice': {
-			const hidden = page.locator(`input[type="hidden"][name="${name}"]`);
-			const container = hidden.locator('xpath=..');
-			const option = container.getByRole('button', { name: value, exact: true });
-			if (await option.count()) {
-				await option.first().click();
-				return { filled: true };
-			}
-			return { filled: false, note: 'no matching choice option — skipped' };
+			let matched = false;
+			await withRemountRetry(async () => {
+				const hidden = page.locator(`input[type="hidden"][name="${name}"]`);
+				const container = hidden.locator('xpath=..');
+				const option = container.getByRole('button', { name: value, exact: true });
+				matched = (await option.count()) > 0;
+				if (matched) await option.first().click();
+			});
+			return matched
+				? { filled: true }
+				: { filled: false, note: 'no matching choice option — skipped' };
 		}
 	}
 }
@@ -240,6 +283,13 @@ export async function playChallenge(
 			console.log(`    ⤼ challenge ${id}: start gate didn't advance — skipped`);
 			return { ...base, skipped: 'start gate stuck' };
 		}
+		// The gate's success handler does a full window.location.reload() to remount
+		// the timer (see CLAUDE.md "Challenge start gate"). The in-game form's
+		// {#key activeTabIndex} field block can still be settling for a beat right
+		// after the reload — avoid using networkidle here since the realtime
+		// websocket keeps the network non-idle indefinitely; a short fixed pause is
+		// enough, and fillControl's own retry wrapper covers anything left over.
+		await sleep(400);
 	} else if (!(await submitForm.count())) {
 		console.log(`    ⤼ challenge ${id}: no start gate or form (not active?) — skipped`);
 		return { ...base, skipped: 'no gate/form' };
