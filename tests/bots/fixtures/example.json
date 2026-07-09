@@ -1,0 +1,15 @@
+{
+	"setId": "REPLACE-WITH-GAME-SET-UUID",
+	"challenges": [
+		{
+			"id": "REPLACE-WITH-CHALLENGE-UUID",
+			"variant": "standard",
+			"fields": {
+				"artist": "Headhunterz",
+				"title": "Dragonborn",
+				"year": 2011
+			},
+			"accepted_titles": ["Dragonborn"]
+		}
+	]
+}

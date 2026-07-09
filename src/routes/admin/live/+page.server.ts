@@ -9,7 +9,9 @@ export const load: PageServerLoad = async ({ url }) => {
 	// Find active sets that have at least one player joined
 	const { data: activeSets } = await db
 		.from('game_sets')
-		.select('id, name, team_count, play_state, total_timer_seconds, started_at, scores_hidden')
+		.select(
+			'id, name, team_count, play_state, total_timer_seconds, started_at, scores_hidden, crown_holder_team_id'
+		)
 		.eq('status', 'active');
 
 	const setsWithPlayers: Array<{
@@ -20,6 +22,7 @@ export const load: PageServerLoad = async ({ url }) => {
 		total_timer_seconds: number | null;
 		started_at: string | null;
 		scores_hidden: boolean;
+		crown_holder_team_id: string | null;
 		player_count: number;
 	}> = [];
 
@@ -50,7 +53,8 @@ export const load: PageServerLoad = async ({ url }) => {
 			challenges: [],
 			attempts: [],
 			submissions: [],
-			activity: []
+			activity: [],
+			teamPowerups: []
 		};
 	}
 
@@ -82,36 +86,63 @@ export const load: PageServerLoad = async ({ url }) => {
 	const challengeIds = (setChallengeRows ?? []).map((sc) => sc.challenge_id);
 	const positionMap = new Map((setChallengeRows ?? []).map((sc) => [sc.challenge_id, sc.position]));
 
-	const [challengeResult, attemptsResult, subsResult, activityResult] = await Promise.all([
-		challengeIds.length
-			? db
-					.from('challenges')
-					.select('id, title, variant, timer_seconds, stage_label, status')
-					.in('id', challengeIds)
-			: { data: [] as never[] },
-		challengeIds.length
-			? db.from('challenge_attempts').select('*').in('challenge_id', challengeIds)
-			: { data: [] as never[] },
-		challengeIds.length
-			? db
-					.from('submissions')
-					.select('team_id, challenge_id, score, status, is_final')
-					.in('challenge_id', challengeIds)
-			: { data: [] as never[] },
-		teams.length
-			? db
-					.from('activity_log')
-					.select('*')
-					.in('team_id', teams.map((t) => t.id))
-					.order('created_at', { ascending: false })
-					.limit(30)
-			: { data: [] as never[] }
-	]);
+	const [challengeResult, attemptsResult, subsResult, activityResult, teamPowerupsResult] =
+		await Promise.all([
+			challengeIds.length
+				? db
+						.from('challenges')
+						.select('id, title, variant, timer_seconds, stage_label, status')
+						.in('id', challengeIds)
+				: { data: [] as never[] },
+			challengeIds.length
+				? db.from('challenge_attempts').select('*').in('challenge_id', challengeIds)
+				: { data: [] as never[] },
+			challengeIds.length
+				? db
+						.from('submissions')
+						.select('team_id, challenge_id, score, status, is_final, answers')
+						.in('challenge_id', challengeIds)
+				: { data: [] as never[] },
+			teams.length
+				? db
+						.from('activity_log')
+						.select('*')
+						.in('team_id', teams.map((t) => t.id))
+						.order('created_at', { ascending: false })
+						.limit(30)
+				: { data: [] as never[] },
+			teams.length
+				? db
+						.from('team_powerups')
+						.select('id, team_id, status, powerup_types(id, name, icon)')
+						.in('team_id', teams.map((t) => t.id))
+						.eq('set_id', selectedSetId)
+						// 'active' isn't in this branch's team_powerups status CHECK yet
+						// (P3b activation, migration 0047, not merged here) — the hand-
+						// maintained database.ts type reflects that. Query forward-
+						// compatibly for when it lands; cast past the stale union.
+						.in('status', ['held', 'active'] as unknown as ('pending' | 'held' | 'used' | 'lost')[])
+				: { data: [] as never[] }
+		]);
 
 	// Sort challenges by their position in the set
 	const challenges = (challengeResult.data ?? []).sort(
 		(a, b) => (positionMap.get(a.id) ?? 0) - (positionMap.get(b.id) ?? 0)
 	);
+
+	const teamPowerups = (
+		(teamPowerupsResult.data ?? []) as unknown as Array<{
+			id: string;
+			team_id: string;
+			status: 'pending' | 'held' | 'used' | 'lost' | 'active' | 'consumed';
+			powerup_types: { id: string; name: string; icon: string | null } | null;
+		}>
+	).map((row) => ({
+		id: row.id,
+		team_id: row.team_id,
+		status: row.status,
+		powerup_types: row.powerup_types
+	}));
 
 	return {
 		activeSets: setsWithPlayers,
@@ -122,7 +153,8 @@ export const load: PageServerLoad = async ({ url }) => {
 		challenges,
 		attempts: attemptsResult.data ?? [],
 		submissions: subsResult.data ?? [],
-		activity: activityResult.data ?? []
+		activity: activityResult.data ?? [],
+		teamPowerups
 	};
 };
 

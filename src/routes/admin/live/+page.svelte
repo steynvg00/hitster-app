@@ -1,9 +1,12 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { onMount, untrack } from 'svelte';
+	import { Crown } from 'lucide-svelte';
 	import { supabaseBrowser } from '$lib/supabase-browser';
+	import Modal from '$lib/components/ui/Modal.svelte';
 	import type { PageData } from './$types';
 	import type { ActivityLogRow } from '$lib/types/database';
+	import type { ScoreBreakdown } from '$lib/types/index.js';
 
 	let { data }: { data: PageData } = $props();
 
@@ -12,12 +15,18 @@
 	type PlayerRow = (typeof data.players)[number];
 	type AttemptRow = (typeof data.attempts)[number];
 	type SubmissionRow = (typeof data.submissions)[number];
+	type TeamPowerupRow = (typeof data.teamPowerups)[number];
 
 	let teams = $state<TeamRow[]>([...data.teams]);
 	let players = $state<PlayerRow[]>([...data.players]);
 	let attempts = $state<AttemptRow[]>([...data.attempts]);
 	let submissions = $state<SubmissionRow[]>([...data.submissions]);
 	let activity = $state<ActivityLogRow[]>([...data.activity]);
+	let teamPowerups = $state<TeamPowerupRow[]>([...data.teamPowerups]);
+	let crownHolderTeamId = $state<string | null>(data.selectedSet?.crown_holder_team_id ?? null);
+
+	// ── Team detail modal (per-team answer inspection) ────────────────────────
+	let selectedTeamId = $state<string | null>(null);
 
 	// ── Polling state ─────────────────────────────────────────────────────────
 	let pollingActive = $state(false);
@@ -42,11 +51,70 @@
 
 	// ── Derived leaderboard ───────────────────────────────────────────────────
 	const sortedByScore = $derived([...teams].sort((a, b) => b.score - a.score));
-	const maxScore = $derived(Math.max(...teams.map((t) => t.score), 1));
+	const selectedTeam = $derived(teams.find((t) => t.id === selectedTeamId) ?? null);
 
 	// ── Helpers ───────────────────────────────────────────────────────────────
 	function teamPlayers(teamId: string) {
 		return players.filter((p) => p.team_id === teamId);
+	}
+
+	function teamPowerupPills(teamId: string) {
+		return teamPowerups.filter((tp) => tp.team_id === teamId);
+	}
+
+	// ── Answer inspection (team detail modal) ─────────────────────────────────
+	const FIELD_LABELS: Record<string, string> = {
+		artist: 'Artist',
+		title: 'Title',
+		year: 'Year',
+		vocal_source: 'Vocal source',
+		label: 'Record Label',
+		festival: 'Festival',
+		grouping: 'Which fragments?'
+	};
+	function fieldLabel(field: string) {
+		return FIELD_LABELS[field] ?? field;
+	}
+
+	const BREAKDOWN_LABELS: Record<keyof ScoreBreakdown, string> = {
+		base: 'Base',
+		difficulty_multiplier: 'Difficulty ×',
+		round_multiplier: 'Round ×',
+		comeback_multiplier: 'Comeback ×',
+		streak_bonus: 'Streak +',
+		speed_bonus: 'Speed +',
+		final: 'Final'
+	};
+
+	type ParsedSlot = { slotIndex: number; fieldValues: Record<string, unknown>; scored: Record<string, number> };
+	type ParsedTab = { tabPosition: number; slots: ParsedSlot[] };
+
+	// submissions.answers is TabAnswer[] (post-migration-0036 shape) — see CLAUDE.md.
+	// Defensive against anything else (legacy/plain-object rows) since this reads
+	// raw JSONB with no server-side reshaping.
+	function parseAnswers(raw: unknown): { tabs: ParsedTab[]; breakdown: ScoreBreakdown | null } {
+		if (!Array.isArray(raw)) return { tabs: [], breakdown: null };
+		const tabs: ParsedTab[] = raw.map((t, i) => {
+			const tabAns = t as { tab_position?: number; source_answers?: unknown };
+			const sourceAnswers = Array.isArray(tabAns.source_answers) ? tabAns.source_answers : [];
+			return {
+				tabPosition: tabAns.tab_position ?? i + 1,
+				slots: sourceAnswers.map((sa, j) => {
+					const slot = sa as {
+						slot_index?: number;
+						field_values?: Record<string, unknown>;
+						scored?: Record<string, number>;
+					};
+					return {
+						slotIndex: slot.slot_index ?? j,
+						fieldValues: slot.field_values ?? {},
+						scored: slot.scored ?? {}
+					};
+				})
+			};
+		});
+		const first = raw[0] as { breakdown?: ScoreBreakdown } | undefined;
+		return { tabs, breakdown: first?.breakdown ?? null };
 	}
 
 	function getAttempt(challengeId: string, teamId: string) {
@@ -134,15 +202,19 @@
 		const a = untrack(() => data.attempts);
 		const s = untrack(() => data.submissions);
 		const ac = untrack(() => data.activity);
+		const tp = untrack(() => data.teamPowerups);
 
 		teams = [...t];
 		players = [...p];
 		attempts = [...a];
 		submissions = [...s];
 		activity = [...ac];
+		teamPowerups = [...tp];
 		scoresHidden = untrack(() => data.selectedSet)?.scores_hidden ?? false;
+		crownHolderTeamId = untrack(() => data.selectedSet)?.crown_holder_team_id ?? null;
 
 		openPopover = null;
+		selectedTeamId = null;
 
 		if (!setId) return;
 
@@ -227,12 +299,74 @@
 			)
 			.subscribe();
 
+		// Held/active powerups per team (pills on the team cards).
+		const powerupSub = supabaseBrowser
+			.channel(`live-powerups-${setId}`)
+			.on(
+				'postgres_changes',
+				{ event: '*', schema: 'public', table: 'team_powerups', filter: `set_id=eq.${setId}` },
+				(payload) => {
+					if (payload.eventType === 'DELETE') {
+						const old = payload.old as { id: string };
+						teamPowerups = teamPowerups.filter((tp) => tp.id !== old.id);
+						return;
+					}
+					const row = payload.new as { id: string; team_id: string; status: string };
+					// Realtime rows carry raw columns, not the joined powerup_types(...)
+					// relation from the initial load — only track membership for
+					// held/active status here; drop rows that leave that set.
+					const idx = teamPowerups.findIndex((tp) => tp.id === row.id);
+					if (!['held', 'active'].includes(row.status)) {
+						if (idx >= 0) teamPowerups = teamPowerups.filter((tp) => tp.id !== row.id);
+						return;
+					}
+					if (idx >= 0) {
+						teamPowerups = teamPowerups.map((tp) =>
+							tp.id === row.id ? { ...tp, status: row.status as TeamPowerupRow['status'] } : tp
+						);
+					}
+					// A freshly-INSERTed/status-changed-into-range row without the joined
+					// powerup_types relation would render with a blank icon; refetch just
+					// this row (with the relation) instead of patching it in blind.
+					if (idx < 0 || !teamPowerups[idx]?.powerup_types) {
+						supabaseBrowser
+							.from('team_powerups')
+							.select('id, team_id, status, powerup_types(id, name, icon)')
+							.eq('id', row.id)
+							.maybeSingle()
+							.then(({ data: fresh }) => {
+								if (!fresh) return;
+								const row = fresh as unknown as TeamPowerupRow;
+								const i = teamPowerups.findIndex((tp) => tp.id === row.id);
+								if (i >= 0) teamPowerups = [...teamPowerups.slice(0, i), row, ...teamPowerups.slice(i + 1)];
+								else teamPowerups = [...teamPowerups, row];
+							});
+					}
+				}
+			)
+			.subscribe();
+
+		// Crown holder (game_sets.crown_holder_team_id) — live badge on the leader.
+		const setSub = supabaseBrowser
+			.channel(`live-set-${setId}`)
+			.on(
+				'postgres_changes',
+				{ event: 'UPDATE', schema: 'public', table: 'game_sets', filter: `id=eq.${setId}` },
+				(payload) => {
+					const row = payload.new as { crown_holder_team_id: string | null };
+					crownHolderTeamId = row.crown_holder_team_id ?? null;
+				}
+			)
+			.subscribe();
+
 		return () => {
 			supabaseBrowser.removeChannel(teamSub);
 			supabaseBrowser.removeChannel(playerSub);
 			supabaseBrowser.removeChannel(attemptSub);
 			supabaseBrowser.removeChannel(subSub);
 			supabaseBrowser.removeChannel(actSub);
+			supabaseBrowser.removeChannel(powerupSub);
+			supabaseBrowser.removeChannel(setSub);
 		};
 	});
 
@@ -379,30 +513,34 @@
 				<div class="space-y-2">
 					{#each teams as team (team.id)}
 						{@const tp = teamPlayers(team.id)}
-						<div class="rounded-xl border border-zinc-800 bg-zinc-900 p-3">
-							<div class="mb-1.5 flex items-center justify-between">
-								<div class="flex items-center gap-2">
-									<div
-										class="h-2.5 w-2.5 rounded-full"
-										style="background-color: {teamColorHex[team.color] ?? '#666'}"
-									></div>
-									<span class="text-sm font-semibold text-zinc-200">{team.display_name}</span>
-									<span class="text-xs text-zinc-600">({tp.length})</span>
-								</div>
-								<span class="text-lg font-black text-white tabular-nums">{team.score}</span>
-							</div>
-							<!-- Score bar -->
-							<div class="mb-2 h-1 w-full rounded-full bg-zinc-800">
+						{@const pills = teamPowerupPills(team.id)}
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<div
+							role="button"
+							tabindex="0"
+							onclick={() => (selectedTeamId = team.id)}
+							onkeydown={(e) => {
+								if (e.key === 'Enter' || e.key === ' ') {
+									e.preventDefault();
+									selectedTeamId = team.id;
+								}
+							}}
+							class="cursor-pointer rounded-xl border border-zinc-800 bg-zinc-900 p-3 transition hover:border-zinc-600"
+						>
+							<div class="mb-1.5 flex items-center gap-2">
 								<div
-									class="h-1 rounded-full transition-all duration-500"
-									style="width: {(team.score / maxScore) * 100}%; background-color: {teamColorHex[
-										team.color
-									] ?? '#666'}"
+									class="h-2.5 w-2.5 shrink-0 rounded-full"
+									style="background-color: {teamColorHex[team.color] ?? '#666'}"
 								></div>
+								<span class="truncate text-sm font-semibold text-zinc-200">{team.display_name}</span>
+								{#if crownHolderTeamId === team.id}
+									<Crown size={14} color="#ffe600" fill="#ffe600" />
+								{/if}
+								<span class="text-xs text-zinc-600">({tp.length})</span>
 							</div>
 							<!-- Players -->
 							{#if tp.length > 0}
-								<div class="flex flex-wrap gap-1.5">
+								<div class="mb-1.5 flex flex-wrap gap-1.5">
 									{#each tp as p}
 										<div class="flex items-center gap-1 text-xs text-zinc-400">
 											{#if p.photo_url}
@@ -423,7 +561,20 @@
 									{/each}
 								</div>
 							{:else}
-								<p class="text-xs text-zinc-700">No players</p>
+								<p class="mb-1.5 text-xs text-zinc-700">No players</p>
+							{/if}
+							<!-- Held/active powerups -->
+							{#if pills.length > 0}
+								<div class="flex flex-wrap gap-1">
+									{#each pills as p (p.id)}
+										<span
+											class="flex h-5 w-5 items-center justify-center rounded-full bg-zinc-800 text-xs"
+											title="{p.powerup_types?.name ?? 'Powerup'} ({p.status})"
+										>
+											{p.powerup_types?.icon ?? '?'}
+										</span>
+									{/each}
+								</div>
 							{/if}
 						</div>
 					{/each}
@@ -589,5 +740,69 @@
 				{/if}
 			</div>
 		</div>
+
+		<!-- Team detail: per-challenge answers + breakdown -->
+		{#if selectedTeam}
+			<Modal title={selectedTeam.display_name} onclose={() => (selectedTeamId = null)}>
+				<div class="space-y-3">
+					{#each data.challenges as challenge (challenge.id)}
+						{@const sub = getSubmission(challenge.id, selectedTeam.id)}
+						<div class="rounded-lg border border-zinc-800 bg-zinc-950 p-3">
+							<div class="mb-2 flex items-center justify-between gap-2">
+								<div class="flex min-w-0 items-center gap-1.5">
+									<span class="truncate text-sm font-semibold text-zinc-200">{challenge.title}</span>
+									<span class="shrink-0 rounded bg-zinc-800 px-1 py-0.5 text-[10px] text-zinc-500"
+										>{challenge.variant}</span
+									>
+								</div>
+								{#if sub}
+									<span class="shrink-0 text-sm font-black text-white tabular-nums">{sub.score ?? 0}</span>
+								{/if}
+							</div>
+
+							{#if !sub}
+								<p class="text-xs text-zinc-600">— not played</p>
+							{:else}
+								{@const parsed = parseAnswers(sub.answers)}
+								{#if parsed.tabs.length === 0}
+									<p class="text-xs text-zinc-600">No answers recorded.</p>
+								{:else}
+									<div class="space-y-2">
+										{#each parsed.tabs as tab (tab.tabPosition)}
+											{#each tab.slots as slot (slot.slotIndex)}
+												<div class="flex flex-wrap gap-x-4 gap-y-1">
+													{#if tab.slots.length > 1 || parsed.tabs.length > 1}
+														<span class="w-full text-[10px] tracking-wide text-zinc-600 uppercase"
+															>Track {tab.tabPosition}{tab.slots.length > 1
+																? `.${slot.slotIndex + 1}`
+																: ''}</span
+														>
+													{/if}
+													{#each Object.entries(slot.fieldValues) as [field, value]}
+														<div class="text-xs">
+															<span class="text-zinc-500">{fieldLabel(field)}:</span>
+															<span class="text-zinc-200">{value}</span>
+															<span class="text-zinc-600">({slot.scored[field] ?? 0} pts)</span>
+														</div>
+													{/each}
+												</div>
+											{/each}
+										{/each}
+									</div>
+								{/if}
+
+								{#if parsed.breakdown}
+									<div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 border-t border-zinc-800 pt-2 text-[11px] text-zinc-500">
+										{#each Object.entries(parsed.breakdown) as [key, value]}
+											<span>{BREAKDOWN_LABELS[key as keyof ScoreBreakdown] ?? key} {value}</span>
+										{/each}
+									</div>
+								{/if}
+							{/if}
+						</div>
+					{/each}
+				</div>
+			</Modal>
+		{/if}
 	{/if}
 </div>
