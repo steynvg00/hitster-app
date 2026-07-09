@@ -21,3 +21,7 @@ Thumbs.db
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Bot test harness — generated/downloaded, rebuildable
+tests/bots/fixtures/*.json
+static/ffmpeg/
