@@ -37,6 +37,7 @@ export const load: PageServerLoad = async ({ url }) => {
 					...set,
 					play_state: (set.play_state ?? 'joining') as 'joining' | 'playing' | 'recap',
 					scores_hidden: (set as unknown as { scores_hidden?: boolean }).scores_hidden ?? false,
+					crown_holder_team_id: (set as unknown as { crown_holder_team_id?: string | null }).crown_holder_team_id ?? null,
 					player_count: count!
 				});
 			}

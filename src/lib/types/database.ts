@@ -447,6 +447,7 @@ export type Database = {
 					powerup_config: Json;
 					preset_slug: string | null;
 					crown_holder_team_id: string | null;
+					crown_payout_applied: boolean;
 					hard_gaan_window_minutes: number;
 					created_by: string | null;
 					created_at: string;
@@ -476,6 +477,7 @@ export type Database = {
 					powerup_config?: Json;
 					preset_slug?: string | null;
 					crown_holder_team_id?: string | null;
+					crown_payout_applied?: boolean;
 					hard_gaan_window_minutes?: number;
 					created_by?: string | null;
 					created_at?: string;
@@ -505,6 +507,7 @@ export type Database = {
 					powerup_config?: Json;
 					preset_slug?: string | null;
 					crown_holder_team_id?: string | null;
+					crown_payout_applied?: boolean;
 					hard_gaan_window_minutes?: number;
 					created_by?: string | null;
 					created_at?: string;

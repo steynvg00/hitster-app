@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { supabaseBrowser } from '$lib/supabase-browser';
+	import { Crown } from 'lucide-svelte';
 	import type { PageData } from './$types';
 
 	type TeamRow = (typeof data.teams)[number];
@@ -11,6 +12,7 @@
 	let teams = $state<TeamRow[]>([...data.teams]);
 	let scoresHidden = $state(data.scoresHidden);
 	let maxScore = $derived(Math.max(...teams.map((t) => t.score), 20));
+	let crownHolderTeamId = $state(data.crownHolderTeamId);
 
 	// Track previous ranks to show position change arrows
 	let prevRanks = $state<Map<string, number>>(new Map(teams.map((t, i) => [t.id, i])));
@@ -66,9 +68,10 @@
 						filter: `id=eq.${data.activeSetId}`
 					},
 					(payload) => {
-						const gs = payload.new as { recap_state?: string | null; scores_hidden?: boolean };
+						const gs = payload.new as { recap_state?: string | null; scores_hidden?: boolean; crown_holder_team_id?: string | null };
 						if (gs.recap_state) goto(`/play/waiting?set_id=${data.activeSetId}`);
 						if (typeof gs.scores_hidden === 'boolean') scoresHidden = gs.scores_hidden;
+						if ('crown_holder_team_id' in gs) crownHolderTeamId = gs.crown_holder_team_id ?? null;
 					}
 				)
 				.subscribe();
@@ -143,8 +146,11 @@
 						{/if}
 
 						<!-- Name -->
-						<div class="min-w-0 flex-1">
+						<div class="flex min-w-0 flex-1 items-center gap-1.5">
 							<div class="truncate font-bold text-white">{team.display_name}</div>
+							{#if crownHolderTeamId === team.id}
+								<Crown size={14} style="color: #ffe600; flex-shrink: 0;" />
+							{/if}
 						</div>
 
 						<!-- Streak badge -->
