@@ -368,7 +368,11 @@
 	);
 
 	// ── Powerup reveal modal ──────────────────────────────────────────────────
-	type EarnedPowerup = { teamPowerupId: string; type: { id: string; name: string; icon: string | null; description: string | null; holdable: boolean; immediate_use: boolean } };
+	type EarnedPowerup = {
+		teamPowerupId: string;
+		type: { id: string; name: string; icon: string | null; description: string | null; holdable: boolean; immediate_use: boolean };
+		activation?: { success: boolean; payload?: Record<string, unknown> };
+	};
 	let showPowerupModal = $state(false);
 	let currentEarnedPowerup = $state<EarnedPowerup | null>(null);
 
@@ -525,6 +529,7 @@
 	<PowerupRevealModal
 		teamPowerupId={currentEarnedPowerup.teamPowerupId}
 		type={currentEarnedPowerup.type}
+		activation={currentEarnedPowerup.activation}
 		onclose={() => { showPowerupModal = false; currentEarnedPowerup = null; }}
 	/>
 {/if}
