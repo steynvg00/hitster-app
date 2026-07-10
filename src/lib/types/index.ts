@@ -175,6 +175,8 @@ export interface ScoreBreakdown {
 	streak_bonus: number;
 	speed_bonus: number;
 	final: number;
+	bonus_powerup?: number;
+	powerup_multipliers?: number[];
 }
 
 // Per-slot answer within a tab (new multi-source shape)

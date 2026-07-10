@@ -83,6 +83,8 @@
 		comeback_multiplier: 'Comeback ×',
 		streak_bonus: 'Streak +',
 		speed_bonus: 'Speed +',
+		bonus_powerup: 'Powerup +',
+		powerup_multipliers: 'Powerup ×',
 		final: 'Final'
 	};
 
