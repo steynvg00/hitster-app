@@ -64,9 +64,9 @@ export const actions: Actions = {
 			return fail(400, { error: 'Set is not active' });
 		}
 
-		const { team_id, team_color } = await assignTeam(db, set_id, gameSet.team_count);
-
-		await db.from('players').update({ set_id, team_id }).eq('id', playerId);
+		// assignTeam writes players.set_id/team_id itself (advisory-locked on the
+		// fallback path — 0052); no separate update here or the race reopens.
+		const { team_id, team_color } = await assignTeam(db, set_id, gameSet.team_count, playerId);
 
 		setTeamCookie(cookies, team_id);
 		redirect(303, `/play/teams/randomizing?team=${team_color}`);
