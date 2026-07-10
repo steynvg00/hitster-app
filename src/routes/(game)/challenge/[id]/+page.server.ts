@@ -56,14 +56,20 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 	if (challengeErr || !challenge) error(404, 'Challenge not found');
 
 	// Fetch tabs for this challenge
-	const { data: tabs, error: tabErr } = await supabase
+	const { data: tabsRaw, error: tabErr } = await supabase
 		.from('challenge_tabs')
 		.select('*')
 		.eq('challenge_id', params.id)
 		.order('position');
 
 	if (tabErr) error(500, `Failed to load challenge tabs: ${tabErr.message}`);
-	if (!tabs?.length) error(500, 'Challenge has no tabs configured');
+
+	// No tabs yet is a normal authoring state (draft/incomplete challenge), not
+	// a server error — surface it as a friendly in-page message instead of a
+	// hard 500. `tabs` stays a plain array from here on; every downstream
+	// query/map already tolerates an empty challenge_tabs set.
+	const tabs = tabsRaw ?? [];
+	const challengeNotReady = tabs.length === 0;
 
 	const tabIds = tabs.map((t) => t.id);
 
@@ -475,6 +481,7 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 
 	return {
 		challenge,
+		challengeNotReady,
 		tabs: tabList,
 		team,
 		variantFields,

@@ -556,7 +556,30 @@
 	</div>
 {/if}
 
-{#if result}
+{#if data.challengeNotReady}
+	<!-- ── Not-ready / unconfigured challenge ─────────────────────────────────── -->
+	<div class="mx-auto min-h-screen max-w-lg p-4">
+		<div class="pt-4 pb-6">
+			<span
+				class="rounded-full px-3 py-1 text-xs font-bold tracking-widest text-white uppercase"
+				style="background-color: {teamHex};">{data.team.display_name}</span
+			>
+		</div>
+		<h1 class="mb-6 text-2xl font-black">{data.challenge.title}</h1>
+		<div class="space-y-3 rounded-2xl border border-zinc-800 bg-zinc-900 p-8 text-center">
+			<p class="text-lg font-semibold text-zinc-200">This challenge isn't set up yet</p>
+			<p class="text-sm text-zinc-500">
+				The host hasn't added any tracks to this challenge yet. Check back in a bit, or head
+				back to your team page.
+			</p>
+			<a
+				href="/team"
+				class="mt-2 inline-block text-sm underline underline-offset-2"
+				style="color: {teamHex};">Back to team</a
+			>
+		</div>
+	</div>
+{:else if result}
 	<!-- ── Results screen ──────────────────────────────────────────────────── -->
 	<div class="mx-auto min-h-screen max-w-lg p-4">
 		<div class="pt-4 pb-6">
