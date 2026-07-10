@@ -21,3 +21,9 @@ Thumbs.db
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Bot-harness generated per-set fixtures
+tests/bots/fixtures/*.json
+
+# ffmpeg.wasm binaries (Bug 6, parked)
+static/ffmpeg/
