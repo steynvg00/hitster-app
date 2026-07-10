@@ -45,6 +45,7 @@
 
 	// ── track panel state ────────────────────────────────────────────────────────
 	let expandedTrack = $state<string | null>(null);
+	let pendingDeleteConfirm = $state<{ trackId: string; usedInChallenges: string[] } | null>(null);
 	let editingTrack = $state<string | null>(null);
 	let editingTitles = $state<string | null>(null);
 	let showAddForm = $state(false);
@@ -763,7 +764,27 @@
 						>
 							Edit
 						</button>
-						<form method="POST" action="?/deleteTrack" use:enhance>
+						<form
+							method="POST"
+							action="?/deleteTrack"
+							use:enhance={() => {
+								return async ({ result, update }) => {
+									if (
+										result.type === 'failure' &&
+										(result.data as { needsConfirm?: boolean } | undefined)?.needsConfirm
+									) {
+										pendingDeleteConfirm = {
+											trackId: track.id,
+											usedInChallenges:
+												(result.data as { usedInChallenges?: string[] }).usedInChallenges ?? []
+										};
+										return;
+									}
+									pendingDeleteConfirm = null;
+									await update();
+								};
+							}}
+						>
 							<input type="hidden" name="id" value={track.id} />
 							<button
 								type="submit"
@@ -778,6 +799,48 @@
 						</form>
 					{/if}
 				</div>
+
+				{#if pendingDeleteConfirm?.trackId === track.id}
+					<div
+						class="mx-4 mb-3 rounded-lg border border-amber-600/50 bg-amber-900/30 p-3 text-xs text-amber-300"
+					>
+						<p class="mb-2">
+							"{track.title}" is used in {pendingDeleteConfirm.usedInChallenges.length} challenge{pendingDeleteConfirm
+								.usedInChallenges.length !== 1
+								? 's'
+								: ''}: {pendingDeleteConfirm.usedInChallenges.join(', ')}. Deleting it will break their
+							scoring.
+						</p>
+						<div class="flex gap-2">
+							<form
+								method="POST"
+								action="?/deleteTrack"
+								use:enhance={() => {
+									return async ({ update }) => {
+										pendingDeleteConfirm = null;
+										await update();
+									};
+								}}
+							>
+								<input type="hidden" name="id" value={track.id} />
+								<input type="hidden" name="confirmed" value="1" />
+								<button
+									type="submit"
+									class="rounded bg-red-900 px-3 py-1 font-semibold text-red-300 transition-colors hover:bg-red-800"
+								>
+									Delete anyway
+								</button>
+							</form>
+							<button
+								type="button"
+								onclick={() => (pendingDeleteConfirm = null)}
+								class="rounded px-3 py-1 text-zinc-400 transition-colors hover:text-zinc-200"
+							>
+								Cancel
+							</button>
+						</div>
+					</div>
+				{/if}
 
 				<!-- Clips panel -->
 				{#if expandedTrack === track.id}
