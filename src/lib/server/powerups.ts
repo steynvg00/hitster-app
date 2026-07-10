@@ -7,6 +7,8 @@ export type TeamPowerupRow = Database['public']['Tables']['team_powerups']['Row'
 export type EarnedPowerup = {
 	teamPowerupId: string;
 	type: PowerupType;
+	// Present when type.immediate_use — the effect was auto-activated at earn time.
+	activation?: ActivateResult;
 };
 
 /**
@@ -35,6 +37,7 @@ export async function maybeAwardPowerup(
 	if (scorePercent < earnThreshold) return null;
 
 	// Dev override: pick a specific type if requested (one-shot, cleared by caller)
+	let chosen: PowerupType;
 	if (forcePowerupTypeId) {
 		const { data: forcedType } = await supabase
 			.from('powerup_types')
@@ -42,35 +45,23 @@ export async function maybeAwardPowerup(
 			.eq('id', forcePowerupTypeId)
 			.maybeSingle();
 		if (!forcedType) return null;
-		const { data: inserted } = await supabase
-			.from('team_powerups')
-			.insert({
-				team_id: teamId,
-				set_id: setId,
-				powerup_type_id: forcedType.id,
-				granted_from_challenge_id: challengeId,
-				status: 'pending'
-			})
-			.select('id')
-			.single();
-		if (!inserted) return null;
-		return { teamPowerupId: inserted.id, type: forcedType };
+		chosen = forcedType;
+	} else {
+		// Determine eligible types: use set_powerups rows if any exist for this set,
+		// otherwise fall back to all enabled_by_default types.
+		const { data: setOverrides } = await supabase
+			.from('powerup_types')
+			.select('*')
+			.lte('default_min_score_pct', Math.round(scorePercent))
+			.gte('default_max_score_pct', Math.round(scorePercent))
+			.eq('enabled_by_default', true)
+			.order('sort_order');
+
+		const eligible = setOverrides ?? [];
+		if (eligible.length === 0) return null;
+
+		chosen = eligible[Math.floor(Math.random() * eligible.length)];
 	}
-
-	// Determine eligible types: use set_powerups rows if any exist for this set,
-	// otherwise fall back to all enabled_by_default types.
-	const { data: setOverrides } = await supabase
-		.from('powerup_types')
-		.select('*')
-		.lte('default_min_score_pct', Math.round(scorePercent))
-		.gte('default_max_score_pct', Math.round(scorePercent))
-		.eq('enabled_by_default', true)
-		.order('sort_order');
-
-	const eligible = setOverrides ?? [];
-	if (eligible.length === 0) return null;
-
-	const chosen = eligible[Math.floor(Math.random() * eligible.length)];
 
 	const { data: inserted } = await supabase
 		.from('team_powerups')
@@ -85,6 +76,14 @@ export async function maybeAwardPowerup(
 		.single();
 
 	if (!inserted) return null;
+
+	// Immediate-use types (bonus_points, hard_gaan, single_event_mult) have no
+	// store/hold step — auto-activate them right away using the same activation
+	// machinery as manually-activated held powerups.
+	if (chosen.immediate_use) {
+		const activation = await activatePowerup(supabase, inserted.id, { allowFromPending: true });
+		return { teamPowerupId: inserted.id, type: chosen, activation };
+	}
 
 	return { teamPowerupId: inserted.id, type: chosen };
 }
@@ -204,6 +203,9 @@ export async function consumeEffects(
 export type ActivateOptions = {
 	field?: string;            // free_answer: which field to reveal
 	currentChallengeId?: string; // free_answer / time_boost / insurance gating
+	// Immediate-use types (bonus_points, hard_gaan, single_event_mult) auto-activate
+	// straight from the earn path, before the player ever "holds" them.
+	allowFromPending?: boolean;
 };
 
 export type ActivateResult = {
@@ -211,6 +213,7 @@ export type ActivateResult = {
 	error?: string;
 	effectId?: string;
 	revealedValue?: string; // free_answer only
+	payload?: Record<string, unknown>; // the team_effects payload that was written
 };
 
 /**
@@ -230,8 +233,8 @@ export async function activatePowerup(
 		.eq('id', teamPowerupId)
 		.maybeSingle();
 
-	if (!tpu || tpu.status !== 'held')
-		return { success: false, error: 'Powerup not in held state' };
+	const statusOk = tpu?.status === 'held' || (options?.allowFromPending && tpu?.status === 'pending');
+	if (!tpu || !statusOk) return { success: false, error: 'Powerup not in held state' };
 
 	if (!tpu.set_id) return { success: false, error: 'Powerup has no set_id' };
 
@@ -258,13 +261,14 @@ export async function activatePowerup(
 	// 3. Type-specific activation
 	switch (typeId) {
 		case 'bonus_points': {
+			const payload = { value: 15 };
 			const { data: eff, error } = await supabase
 				.from('team_effects')
 				.insert({
 					team_id: tpu.team_id,
 					set_id: tpu.set_id,
 					effect_type: 'bonus_points',
-					payload: { value: 15 },
+					payload,
 					source_team_powerup_id: teamPowerupId
 				} as never)
 				.select('id')
@@ -274,17 +278,18 @@ export async function activatePowerup(
 				.from('team_powerups')
 				.update({ status: 'active' } as never)
 				.eq('id', teamPowerupId);
-			return { success: true, effectId: eff.id };
+			return { success: true, effectId: eff.id, payload };
 		}
 
 		case 'single_event_mult': {
+			const payload = { multiplier: 1.5 };
 			const { data: eff, error } = await supabase
 				.from('team_effects')
 				.insert({
 					team_id: tpu.team_id,
 					set_id: tpu.set_id,
 					effect_type: 'single_event_mult',
-					payload: { multiplier: 1.5 },
+					payload,
 					source_team_powerup_id: teamPowerupId
 				} as never)
 				.select('id')
@@ -294,20 +299,21 @@ export async function activatePowerup(
 				.from('team_powerups')
 				.update({ status: 'active' } as never)
 				.eq('id', teamPowerupId);
-			return { success: true, effectId: eff.id };
+			return { success: true, effectId: eff.id, payload };
 		}
 
 		case 'hard_gaan': {
 			const windowMinutes =
 				(gameSet as unknown as { hard_gaan_window_minutes?: number }).hard_gaan_window_minutes ?? 15;
 			const expiresAt = new Date(Date.now() + windowMinutes * 60 * 1000).toISOString();
+			const payload = { multiplier: 1.5, window_minutes: windowMinutes };
 			const { data: eff, error } = await supabase
 				.from('team_effects')
 				.insert({
 					team_id: tpu.team_id,
 					set_id: tpu.set_id,
 					effect_type: 'hard_gaan',
-					payload: { multiplier: 1.5, window_minutes: windowMinutes },
+					payload,
 					expires_at: expiresAt,
 					source_team_powerup_id: teamPowerupId
 				} as never)
@@ -318,7 +324,7 @@ export async function activatePowerup(
 				.from('team_powerups')
 				.update({ status: 'active' } as never)
 				.eq('id', teamPowerupId);
-			return { success: true, effectId: eff.id };
+			return { success: true, effectId: eff.id, payload };
 		}
 
 		case 'shield': {
