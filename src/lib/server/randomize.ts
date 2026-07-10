@@ -89,15 +89,9 @@ async function assignTeamFallback(
 		if (row.team_id) countMap.set(row.team_id, (countMap.get(row.team_id) ?? 0) + 1);
 	}
 
-	const sorted = [...teams].sort((a, b) => {
-		const ca = countMap.get(a.id) ?? 0;
-		const cb = countMap.get(b.id) ?? 0;
-		if (ca !== cb) return ca - cb;
-		return (
-			TEAM_COLOR_ORDER.indexOf(a.color as TeamColor) -
-			TEAM_COLOR_ORDER.indexOf(b.color as TeamColor)
-		);
-	});
+	const lowestCount = Math.min(...teams.map((t) => countMap.get(t.id) ?? 0));
+	const tied = teams.filter((t) => (countMap.get(t.id) ?? 0) === lowestCount);
+	const pick = tied[Math.floor(Math.random() * tied.length)];
 
-	return { team_id: sorted[0].id, team_color: sorted[0].color as TeamColor };
+	return { team_id: pick.id, team_color: pick.color as TeamColor };
 }
