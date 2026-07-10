@@ -407,9 +407,25 @@ export const actions: Actions = {
 			await db.from('activity_log').delete().in('team_id', teamIds);
 		}
 
-		// Reset team scores + streaks
+		// Clear powerup/effect state for this set — matches the documented
+		// soft-reset SQL (CLAUDE.md). Scoped to set_id (narrower than the SQL's
+		// global DELETE) since this action only touches one set.
+		await Promise.all([
+			db.from('team_powerups').delete().eq('set_id', setId),
+			db.from('team_effects').delete().eq('set_id', setId)
+		]);
+
+		// Reset team scores + streaks + held powerups
 		if (teamIds.length > 0) {
-			await db.from('teams').update({ score: 0, current_streak: 0 }).in('id', teamIds);
+			await db
+				.from('teams')
+				.update({
+					score: 0,
+					current_streak: 0,
+					held_powerups: [] as never,
+					last_threshold_crossed: 0
+				})
+				.in('id', teamIds);
 		}
 
 		// Clear player sessions
@@ -428,8 +444,10 @@ export const actions: Actions = {
 				recap_state: 'pending',
 				assignment_slots: [] as never,
 				assignment_index: 0,
-				last_results: last_results as never
-			})
+				last_results: last_results as never,
+				crown_holder_team_id: null,
+				crown_payout_applied: false
+			} as never)
 			.eq('id', setId);
 
 		if (error) return fail(500, { error: 'Could not reset game' });

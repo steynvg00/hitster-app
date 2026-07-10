@@ -99,6 +99,12 @@ export const actions: Actions = {
 	resetEverything: async () => {
 		const db = createAdminClient();
 
+		// Active set ids — crown/powerup/effect clearing is scoped to these,
+		// matching the documented soft-reset SQL (CLAUDE.md) but narrowed to
+		// active sets rather than every game_sets row ever created.
+		const { data: activeSets } = await db.from('game_sets').select('id').eq('status', 'active');
+		const activeSetIds = (activeSets ?? []).map((s) => s.id);
+
 		await Promise.all([
 			db.from('submissions').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
 			db.from('review_requests').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
@@ -106,9 +112,27 @@ export const actions: Actions = {
 			db.from('challenge_attempts').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
 			db
 				.from('teams')
-				.update({ score: 0, current_streak: 0 } as never)
-				.neq('id', '00000000-0000-0000-0000-000000000000')
+				.update({
+					score: 0,
+					current_streak: 0,
+					held_powerups: [] as never,
+					last_threshold_crossed: 0
+				} as never)
+				.neq('id', '00000000-0000-0000-0000-000000000000'),
+			activeSetIds.length > 0
+				? db.from('team_powerups').delete().in('set_id', activeSetIds)
+				: Promise.resolve(),
+			activeSetIds.length > 0
+				? db.from('team_effects').delete().in('set_id', activeSetIds)
+				: Promise.resolve()
 		]);
+
+		if (activeSetIds.length > 0) {
+			await db
+				.from('game_sets')
+				.update({ crown_holder_team_id: null, crown_payout_applied: false } as never)
+				.in('id', activeSetIds);
+		}
 
 		await db
 			.from('challenges')
