@@ -13,6 +13,43 @@ async function ensureInPool(
 		.upsert({ name } as never, { onConflict: 'name', ignoreDuplicates: true });
 }
 
+// Challenges that would lose answer ground-truth if this track were deleted —
+// via challenge_tab_source_tracks (standard/anthem/label/effects) and via
+// mashup_sources → challenge_tabs.mashup_id (mashup variant). Both cascade
+// ON DELETE CASCADE off tracks, so deleting the track silently breaks these.
+async function getChallengesUsingTrack(
+	db: ReturnType<typeof createAdminClient>,
+	trackId: string
+): Promise<string[]> {
+	const [{ data: directSources }, { data: mashupSources }] = await Promise.all([
+		db.from('challenge_tab_source_tracks').select('tab_id').eq('track_id', trackId),
+		db.from('mashup_sources').select('mashup_id').eq('track_id', trackId)
+	]);
+
+	const directTabIds = (directSources ?? []).map((r) => r.tab_id);
+	const mashupIds = [...new Set((mashupSources ?? []).map((r) => r.mashup_id))];
+
+	const [{ data: directTabs }, { data: mashupTabs }] = await Promise.all([
+		directTabIds.length
+			? db.from('challenge_tabs').select('challenge_id').in('id', directTabIds)
+			: Promise.resolve({ data: [] as { challenge_id: string }[] }),
+		mashupIds.length
+			? db.from('challenge_tabs').select('challenge_id').in('mashup_id', mashupIds)
+			: Promise.resolve({ data: [] as { challenge_id: string }[] })
+	]);
+
+	const challengeIds = [
+		...new Set([
+			...(directTabs ?? []).map((r) => r.challenge_id),
+			...(mashupTabs ?? []).map((r) => r.challenge_id)
+		])
+	];
+	if (!challengeIds.length) return [];
+
+	const { data: challenges } = await db.from('challenges').select('title').in('id', challengeIds);
+	return (challenges ?? []).map((c) => c.title);
+}
+
 export const load: PageServerLoad = async ({ url }) => {
 	const db = createAdminClient();
 
@@ -198,7 +235,15 @@ export const actions: Actions = {
 		const db = createAdminClient();
 		const data = await request.formData();
 		const id = data.get('id') as string;
+		const confirmed = data.get('confirmed') === '1';
 		if (!id) return fail(400, { error: 'Missing track id' });
+
+		if (!confirmed) {
+			const usedInChallenges = await getChallengesUsingTrack(db, id);
+			if (usedInChallenges.length > 0) {
+				return fail(409, { needsConfirm: true, trackId: id, usedInChallenges });
+			}
+		}
 
 		const { data: clips } = await db.from('clips').select('storage_object_path').eq('track_id', id);
 		const paths = (clips ?? [])
