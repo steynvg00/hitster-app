@@ -4,9 +4,6 @@ import { TEAM_COLOR_ORDER } from '$lib/server/randomize';
 
 type AdminClient = SupabaseClient<Database>;
 
-// NOTE: the [RESET] console.log lines throughout this module are TEMP
-// DIAGNOSTIC LOGGING — strip before merge.
-
 export type LastResultEntry = {
 	rank: number;
 	team_id: string;
@@ -42,20 +39,11 @@ export async function clearCrownAndPowerups(
 ): Promise<string[]> {
 	const errors: string[] = [];
 
-	console.log(`[RESET:${caller}] deleting team_powerups for set`, setId);
-	const { error: pErr, count: pCount } = await db
-		.from('team_powerups')
-		.delete({ count: 'exact' })
-		.eq('set_id', setId);
-	console.log(`[RESET:${caller}] team_powerups delete →`, { pErr, pCount });
-	if (pErr) errors.push(`team_powerups delete: ${pErr.message}`);
+	const { error: pErr } = await db.from('team_powerups').delete().eq('set_id', setId);
+	if (pErr) errors.push(`[${caller}] team_powerups delete: ${pErr.message}`);
 
-	const { error: eErr, count: eCount } = await db
-		.from('team_effects')
-		.delete({ count: 'exact' })
-		.eq('set_id', setId);
-	console.log(`[RESET:${caller}] team_effects delete →`, { eErr, eCount });
-	if (eErr) errors.push(`team_effects delete: ${eErr.message}`);
+	const { error: eErr } = await db.from('team_effects').delete().eq('set_id', setId);
+	if (eErr) errors.push(`[${caller}] team_effects delete: ${eErr.message}`);
 
 	if (teamIds.length > 0) {
 		const { error: tErr } = await db
@@ -69,15 +57,7 @@ export async function clearCrownAndPowerups(
 		.from('game_sets')
 		.update({ crown_holder_team_id: null, crown_payout_applied: false } as never)
 		.eq('id', setId);
-	console.log(`[RESET:${caller}] crown clear →`, { gErr });
-	if (gErr) errors.push(`game_sets crown clear: ${gErr.message}`);
-
-	const { data: gsAfter } = await db
-		.from('game_sets')
-		.select('crown_holder_team_id, crown_payout_applied')
-		.eq('id', setId)
-		.maybeSingle();
-	console.log(`[RESET:${caller}] crown readback →`, gsAfter);
+	if (gErr) errors.push(`[${caller}] game_sets crown clear: ${gErr.message}`);
 
 	return errors;
 }
@@ -102,7 +82,6 @@ export async function resetGameState(
 	caller: string
 ): Promise<ResetResult> {
 	const errors: string[] = [];
-	console.log(`[RESET:${caller}] resetGameState invoked, setId =`, setId);
 
 	const { data: gs } = await db
 		.from('game_sets')
@@ -137,10 +116,7 @@ export async function resetGameState(
 	// Awaited, error-checked deletes (no fire-and-forget)
 	const run = async (label: string, p: PromiseLike<{ error: { message: string } | null }>) => {
 		const { error } = await p;
-		if (error) {
-			console.log(`[RESET:${caller}] ${label} FAILED →`, error.message);
-			errors.push(`${label}: ${error.message}`);
-		}
+		if (error) errors.push(`${label}: ${error.message}`);
 	};
 
 	if (challengeIds.length > 0) {
@@ -215,6 +191,5 @@ export async function resetGameState(
 			.eq('id', setId)
 	);
 
-	console.log(`[RESET:${caller}] resetGameState done, errors =`, errors);
 	return { notFound: false, errors };
 }
