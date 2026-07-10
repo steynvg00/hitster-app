@@ -43,14 +43,20 @@ export async function generateAssignmentSlots(
 }
 
 /**
- * Assign a team to a player joining a game set.
- * Uses pre-shuffled slots (atomic via Postgres FOR UPDATE) when configured.
- * Falls back to lowest-count snake-order for overflow or unconfigured sets.
+ * Assign a team to a player joining a game set, and write the assignment to
+ * the player's row. Uses pre-shuffled slots (atomic via Postgres FOR UPDATE)
+ * when configured; otherwise the advisory-locked assign_team_fallback RPC
+ * (migration 0052) counts, picks, and writes in a single transaction so a
+ * join burst can't stack players onto one team.
+ *
+ * assignTeam owns the players.set_id/team_id write on BOTH paths — callers
+ * must not write it again.
  */
 export async function assignTeam(
 	db: SupabaseClient<Database>,
 	set_id: string,
-	team_count: number
+	team_count: number,
+	player_id: string
 ): Promise<{ team_id: string; team_color: TeamColor }> {
 	// Try slot-based assignment (runs inside a Postgres transaction)
 	const { data: slotTeamId } = await (db as SupabaseClient).rpc('assign_team_slot', {
@@ -63,35 +69,29 @@ export async function assignTeam(
 			.select('id, color')
 			.eq('id', slotTeamId as string)
 			.maybeSingle();
-		if (team) return { team_id: team.id, team_color: team.color as TeamColor };
+		if (team) {
+			await db.from('players').update({ set_id, team_id: team.id }).eq('id', player_id);
+			return { team_id: team.id, team_color: team.color as TeamColor };
+		}
 	}
 
-	// Fallback: pick team with fewest players in this set
-	return assignTeamFallback(db, set_id, team_count);
-}
-
-async function assignTeamFallback(
-	db: SupabaseClient<Database>,
-	set_id: string,
-	team_count: number
-): Promise<{ team_id: string; team_color: TeamColor }> {
-	const scopedColors = TEAM_COLOR_ORDER.slice(0, team_count);
-
-	const [{ data: teams }, { data: existing }] = await Promise.all([
-		db.from('teams').select('id, color').in('color', scopedColors),
-		db.from('players').select('team_id').eq('set_id', set_id).not('team_id', 'is', null)
-	]);
-
-	if (!teams || teams.length === 0) throw new Error('No teams configured');
-
-	const countMap = new Map<string, number>();
-	for (const row of existing ?? []) {
-		if (row.team_id) countMap.set(row.team_id, (countMap.get(row.team_id) ?? 0) + 1);
+	// Fallback: advisory-locked count → pick → players write, all in one
+	// transaction inside Postgres (0052). The tie-random balance rule lives in
+	// the function's ORDER BY count, random().
+	const { data: teamId, error } = await (db as SupabaseClient).rpc('assign_team_fallback', {
+		p_set_id: set_id,
+		p_player_id: player_id,
+		p_team_count: team_count
+	});
+	if (error || !teamId) {
+		throw new Error(`assign_team_fallback failed: ${error?.message ?? 'no team returned'}`);
 	}
 
-	const lowestCount = Math.min(...teams.map((t) => countMap.get(t.id) ?? 0));
-	const tied = teams.filter((t) => (countMap.get(t.id) ?? 0) === lowestCount);
-	const pick = tied[Math.floor(Math.random() * tied.length)];
-
-	return { team_id: pick.id, team_color: pick.color as TeamColor };
+	const { data: team } = await db
+		.from('teams')
+		.select('id, color')
+		.eq('id', teamId as string)
+		.maybeSingle();
+	if (!team) throw new Error('assign_team_fallback returned an unknown team id');
+	return { team_id: team.id, team_color: team.color as TeamColor };
 }
