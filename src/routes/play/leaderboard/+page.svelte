@@ -68,8 +68,8 @@
 						filter: `id=eq.${data.activeSetId}`
 					},
 					(payload) => {
-						const gs = payload.new as { recap_state?: string | null; scores_hidden?: boolean; crown_holder_team_id?: string | null };
-						if (gs.recap_state) goto(`/play/waiting?set_id=${data.activeSetId}`);
+						const gs = payload.new as { play_state?: string; scores_hidden?: boolean; crown_holder_team_id?: string | null };
+						if (gs.play_state === 'recap') goto(`/play/waiting?set_id=${data.activeSetId}`);
 						if (typeof gs.scores_hidden === 'boolean') scoresHidden = gs.scores_hidden;
 						if ('crown_holder_team_id' in gs) crownHolderTeamId = gs.crown_holder_team_id ?? null;
 					}
