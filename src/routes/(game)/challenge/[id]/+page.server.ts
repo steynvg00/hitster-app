@@ -54,7 +54,8 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		.eq('challenge_id', params.id)
 		.order('position');
 
-	if (tabErr || !tabs?.length) error(500, 'Challenge has no tabs configured');
+	if (tabErr) error(500, `Failed to load challenge tabs: ${tabErr.message}`);
+	if (!tabs?.length) error(500, 'Challenge has no tabs configured');
 
 	const tabIds = tabs.map((t) => t.id);
 
