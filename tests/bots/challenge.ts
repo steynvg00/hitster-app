@@ -74,6 +74,21 @@ async function withRemountRetry<T>(action: () => Promise<T>, attempts = 3): Prom
 	throw lastErr;
 }
 
+/**
+ * Post-fill assertion: a fill that "succeeded" (no thrown error) can still
+ * leave the control empty if the app silently discarded the typed value —
+ * e.g. a Svelte binding that isn't wired for a given mode. Surface that in
+ * the run log instead of only showing up later as a 0-score submission in
+ * the DB.
+ */
+function confirmFilled(name: string, confirmed: string): { filled: boolean; note?: string } {
+	if (!confirmed) {
+		console.warn(`      ⚠ ${name}: filled but read back empty — value was not confirmed`);
+		return { filled: false, note: 'read-back empty after fill' };
+	}
+	return { filled: true };
+}
+
 function truthFor(field: string, fields: FixtureFields | undefined): string | undefined {
 	const key = field === 'label' ? 'record_label' : field;
 	const v = fields?.[key as keyof FixtureFields];
@@ -130,17 +145,32 @@ async function detectMode(page: Page, name: string): Promise<InputMode | null> {
  * Resolve a VARIANT_FIELD to the actual control name + mode. The `artist` field
  * renders as the collab combobox (name `artist_slot_0_0`) whenever its mode is
  * combobox (the default), so we try that fallback name.
+ *
+ * Polls instead of a one-shot check, so a field that genuinely mounts a beat
+ * late (e.g. still settling after the post-startChallenge remount) isn't
+ * misreported as "not found". Note: a one-shot .count() was NOT the cause of
+ * the multi-field "control not found" runs diagnosed on the mechanics-test
+ * set — that turned out to be a real app crash (year field mode = open_text
+ * threw props_invalid_value on bind:value={undefined} during hydration,
+ * taking the whole field block down — see fix/year-open-text-crash). This
+ * poll is a genuine, separate robustness improvement for actual timing races,
+ * kept because it's still correct, just doesn't explain that particular bug.
  */
 async function resolveField(
 	page: Page,
-	field: string
+	field: string,
+	timeoutMs = 4000
 ): Promise<{ name: string; mode: InputMode } | null> {
 	const candidates = field === 'artist' ? ['artist', 'artist_slot_0_0'] : [field];
-	for (const name of candidates) {
-		const mode = await detectMode(page, name);
-		if (mode) return { name, mode };
+	const deadline = Date.now() + timeoutMs;
+	for (;;) {
+		for (const name of candidates) {
+			const mode = await detectMode(page, name);
+			if (mode) return { name, mode };
+		}
+		if (Date.now() >= deadline) return null;
+		await sleep(150);
 	}
-	return null;
 }
 
 async function fillControl(
@@ -150,25 +180,32 @@ async function fillControl(
 	value: string
 ): Promise<{ filled: boolean; note?: string }> {
 	switch (mode) {
-		case 'open_text':
+		case 'open_text': {
+			let confirmed = '';
 			await withRemountRetry(async () => {
 				const field = page.locator(`input[type="text"][name="${name}"]`);
 				await field.waitFor({ state: 'visible' });
 				await field.fill(value);
+				confirmed = await field.inputValue();
 			});
-			return { filled: true };
+			return confirmFilled(name, confirmed);
+		}
 
-		case 'typeable_number':
+		case 'typeable_number': {
+			let confirmed = '';
 			await withRemountRetry(async () => {
 				const field = page.locator(`input[type="number"][name="${name}"]`);
 				await field.waitFor({ state: 'visible' });
 				await field.fill(value);
+				confirmed = await field.inputValue();
 			});
-			return { filled: true };
+			return confirmFilled(name, confirmed);
+		}
 
 		case 'slider': {
 			// Playwright's fill() doesn't drive <input type=range>; set the value via
 			// the native setter + dispatch input/change so Svelte's bind:value reacts.
+			let confirmed = '';
 			await withRemountRetry(async () => {
 				const field = page.locator(`input[type="range"][name="${name}"]`);
 				await field.waitFor({ state: 'visible' });
@@ -182,8 +219,9 @@ async function fillControl(
 					input.dispatchEvent(new Event('input', { bubbles: true }));
 					input.dispatchEvent(new Event('change', { bubbles: true }));
 				}, value);
+				confirmed = await field.inputValue();
 			});
-			return { filled: true };
+			return confirmFilled(name, confirmed);
 		}
 
 		case 'combobox': {
