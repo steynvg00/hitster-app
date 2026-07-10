@@ -182,6 +182,14 @@
 			const sign = delta >= 0 ? '+' : '';
 			return `Score adjustment (${sign}${delta}): ${payload.reason ?? ''}`;
 		}
+		if (a.event_type === 'crown_stolen' && payload) {
+			const fromId = payload.from_team_id as string | null;
+			const from = fromId ? (teamLabel(fromId) ?? fromId) : 'nobody';
+			return `⚔️ ${teamLabel(a.team_id)} stole the crown from ${from}`;
+		}
+		if (a.event_type === 'crown_payout' && payload) {
+			return `👑 ${teamLabel(a.team_id)} held the crown — earned 2 bonus points`;
+		}
 		if (a.event_type === 'challenge_closed') return 'Challenge closed';
 		if (a.event_type === 'attempt_reset') return 'Attempt reset';
 		return a.event_type.replace(/_/g, ' ');
@@ -355,8 +363,14 @@
 				'postgres_changes',
 				{ event: 'UPDATE', schema: 'public', table: 'game_sets', filter: `id=eq.${setId}` },
 				(payload) => {
-					const row = payload.new as { crown_holder_team_id: string | null };
+					const row = payload.new as {
+						crown_holder_team_id: string | null;
+						scores_hidden?: boolean;
+					};
 					crownHolderTeamId = row.crown_holder_team_id ?? null;
+					// (grafted from P3c) keep a second admin device/tab in sync when
+					// the host toggles score visibility elsewhere.
+					if (typeof row.scores_hidden === 'boolean') scoresHidden = row.scores_hidden;
 				}
 			)
 			.subscribe();
@@ -712,6 +726,9 @@
 								style="background-color: {teamColorHex[team.color] ?? '#666'}"
 							></div>
 							<span class="flex-1 truncate text-sm text-zinc-200">{team.display_name}</span>
+							{#if crownHolderTeamId === team.id}
+								<Crown size={14} style="color: #ffe600;" />
+							{/if}
 							<span class="text-xl font-black text-white tabular-nums">{team.score}</span>
 						</div>
 					{/each}

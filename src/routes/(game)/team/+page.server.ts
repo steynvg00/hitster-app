@@ -113,7 +113,7 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		{
 			const { data: gs } = await admin
 				.from('game_sets')
-				.select('id, status, play_state, name, recap_state, team_count, nfc_lock_enabled')
+				.select('id, status, play_state, name, recap_state, team_count, nfc_lock_enabled, crown_holder_team_id')
 				.eq('id', playerSetId)
 				.maybeSingle();
 
@@ -263,6 +263,17 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		}));
 	}
 
+	// Derive crown holder for this set (carried separately for reactivity)
+	let crownHolderTeamId: string | null = null;
+	if (playerSetId) {
+		const { data: crownGs } = await admin
+			.from('game_sets')
+			.select('crown_holder_team_id')
+			.eq('id', playerSetId)
+			.maybeSingle();
+		crownHolderTeamId = crownGs?.crown_holder_team_id ?? null;
+	}
+
 	return {
 		team,
 		position,
@@ -277,7 +288,8 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		challengeUnlocks,
 		heldPowerups,
 		playerSetId,
-		activeEffects
+		activeEffects,
+		crownHolderTeamId
 	};
 };
 

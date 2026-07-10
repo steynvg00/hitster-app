@@ -2,6 +2,7 @@ import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
 import { generateAssignmentSlots, TEAM_COLOR_ORDER } from '$lib/server/randomize';
+import { awardCrownPayout } from '$lib/server/crown';
 import type {
 	PowerupConfig,
 	PowerupMode,
@@ -335,6 +336,10 @@ export const actions: Actions = {
 			.eq('id', params.id);
 
 		if (error) return fail(500, { error: 'Could not start recap' });
+
+		// Award +2 to crown holder at game-end (idempotent)
+		await awardCrownPayout(db, params.id);
+
 		redirect(303, `/admin/sets/${params.id}/recap`);
 	},
 
