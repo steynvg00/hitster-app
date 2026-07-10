@@ -3,6 +3,7 @@ import type { Actions, PageServerLoad } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
 import { generateAssignmentSlots, TEAM_COLOR_ORDER } from '$lib/server/randomize';
 import { awardCrownPayout } from '$lib/server/crown';
+import { resetGameState } from '$lib/server/reset';
 import type {
 	PowerupConfig,
 	PowerupMode,
@@ -345,94 +346,12 @@ export const actions: Actions = {
 
 	resetGame: async ({ params }) => {
 		const db = createAdminClient();
-		const setId = params.id;
-
-		// Load set + scoped team IDs
-		const { data: gs } = await db
-			.from('game_sets')
-			.select('team_count')
-			.eq('id', setId)
-			.maybeSingle();
-		if (!gs) return fail(404, { error: 'Set not found' });
-
-		const scopedColors = TEAM_COLOR_ORDER.slice(0, gs.team_count);
-		const { data: teams } = await db
-			.from('teams')
-			.select('id, display_name, score, color')
-			.in('color', scopedColors);
-		const teamIds = (teams ?? []).map((t) => t.id);
-
-		// Get challenge IDs in this set
-		const { data: setChallenges } = await db
-			.from('set_challenges')
-			.select('challenge_id')
-			.eq('set_id', setId);
-		const challengeIds = (setChallenges ?? []).map((sc) => sc.challenge_id);
-
-		// Capture rankings BEFORE clearing
-		const sortedTeams = (teams ?? []).sort((a, b) => b.score - a.score);
-		const last_results = sortedTeams.map((t, i) => ({
-			rank: i + 1,
-			team_id: t.id,
-			team_name: t.display_name,
-			score: t.score,
-			photo_url: null
-		}));
-
-		// Clear game state scoped to this set
-		if (challengeIds.length > 0) {
-			// Find submission IDs to clean up review_requests
-			const { data: subRows } = await db
-				.from('submissions')
-				.select('id')
-				.in('challenge_id', challengeIds)
-				.in('team_id', teamIds);
-			const subIds = (subRows ?? []).map((s) => s.id);
-
-			await Promise.all([
-				db.from('challenge_attempts').delete().in('challenge_id', challengeIds),
-				db.from('challenge_hints_used').delete().in('challenge_id', challengeIds),
-				db.from('challenge_unlocks').delete().eq('set_id', setId),
-				subIds.length > 0
-					? db.from('review_requests').delete().in('submission_id', subIds)
-					: Promise.resolve(),
-				db.from('submissions').delete().in('challenge_id', challengeIds).in('team_id', teamIds)
-			]);
-		} else {
-			await db.from('challenge_unlocks').delete().eq('set_id', setId);
-		}
-
-		// Clear activity log for this set's teams (heuristic: all team activity)
-		if (teamIds.length > 0) {
-			await db.from('activity_log').delete().in('team_id', teamIds);
-		}
-
-		// Reset team scores + streaks
-		if (teamIds.length > 0) {
-			await db.from('teams').update({ score: 0, current_streak: 0 }).in('id', teamIds);
-		}
-
-		// Clear player sessions
-		await db.from('players').update({ set_id: null, team_id: null }).eq('set_id', setId);
-
-		// Reset set state + persist last_results
-		const { error } = await db
-			.from('game_sets')
-			.update({
-				play_state: 'joining',
-				started_at: null,
-				ended_at: null,
-				scores_hidden: false,
-				recap_ranking: [] as never,
-				recap_reveal_index: 0,
-				recap_state: 'pending',
-				assignment_slots: [] as never,
-				assignment_index: 0,
-				last_results: last_results as never
-			})
-			.eq('id', setId);
-
-		if (error) return fail(500, { error: 'Could not reset game' });
+		// Full soft reset via the shared helper (crown/powerups/effects included) —
+		// see src/lib/server/reset.ts. Keeping the logic in one place is what
+		// prevents this action and the recap-page reset from drifting again.
+		const { notFound, errors } = await resetGameState(db, params.id, 'console');
+		if (notFound) return fail(404, { error: 'Set not found' });
+		if (errors.length > 0) return fail(500, { error: `Reset failed: ${errors.join('; ')}` });
 		return { success: true };
 	},
 

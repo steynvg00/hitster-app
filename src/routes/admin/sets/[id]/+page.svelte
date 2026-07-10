@@ -678,6 +678,28 @@
 						End game
 					</button>
 				</form>
+
+				<!-- Mid-game reset — same action as the recap-state reset below -->
+				<form
+					method="POST"
+					action="?/resetGame"
+					use:enhance
+					onsubmit={(e) => {
+						if (
+							!confirm(
+								'Reset this game? Player sessions, scores, and submissions will be cleared. Last results will be preserved.'
+							)
+						)
+							e.preventDefault();
+					}}
+				>
+					<button
+						type="submit"
+						class="mt-2 w-full rounded-xl border border-red-800/60 py-2.5 text-sm font-semibold text-red-400 transition-colors hover:border-red-700 hover:text-red-300"
+					>
+						Reset game
+					</button>
+				</form>
 			{:else if livePlayState === 'recap'}
 				<!-- Recap state -->
 				<div class="space-y-3">

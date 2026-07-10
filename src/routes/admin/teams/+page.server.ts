@@ -1,6 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
+import { clearCrownAndPowerups } from '$lib/server/reset';
 
 export const load: PageServerLoad = async () => {
 	const db = createAdminClient();
@@ -99,6 +100,12 @@ export const actions: Actions = {
 	resetEverything: async () => {
 		const db = createAdminClient();
 
+		// Active set ids — crown/powerup/effect clearing is scoped to these,
+		// matching the documented soft-reset SQL (CLAUDE.md) but narrowed to
+		// active sets rather than every game_sets row ever created.
+		const { data: activeSets } = await db.from('game_sets').select('id').eq('status', 'active');
+		const activeSetIds = (activeSets ?? []).map((s) => s.id);
+
 		await Promise.all([
 			db.from('submissions').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
 			db.from('review_requests').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
@@ -106,9 +113,23 @@ export const actions: Actions = {
 			db.from('challenge_attempts').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
 			db
 				.from('teams')
-				.update({ score: 0, current_streak: 0 } as never)
+				.update({
+					score: 0,
+					current_streak: 0,
+					held_powerups: [] as never,
+					last_threshold_crossed: 0
+				} as never)
 				.neq('id', '00000000-0000-0000-0000-000000000000')
 		]);
+
+		// Crown/powerup hygiene via the shared helper, per active set.
+		// teamIds: [] — the global teams update above already zeroed the
+		// powerup fields for every team.
+		const errors: string[] = [];
+		for (const setId of activeSetIds) {
+			errors.push(...(await clearCrownAndPowerups(db, setId, [], 'resetEverything')));
+		}
+		if (errors.length > 0) return fail(500, { error: `Reset failed: ${errors.join('; ')}` });
 
 		await db
 			.from('challenges')

@@ -2,6 +2,7 @@ import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
 import { TEAM_COLOR_ORDER } from '$lib/server/randomize';
+import { clearCrownAndPowerups, resetGameState } from '$lib/server/reset';
 
 export const load: PageServerLoad = async ({ params }) => {
 	const db = createAdminClient();
@@ -180,9 +181,28 @@ export const actions: Actions = {
 	// End the set: set inactive, clear all game state so dashboard returns to "No game running"
 	endAndReset: async ({ params }) => {
 		const db = createAdminClient();
+		const setId = params.id;
+
+		// Crown/powerup hygiene via the shared helper — a finished set must not
+		// leak crown or powerup state into its next activation. Scores and
+		// submissions are deliberately preserved (the thanks page reads them).
+		const { data: gs } = await db
+			.from('game_sets')
+			.select('team_count')
+			.eq('id', setId)
+			.maybeSingle();
+		const scopedColors = TEAM_COLOR_ORDER.slice(0, gs?.team_count ?? 6);
+		const { data: teams } = await db.from('teams').select('id').in('color', scopedColors);
+		const errors = await clearCrownAndPowerups(
+			db,
+			setId,
+			(teams ?? []).map((t) => t.id),
+			'endAndReset'
+		);
+		if (errors.length > 0) return fail(500, { error: `End & reset failed: ${errors.join('; ')}` });
 
 		await Promise.all([
-			db.from('players').update({ set_id: null, team_id: null }).eq('set_id', params.id),
+			db.from('players').update({ set_id: null, team_id: null }).eq('set_id', setId),
 			db
 				.from('game_sets')
 				.update({
@@ -190,97 +210,27 @@ export const actions: Actions = {
 					play_state: 'joining',
 					started_at: null,
 					ended_at: null,
-					recap_state: null as never,
-					recap_ranking: null as never,
+					// 'pending' / [] — NULL here violates the CHECK constraints
+					// (see CLAUDE.md reset-SQL note); the old null values were a bug.
+					recap_state: 'pending',
+					recap_ranking: [] as never,
 					recap_reveal_index: 0,
 					assignment_slots: [] as never,
 					assignment_index: 0
 				})
-				.eq('id', params.id)
+				.eq('id', setId)
 		]);
 
-		redirect(303, `/admin/sets/${params.id}`);
+		redirect(303, `/admin/sets/${setId}`);
 	},
 
 	// Soft reset: clear game data, keep config, return to joining state, snapshot last_results
 	resetGame: async ({ params }) => {
 		const db = createAdminClient();
-		const setId = params.id;
-
-		const { data: gs } = await db
-			.from('game_sets')
-			.select('team_count')
-			.eq('id', setId)
-			.maybeSingle();
-		if (!gs) return fail(404, { error: 'Set not found' });
-
-		const scopedColors = TEAM_COLOR_ORDER.slice(0, gs.team_count);
-		const { data: teams } = await db
-			.from('teams')
-			.select('id, display_name, score, color')
-			.in('color', scopedColors);
-		const teamIds = (teams ?? []).map((t) => t.id);
-
-		const { data: setChallengesRows } = await db
-			.from('set_challenges')
-			.select('challenge_id')
-			.eq('set_id', setId);
-		const challengeIds = (setChallengesRows ?? []).map((sc) => sc.challenge_id);
-
-		const sortedTeams = (teams ?? []).sort((a, b) => b.score - a.score);
-		const last_results = sortedTeams.map((t, i) => ({
-			rank: i + 1,
-			team_id: t.id,
-			team_name: t.display_name,
-			score: t.score,
-			photo_url: null
-		}));
-
-		if (challengeIds.length > 0) {
-			const { data: subRows } = await db
-				.from('submissions')
-				.select('id')
-				.in('challenge_id', challengeIds)
-				.in('team_id', teamIds);
-			const subIds = (subRows ?? []).map((s) => s.id);
-			await Promise.all([
-				db.from('challenge_attempts').delete().in('challenge_id', challengeIds),
-				db.from('challenge_hints_used').delete().in('challenge_id', challengeIds),
-				db.from('challenge_unlocks').delete().eq('set_id', setId),
-				subIds.length > 0
-					? db.from('review_requests').delete().in('submission_id', subIds)
-					: Promise.resolve(),
-				db.from('submissions').delete().in('challenge_id', challengeIds).in('team_id', teamIds)
-			]);
-		} else {
-			await db.from('challenge_unlocks').delete().eq('set_id', setId);
-		}
-
-		if (teamIds.length > 0) {
-			await Promise.all([
-				db.from('activity_log').delete().in('team_id', teamIds),
-				db.from('teams').update({ score: 0, current_streak: 0 }).in('id', teamIds)
-			]);
-		}
-
-		await db.from('players').update({ set_id: null, team_id: null }).eq('set_id', setId);
-
-		await db
-			.from('game_sets')
-			.update({
-				play_state: 'joining',
-				started_at: null,
-				ended_at: null,
-				scores_hidden: false,
-				recap_ranking: [] as never,
-				recap_reveal_index: 0,
-				recap_state: 'pending',
-				assignment_slots: [] as never,
-				assignment_index: 0,
-				last_results: last_results as never
-			})
-			.eq('id', setId);
-
-		redirect(303, `/admin/sets/${setId}`);
+		// Same shared helper as the set-console reset — one implementation, no drift.
+		const { notFound, errors } = await resetGameState(db, params.id, 'recap');
+		if (notFound) return fail(404, { error: 'Set not found' });
+		if (errors.length > 0) return fail(500, { error: `Reset failed: ${errors.join('; ')}` });
+		redirect(303, `/admin/sets/${params.id}`);
 	}
 };
