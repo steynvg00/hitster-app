@@ -55,6 +55,13 @@
 
 	const variantFields = data.variantFields as AnswerField[];
 	const hasYear = variantFields.includes('year' as AnswerField);
+	// Year is normally driven through allYearValues (YearInput, slider/typeable_number
+	// modes below) — but its resolved mode can legitimately be open_text (config
+	// fallback chain), in which case it renders through the same OpenText/allDrafts
+	// path as any other field. Only override from allYearValues in the two modes
+	// YearInput actually owns.
+	const yearIsNumericMode =
+		data.fieldModes['year'] === 'slider' || data.fieldModes['year'] === 'typeable_number';
 	const hasGrouping = variantFields.includes('grouping' as AnswerField);
 	const isFragments = data.challenge.variant === 'fragments';
 	const isMashup = data.challenge.variant === 'mashup';
@@ -72,7 +79,7 @@
 				return {
 					fieldValues: Object.fromEntries(
 						variantFields
-							.filter((f) => f !== 'year' && f !== 'grouping')
+							.filter((f) => f !== 'grouping')
 							.map((f) => [f, saved.fieldValues?.[f] ?? ''])
 					),
 					fragments: saved.fragments ?? []
@@ -147,7 +154,9 @@
 					fieldValues: {
 						...allDrafts[ti]?.[si]?.fieldValues,
 						...(hasArtistCombobox ? { artist: artistVal } : {}),
-						...(hasYear ? { year: String(allYearValues[ti]?.[si] ?? 1990) } : {})
+						...(hasYear && yearIsNumericMode
+							? { year: String(allYearValues[ti]?.[si] ?? 1990) }
+							: {})
 					},
 					fragments: allDrafts[ti]?.[si]?.fragments
 				};
@@ -171,7 +180,9 @@
 					fieldValues: {
 						...allDrafts[ti]?.[si]?.fieldValues,
 						...(hasArtistCombobox ? { artist: artistVal } : {}),
-						...(hasYear ? { year: String(allYearValues[ti]?.[si] ?? 1990) } : {})
+						...(hasYear && yearIsNumericMode
+							? { year: String(allYearValues[ti]?.[si] ?? 1990) }
+							: {})
 					},
 					fragments: allDrafts[ti]?.[si]?.fragments
 				};
