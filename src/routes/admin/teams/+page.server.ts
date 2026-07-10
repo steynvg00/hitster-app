@@ -1,6 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
+import { clearCrownAndPowerups } from '$lib/server/reset';
 
 export const load: PageServerLoad = async () => {
 	const db = createAdminClient();
@@ -118,21 +119,17 @@ export const actions: Actions = {
 					held_powerups: [] as never,
 					last_threshold_crossed: 0
 				} as never)
-				.neq('id', '00000000-0000-0000-0000-000000000000'),
-			activeSetIds.length > 0
-				? db.from('team_powerups').delete().in('set_id', activeSetIds)
-				: Promise.resolve(),
-			activeSetIds.length > 0
-				? db.from('team_effects').delete().in('set_id', activeSetIds)
-				: Promise.resolve()
+				.neq('id', '00000000-0000-0000-0000-000000000000')
 		]);
 
-		if (activeSetIds.length > 0) {
-			await db
-				.from('game_sets')
-				.update({ crown_holder_team_id: null, crown_payout_applied: false } as never)
-				.in('id', activeSetIds);
+		// Crown/powerup hygiene via the shared helper, per active set.
+		// teamIds: [] — the global teams update above already zeroed the
+		// powerup fields for every team.
+		const errors: string[] = [];
+		for (const setId of activeSetIds) {
+			errors.push(...(await clearCrownAndPowerups(db, setId, [], 'resetEverything')));
 		}
+		if (errors.length > 0) return fail(500, { error: `Reset failed: ${errors.join('; ')}` });
 
 		await db
 			.from('challenges')
