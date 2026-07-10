@@ -184,8 +184,8 @@
 		}
 		if (a.event_type === 'crown_stolen' && payload) {
 			const fromId = payload.from_team_id as string | null;
-			const from = fromId ? (teamLabel(fromId) ?? fromId) : 'nobody';
-			return `⚔️ ${teamLabel(a.team_id)} stole the crown from ${from}`;
+			if (!fromId) return `⚔️ ${teamLabel(a.team_id)} took the crown`;
+			return `⚔️ ${teamLabel(a.team_id)} stole the crown from ${teamLabel(fromId) ?? fromId}`;
 		}
 		if (a.event_type === 'crown_payout' && payload) {
 			return `👑 ${teamLabel(a.team_id)} held the crown — earned 2 bonus points`;
