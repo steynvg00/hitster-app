@@ -2,7 +2,14 @@ import { error, fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { createPublicClient, createAdminClient } from '$lib/server/supabase';
 import { isNfcUnlockRequired } from '$lib/server/nfc';
-import { maybeAwardPowerup, resolvePowerupChoice } from '$lib/server/powerups';
+import {
+	maybeAwardPowerup,
+	resolvePowerupChoice,
+	activatePowerup,
+	loadActiveEffects,
+	deriveEffectModifiers,
+	consumeEffects
+} from '$lib/server/powerups';
 import type {
 	AnswerField,
 	InputMode,
@@ -441,6 +448,30 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		}));
 	}
 
+	// Active powerup effects + free-answer reveals
+	let activeEffects: Awaited<ReturnType<typeof loadActiveEffects>> = [];
+	let freeAnswerReveal: Record<string, string> = {};
+	if (activeSetId && locals.teamId) {
+		activeEffects = await loadActiveEffects(admin, locals.teamId, activeSetId);
+
+		const { data: revealRows } = await admin
+			.from('team_effects')
+			.select('payload')
+			.eq('team_id', locals.teamId)
+			.eq('effect_type', 'free_answer')
+			.not('consumed_at', 'is', null);
+		for (const r of revealRows ?? []) {
+			const p = (r.payload ?? {}) as Record<string, unknown>;
+			if (
+				p.challenge_id === params.id &&
+				typeof p.field === 'string' &&
+				typeof p.value === 'string'
+			) {
+				freeAnswerReveal[p.field] = p.value;
+			}
+		}
+	}
+
 	return {
 		challenge,
 		tabs: tabList,
@@ -458,7 +489,9 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		showHint,
 		hintUsed,
 		tutorialText,
-		heldPowerups
+		heldPowerups,
+		activeEffects,
+		freeAnswerReveal
 	};
 };
 
@@ -645,6 +678,18 @@ export const actions: Actions = {
 			}
 		}
 
+		// Load active powerup effects for this team and derive scoring modifiers
+		let effectModifiers: Awaited<ReturnType<typeof deriveEffectModifiers>> = {
+			extraMultipliers: [],
+			insuranceActive: false,
+			bonusPoints: 0,
+			toConsume: []
+		};
+		if (playerSetId) {
+			const activeEffects = await loadActiveEffects(admin, teamId, playerSetId);
+			effectModifiers = deriveEffectModifiers(activeEffects);
+		}
+
 		const bonusParams: BonusParams = {
 			difficulty_rating:
 				(challenge as unknown as { difficulty_rating?: number }).difficulty_rating ?? 3,
@@ -656,7 +701,10 @@ export const actions: Actions = {
 			elapsed_seconds: elapsedSeconds,
 			speed_threshold_seconds:
 				(challenge as unknown as { speed_threshold_seconds?: number | null })
-					.speed_threshold_seconds ?? null
+					.speed_threshold_seconds ?? null,
+			extraMultipliers: effectModifiers.extraMultipliers,
+			insuranceActive: effectModifiers.insuranceActive,
+			bonusPoints: effectModifiers.bonusPoints
 		};
 
 		// Build TabInput[] for scoreSubmission using getSourceTracksForTab
@@ -730,6 +778,11 @@ export const actions: Actions = {
 				.eq('id', teamId)
 		]);
 
+		// Consume single-use effects (insurance, single_event_mult, bonus_points)
+		if (playerSetId && effectModifiers.toConsume.length > 0) {
+			await consumeEffects(admin, effectModifiers.toConsume, params.id);
+		}
+
 		// Powerup earning: score above threshold → award a random powerup
 		let earnedPowerup = null;
 		if (playerSetId) {
@@ -765,6 +818,20 @@ export const actions: Actions = {
 		const res = await resolvePowerupChoice(admin, teamPowerupId, choice);
 		if (!res.ok) return fail(400, { error: res.error });
 		return { resolved: true };
+	},
+
+	activatePowerup: async ({ request, params }) => {
+		const admin = createAdminClient();
+		const fd = await request.formData();
+		const teamPowerupId = (fd.get('team_powerup_id') as string | null)?.trim();
+		const field = (fd.get('field') as string | null)?.trim() || undefined;
+		if (!teamPowerupId) return fail(400, { activateError: 'Missing powerup ID' });
+		const result = await activatePowerup(admin, teamPowerupId, {
+			currentChallengeId: params.id,
+			field
+		});
+		if (!result.success) return fail(400, { activateError: result.error });
+		return { activated: true, revealedValue: result.revealedValue };
 	},
 
 	startChallenge: async ({ params, locals }) => {

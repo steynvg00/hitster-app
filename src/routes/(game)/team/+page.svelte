@@ -3,6 +3,7 @@
 	import { supabaseBrowser } from '$lib/supabase-browser';
 	import TutorialOverlay from '$lib/components/game/TutorialOverlay.svelte';
 	import HeldPowerups from '$lib/components/game/HeldPowerups.svelte';
+	import ActiveEffectsBanner from '$lib/components/game/ActiveEffectsBanner.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -273,6 +274,15 @@
 				<span class="font-bold text-white">{data.setCompletedCount}</span>
 				/ {data.setTotalCount} challenges done
 			</div>
+		{/if}
+
+		<!-- Active powerup effects banner -->
+		{#if data.playerSetId && data.activeEffects?.length > 0}
+			<ActiveEffectsBanner
+				teamId={data.team.id}
+				setId={data.playerSetId}
+				effects={data.activeEffects}
+			/>
 		{/if}
 
 		<!-- Held powerups -->

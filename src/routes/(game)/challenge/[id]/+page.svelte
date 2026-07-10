@@ -13,6 +13,7 @@
 	import BonusTracker from '$lib/components/game/BonusTracker.svelte';
 	import TutorialOverlay from '$lib/components/game/TutorialOverlay.svelte';
 	import HeldPowerups from '$lib/components/game/HeldPowerups.svelte';
+	import ActiveEffectsBanner from '$lib/components/game/ActiveEffectsBanner.svelte';
 	import PowerupRevealModal from '$lib/components/game/PowerupRevealModal.svelte';
 	import { getTypeIcon, getTypeColor } from '$lib/variants';
 
@@ -221,6 +222,24 @@
 		isPlaying = false;
 	});
 
+	// ── Powerup state ─────────────────────────────────────────────────────────
+	let timerBoostMs = $state(0);
+	let freeAnswerReveals = $state<Record<string, string>>({ ...data.freeAnswerReveal });
+
+	function onPowerupActivated(revealedValue?: string, revealedField?: string) {
+		if (!revealedField || !revealedValue) return;
+		freeAnswerReveals = { ...freeAnswerReveals, [revealedField]: revealedValue };
+		// Pre-fill the draft for all tabs/slots
+		for (let ti = 0; ti < data.tabs.length; ti++) {
+			const slotCount = allDrafts[ti]?.length ?? 1;
+			for (let si = 0; si < slotCount; si++) {
+				if (allDrafts[ti]?.[si]) {
+					allDrafts[ti][si].fieldValues[revealedField] = revealedValue;
+				}
+			}
+		}
+	}
+
 	// ── Timer ─────────────────────────────────────────────────────────────────
 	let timerMs = $state<number | null>(null);
 
@@ -245,13 +264,31 @@
 
 		if (data.timerEndsAt) {
 			const update = () => {
-				const remaining = Math.max(0, data.timerEndsAt! - Date.now());
+				const remaining = Math.max(0, data.timerEndsAt! + timerBoostMs - Date.now());
 				timerMs = remaining;
 				if (remaining === 0 && !result && !submitting) triggerSubmit();
 			};
 			update();
 			iv = setInterval(update, 500);
 		}
+
+		// Time-boost realtime: team_effects INSERT fires when a held powerup is activated
+		const effectsBoostChannel = supabaseBrowser
+			.channel(`challenge-time-boost-${data.team.id}-${data.challenge.id}`)
+			.on(
+				'postgres_changes',
+				{ event: 'INSERT', schema: 'public', table: 'team_effects', filter: `team_id=eq.${data.team.id}` },
+				(payload) => {
+					const row = payload.new as { effect_type: string; payload: Record<string, unknown> };
+					if (row.effect_type === 'time_boost') {
+						const p = row.payload as { added_seconds?: number; challenge_id?: string };
+						if (p.challenge_id === data.challenge.id) {
+							timerBoostMs += (p.added_seconds ?? 30) * 1000;
+						}
+					}
+				}
+			)
+			.subscribe();
 
 		const attemptChannel = supabaseBrowser
 			.channel(`attempt-${data.challenge.id}-${data.team.id}`)
@@ -316,6 +353,7 @@
 
 		return () => {
 			if (iv) clearInterval(iv);
+			supabaseBrowser.removeChannel(effectsBoostChannel);
 			supabaseBrowser.removeChannel(attemptChannel);
 			supabaseBrowser.removeChannel(submissionInsertChannel);
 			if (setChannel) supabaseBrowser.removeChannel(setChannel);
@@ -832,11 +870,23 @@
 		</div>
 
 		{#if data.activeSetId && data.heldPowerups}
-			<div class="pb-3">
+			<div class="pb-1">
+				{#if data.activeEffects?.length > 0}
+					<div class="pb-2">
+						<ActiveEffectsBanner
+							teamId={data.team.id}
+							setId={data.activeSetId}
+							effects={data.activeEffects}
+						/>
+					</div>
+				{/if}
 				<HeldPowerups
 					teamId={data.team.id}
 					setId={data.activeSetId}
 					powerups={data.heldPowerups}
+					currentChallengeId={data.challenge.id}
+					variantFields={variantFields.map((f) => String(f))}
+					onactivated={onPowerupActivated}
 				/>
 			</div>
 		{/if}
@@ -1026,6 +1076,14 @@
 								<label class="mb-1.5 block text-sm font-semibold text-zinc-400"
 									>{fieldLabel(field)}</label
 								>
+								{#if freeAnswerReveals[String(field)]}
+									<div
+										class="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-amber-300"
+									>
+										<span>💡</span>
+										<span>Revealed: {freeAnswerReveals[String(field)]}</span>
+									</div>
+								{/if}
 
 								{#if field === 'artist' && hasArtistCombobox}
 									{#each collabArtists[activeTabIndex]?.[slotIdx] ?? [''] as _, artistIdx}
@@ -1129,6 +1187,12 @@
 							<label class="mb-1.5 block text-sm font-semibold text-zinc-400"
 								>{fieldLabel(field)}</label
 							>
+							{#if freeAnswerReveals[String(field)]}
+								<div class="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-amber-300">
+									<span>💡</span>
+									<span>Revealed: {freeAnswerReveals[String(field)]}</span>
+								</div>
+							{/if}
 
 							{#if field === 'artist' && hasArtistCombobox}
 								{#each collabArtists[activeTabIndex]?.[0] ?? [''] as _, artistIdx}

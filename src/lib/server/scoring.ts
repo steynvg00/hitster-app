@@ -21,6 +21,10 @@ export interface BonusParams {
 	streak_thresholds: Array<{ streak: number; bonus: number }>;
 	elapsed_seconds: number | null;
 	speed_threshold_seconds: number | null;
+	// P3b powerup effect injections (populated by submit action from team_effects rows)
+	extraMultipliers?: number[]; // e.g. [1.5] from hard_gaan or single_event_mult
+	insuranceActive?: boolean; // floor base to 50% of maxTotal if true
+	bonusPoints?: number; // flat pts added after final calc (bonus_points powerup)
 }
 
 // ─── Field metadata ───────────────────────────────────────────────────────────
@@ -500,6 +504,12 @@ export function computeBreakdown(base: number, bonus: BonusParams): ScoreBreakdo
 	const comeback_multiplier =
 		base > 0 && bonus.leader_score > 0 && bonus.team_score < bonus.leader_score * 0.5 ? 1.5 : 1.0;
 
+	// Additive-delta formula: multiplied = base × (1 + Σ(m_i - 1)) for all multipliers.
+	// Prevents runaway stacking vs chain-multiply.
+	const extraMultipliers = bonus.extraMultipliers ?? [];
+	const allMultipliers = [difficulty_multiplier, round_multiplier, comeback_multiplier, ...extraMultipliers];
+	const multiplied = Math.round(base * (1 + allMultipliers.reduce((sum, m) => sum + (m - 1), 0)));
+
 	let streak_bonus = 0;
 	for (const t of bonus.streak_thresholds) {
 		if (bonus.current_streak >= t.streak) streak_bonus = t.bonus;
@@ -513,10 +523,8 @@ export function computeBreakdown(base: number, bonus: BonusParams): ScoreBreakdo
 			? 5
 			: 0;
 
-	const final =
-		Math.round(base * difficulty_multiplier * round_multiplier * comeback_multiplier) +
-		streak_bonus +
-		speed_bonus;
+	const bonus_powerup = bonus.bonusPoints ?? 0;
+	const final = multiplied + streak_bonus + speed_bonus + bonus_powerup;
 
 	return {
 		base,
@@ -525,7 +533,9 @@ export function computeBreakdown(base: number, bonus: BonusParams): ScoreBreakdo
 		comeback_multiplier,
 		streak_bonus,
 		speed_bonus,
-		final
+		final,
+		...(bonus_powerup > 0 ? { bonus_powerup } : {}),
+		...(extraMultipliers.length > 0 ? { powerup_multipliers: extraMultipliers } : {})
 	};
 }
 
@@ -592,9 +602,16 @@ export function scoreSubmission(
 		}
 	}
 
-	const base = tabResults.reduce((s, tr) => s + tr.total, 0);
+	const rawBase = tabResults.reduce((s, tr) => s + tr.total, 0);
 	const maxTotal = tabResults.reduce((s, tr) => s + tr.maxTotal, 0);
-	const status: SubmissionStatus = base === maxTotal ? 'auto_correct' : 'auto_wrong';
+
+	// Insurance: floor base to 50% of max if active
+	const base =
+		bonus?.insuranceActive && rawBase < Math.floor(maxTotal * 0.5)
+			? Math.floor(maxTotal * 0.5)
+			: rawBase;
+
+	const status: SubmissionStatus = rawBase === maxTotal ? 'auto_correct' : 'auto_wrong';
 
 	const breakdown = bonus ? computeBreakdown(base, bonus) : undefined;
 
@@ -604,6 +621,6 @@ export function scoreSubmission(
 
 	return {
 		answersArray,
-		result: { total: base, maxTotal, tabs: tabResults, tracks: legacyTracks, status, breakdown }
+		result: { total: rawBase, maxTotal, tabs: tabResults, tracks: legacyTracks, status, breakdown }
 	};
 }
