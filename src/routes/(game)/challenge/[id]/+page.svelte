@@ -343,7 +343,7 @@
 						filter: `id=eq.${data.activeSetId}`
 					},
 					(payload) => {
-						if ((payload.new as { recap_state: string | null }).recap_state) {
+						if ((payload.new as { play_state?: string }).play_state === 'recap') {
 							goto(`/play/waiting?set_id=${data.activeSetId}`);
 						}
 					}
