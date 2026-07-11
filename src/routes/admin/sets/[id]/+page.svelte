@@ -5,7 +5,6 @@
 	import type { PageData, ActionData } from './$types';
 	import type {
 		PowerupMode,
-		PowerupVisibility,
 		ThresholdConfig,
 		TokenShopConfig,
 		ThresholdMode,
@@ -343,9 +342,9 @@
 		data.powerupMode === 'token_shop' ? initShop().tokens_per_tick : 1
 	);
 
-	const VISIBILITY_OPTIONS: PowerupVisibility[] = ['public', 'target_only', 'hidden', 'silent'];
-
-	const CATEGORY_ORDER = ['offensive', 'defensive', 'information', 'social', 'self'] as const;
+	// 'punishment' carries penalty_shot (the inverse low-score mechanic, piece 3);
+	// 'wildcard' has no seeded rows yet, left out to avoid an always-empty group.
+	const CATEGORY_ORDER = ['offensive', 'defensive', 'information', 'social', 'self', 'punishment'] as const;
 
 	// Collapsed state per category — persisted in localStorage
 	const COLLAPSE_KEY = 'hitster_powerup_categories_collapsed';
@@ -363,29 +362,30 @@
 		collapsedCategories = loadCollapsed();
 	});
 
-	function toggleCategory(cat: string) {
+	// Local UI-only collapse toggle — NOT the server toggleCategory action below
+	// (which persists powerup_config.categories). Different concepts, similar name.
+	function toggleCollapsed(cat: string) {
 		collapsedCategories = { ...collapsedCategories, [cat]: !collapsedCategories[cat] };
 		if (typeof localStorage !== 'undefined') {
 			localStorage.setItem(COLLAPSE_KEY, JSON.stringify(collapsedCategories));
 		}
 	}
 
-	// Powerups grouped by category
+	// Powerup types grouped by category (piece 2: powerup_types, not the legacy
+	// powerups/set_powerups catalog)
 	const powerupsByCategory = $derived(
 		CATEGORY_ORDER.map((cat) => ({
 			category: cat,
-			powerups: data.powerupConfigs.filter((p) => p.category === cat)
+			powerups: data.powerupTypeRows.filter((p) => p.category === cat)
 		}))
 	);
 
-	// Category master toggle state: 'on' | 'partial' | 'off'
-	function categoryToggleState(cat: string): 'on' | 'partial' | 'off' {
-		const items = data.powerupConfigs.filter((p) => p.category === cat);
-		if (items.length === 0) return 'off';
-		const enabledCount = items.filter((p) => p.effective_enabled).length;
-		if (enabledCount === items.length) return 'on';
-		if (enabledCount === 0) return 'off';
-		return 'partial';
+	// Category master switch — a single explicit flag in powerup_config.categories,
+	// defaulting to enabled. Not an aggregate of per-type toggles (those are
+	// independent, per-type overrides); coming_soon types have no per-type toggle
+	// to aggregate anyway, so a tri-state no longer applies here.
+	function categoryEnabled(cat: string): boolean {
+		return data.powerupConfigV2.categories[cat] ?? true;
 	}
 
 	// ── NFC URL copy ──────────────────────────────────────────────────────────
@@ -1388,14 +1388,18 @@
 					Powerup Config
 				</h3>
 				{#each powerupsByCategory as { category, powerups: catPowerups }}
-					{@const toggleState = categoryToggleState(category)}
+					{@const catEnabled = categoryEnabled(category)}
 					{@const collapsed = !!collapsedCategories[category]}
+					{@const workingCount = catPowerups.filter((p) => !p.coming_soon).length}
+					{@const workingEnabledCount = catPowerups.filter(
+						(p) => !p.coming_soon && p.effective_enabled
+					).length}
 					<div class="rounded-lg border border-zinc-800">
 						<!-- Category header -->
 						<div class="flex items-center gap-2 px-3 py-2">
 							<button
 								type="button"
-								onclick={() => toggleCategory(category)}
+								onclick={() => toggleCollapsed(category)}
 								class="flex flex-1 items-center gap-2 text-left"
 							>
 								{#if collapsed}
@@ -1405,41 +1409,29 @@
 								{/if}
 								<span class="text-sm font-semibold text-zinc-300 capitalize">{category}</span>
 								<span class="text-xs text-zinc-600">
-									{catPowerups.filter((p) => p.effective_enabled).length}/{catPowerups.length} enabled
+									{workingEnabledCount}/{workingCount} enabled
 								</span>
 							</button>
-							<!-- Master toggle (tri-state) -->
-							{#if catPowerups.length > 0}
+							<!-- Master toggle -->
+							{#if workingCount > 0}
 								<form
 									method="POST"
-									action="?/togglePowerupCategory"
+									action="?/toggleCategory"
 									use:enhance={() =>
 										async ({ update }) =>
 											update({ reset: false })}
 								>
 									<input type="hidden" name="category" value={category} />
-									<input
-										type="hidden"
-										name="enabled"
-										value={toggleState === 'off' ? 'true' : 'false'}
-									/>
+									<input type="hidden" name="enabled" value={String(!catEnabled)} />
 									<button
 										type="submit"
-										title={toggleState === 'off' ? 'Enable all' : 'Disable all'}
+										title={catEnabled ? 'Disable category' : 'Enable category'}
 										class="flex h-6 w-10 shrink-0 items-center rounded-full border px-0.5 transition-colors
-											{toggleState === 'on'
-											? 'border-green-700 bg-green-900/60'
-											: toggleState === 'partial'
-												? 'border-amber-700 bg-amber-900/40'
-												: 'border-zinc-700 bg-zinc-800'}"
+											{catEnabled ? 'border-green-700 bg-green-900/60' : 'border-zinc-700 bg-zinc-800'}"
 									>
 										<span
 											class="h-4 w-4 rounded-full transition-all
-												{toggleState === 'on'
-												? 'translate-x-4 bg-green-400'
-												: toggleState === 'partial'
-													? 'translate-x-2 bg-amber-400'
-													: 'translate-x-0 bg-zinc-600'}"
+												{catEnabled ? 'translate-x-4 bg-green-400' : 'translate-x-0 bg-zinc-600'}"
 										></span>
 									</button>
 								</form>
@@ -1457,59 +1449,69 @@
 									{#each catPowerups as p (p.id)}
 										<div
 											class="flex flex-wrap items-center gap-3 border-b border-zinc-800/60 px-4 py-3 last:border-0
-												{p.effective_enabled ? '' : 'opacity-50'}"
+												{p.coming_soon || !p.effective_enabled ? 'opacity-50' : ''}"
 										>
-											<!-- Name -->
+											<!-- Icon + name -->
 											<div class="min-w-0 flex-1">
 												<div class="flex items-center gap-2">
+													{#if p.icon}
+														<span class="text-base leading-none">{p.icon}</span>
+													{/if}
 													<span class="text-sm font-semibold text-zinc-200">{p.name}</span>
 													{#if p.has_override}
 														<span class="text-xs text-amber-400">edited</span>
+													{/if}
+													{#if p.coming_soon}
+														<span
+															class="rounded-full border border-zinc-700 bg-zinc-800 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-zinc-500 uppercase"
+														>
+															Coming soon
+														</span>
 													{/if}
 												</div>
 												<p class="mt-0.5 text-xs text-zinc-500">{p.description}</p>
 											</div>
 
-											<!-- Enabled toggle -->
-											<form
-												method="POST"
-												action="?/update_powerup_config"
-												use:enhance={() =>
-													async ({ update }) =>
-														update({ reset: false })}
-											>
-												<input type="hidden" name="powerup_id" value={p.id} />
-												<input type="hidden" name="field" value="enabled" />
-												<input type="hidden" name="value" value={String(!p.effective_enabled)} />
-												<button
-													type="submit"
-													class="flex items-center gap-1.5 rounded border px-2 py-1 text-xs font-medium transition-colors
-														{p.effective_enabled
-														? 'border-green-800 bg-green-950/40 text-green-400 hover:border-green-700'
-														: 'border-zinc-700 text-zinc-500 hover:border-zinc-500 hover:text-zinc-300'}"
-												>
-													{p.effective_enabled ? 'On' : 'Off'}
-												</button>
-											</form>
-
-											<!-- Cost (token shop only) -->
-											{#if powerupMode === 'token_shop'}
+											{#if !p.coming_soon}
+												<!-- Enabled toggle -->
 												<form
 													method="POST"
-													action="?/update_powerup_config"
+													action="?/saveTypeConfig"
 													use:enhance={() =>
 														async ({ update }) =>
 															update({ reset: false })}
 												>
-													<input type="hidden" name="powerup_id" value={p.id} />
-													<input type="hidden" name="field" value="cost_override" />
+													<input type="hidden" name="type_id" value={p.id} />
+													<input type="hidden" name="enabled" value={String(!p.effective_enabled)} />
+													<button
+														type="submit"
+														class="flex items-center gap-1.5 rounded border px-2 py-1 text-xs font-medium transition-colors
+															{p.effective_enabled
+															? 'border-green-800 bg-green-950/40 text-green-400 hover:border-green-700'
+															: 'border-zinc-700 text-zinc-500 hover:border-zinc-500 hover:text-zinc-300'}"
+													>
+														{p.effective_enabled ? 'On' : 'Off'}
+													</button>
+												</form>
+
+												<!-- Threshold override -->
+												<form
+													method="POST"
+													action="?/saveTypeConfig"
+													use:enhance={() =>
+														async ({ update }) =>
+															update({ reset: false })}
+												>
+													<input type="hidden" name="type_id" value={p.id} />
 													<label class="flex items-center gap-1.5">
-														<span class="text-xs text-zinc-500">Cost</span>
+														<span class="text-xs text-zinc-500">Threshold</span>
 														<input
 															type="number"
-															name="value"
-															min="1"
-															value={p.effective_cost}
+															name="threshold"
+															min="0"
+															max="100"
+															placeholder={String(p.default_min_score_pct)}
+															value={p.effective_threshold ?? ''}
 															onblur={(e) => {
 																const f = (e.target as HTMLInputElement).closest(
 																	'form'
@@ -1518,44 +1520,42 @@
 															}}
 															class="admin-input w-16 py-0.5 text-xs"
 														/>
+														<span class="text-xs text-zinc-600">%</span>
 													</label>
 												</form>
-											{:else}
-												<span
-													class="text-xs text-zinc-600"
-													title="Cost unused in Score Thresholds mode">Cost —</span
-												>
-											{/if}
 
-											<!-- Visibility override -->
-											<form
-												method="POST"
-												action="?/update_powerup_config"
-												use:enhance={() =>
-													async ({ update }) =>
-														update({ reset: false })}
-											>
-												<input type="hidden" name="powerup_id" value={p.id} />
-												<input type="hidden" name="field" value="visibility_override" />
-												<label class="flex items-center gap-1.5">
-													<span class="text-xs text-zinc-500">Visibility</span>
-													<select
-														name="value"
-														value={p.effective_visibility}
-														onchange={(e) => {
-															const f = (e.target as HTMLSelectElement).closest(
-																'form'
-															) as HTMLFormElement | null;
-															f?.requestSubmit();
-														}}
-														class="admin-input py-0.5 text-xs"
-													>
-														{#each VISIBILITY_OPTIONS as v}
-															<option value={v}>{v}</option>
-														{/each}
-													</select>
-												</label>
-											</form>
+												<!-- Chance override (0-1 stored, shown as 0-100%) -->
+												<form
+													method="POST"
+													action="?/saveTypeConfig"
+													use:enhance={() =>
+														async ({ update }) =>
+															update({ reset: false })}
+												>
+													<input type="hidden" name="type_id" value={p.id} />
+													<label class="flex items-center gap-1.5">
+														<span class="text-xs text-zinc-500">Chance</span>
+														<input
+															type="number"
+															name="chance"
+															min="0"
+															max="100"
+															placeholder="100"
+															value={p.effective_chance != null
+																? Math.round(p.effective_chance * 100)
+																: ''}
+															onblur={(e) => {
+																const f = (e.target as HTMLInputElement).closest(
+																	'form'
+																) as HTMLFormElement | null;
+																f?.requestSubmit();
+															}}
+															class="admin-input w-16 py-0.5 text-xs"
+														/>
+														<span class="text-xs text-zinc-600">%</span>
+													</label>
+												</form>
+											{/if}
 										</div>
 									{/each}
 								</div>
