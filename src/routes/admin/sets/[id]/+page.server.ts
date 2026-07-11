@@ -5,6 +5,7 @@ import { createAdminClient } from '$lib/server/supabase';
 import { generateAssignmentSlots, TEAM_COLOR_ORDER } from '$lib/server/randomize';
 import { awardCrownPayout } from '$lib/server/crown';
 import { resetGameState } from '$lib/server/reset';
+import { parseConfig, mergePowerupConfig } from '$lib/server/powerups';
 import type {
 	PowerupConfig,
 	PowerupMode,
@@ -112,6 +113,10 @@ export const load: PageServerLoad = async ({ params }) => {
 		rawConfig && typeof rawConfig === 'object' && !Array.isArray(rawConfig)
 			? (rawConfig as unknown as SetPowerupConfig)
 			: { thresholds_percent: [25, 50, 75] };
+	// v2-normalized view of the same config, for the threshold_mode/band_mode
+	// selects (piece 1). powerupSetConfig above stays as-is for the existing
+	// thresholds list + token_shop form until piece 2 replaces them.
+	const powerupConfigV2 = parseConfig(rawConfig);
 
 	return {
 		gameSet,
@@ -124,7 +129,8 @@ export const load: PageServerLoad = async ({ params }) => {
 		challengeUnlockTags,
 		powerupConfigs,
 		powerupMode,
-		powerupSetConfig
+		powerupSetConfig,
+		powerupConfigV2
 	};
 };
 
@@ -463,6 +469,53 @@ export const actions: Actions = {
 			.update({ powerup_config: config as never })
 			.eq('id', params.id);
 		if (error) return fail(500, { error: 'Could not save powerup config' });
+		return { success: true };
+	},
+
+	// v2 config, piece 1 of the powerup-earning rebuild. Replaces the threshold
+	// half of save_powerup_config above (which wholesale-overwrote powerup_config
+	// and would silently destroy a hand-set earn_threshold or, later, the
+	// types/categories subtrees). This action reads the current config, merges
+	// only the threshold-ladder fields, and writes the merged v2 object back —
+	// every sibling key survives. save_powerup_config is left in place for the
+	// token_shop form (unchanged, out of scope for this piece).
+	saveThresholds: async ({ request, params }) => {
+		const db = createAdminClient();
+		const fd = await request.formData();
+
+		const percents: number[] = [];
+		let i = 0;
+		while (fd.has(`threshold_${i}`)) {
+			const v = parseInt((fd.get(`threshold_${i}`) as string) ?? '');
+			if (!isNaN(v) && v >= 1 && v <= 100) percents.push(v);
+			i++;
+		}
+		const sorted = [...new Set(percents)].sort((a, b) => a - b);
+		if (sorted.length === 0) return fail(400, { error: 'At least one threshold is required' });
+
+		const thresholdMode =
+			(fd.get('threshold_mode') as string | null) === 'cumulative' ? 'cumulative' : 'per_challenge';
+		const bandMode =
+			(fd.get('band_mode') as string | null) === 'highest_band' ? 'highest_band' : 'all_bands';
+
+		const { data: gameSet } = await db
+			.from('game_sets')
+			.select('powerup_config')
+			.eq('id', params.id)
+			.maybeSingle();
+
+		const current = parseConfig(gameSet?.powerup_config);
+		const merged = mergePowerupConfig(current, {
+			thresholds_percent: sorted,
+			threshold_mode: thresholdMode,
+			band_mode: bandMode
+		});
+
+		const { error } = await db
+			.from('game_sets')
+			.update({ powerup_config: merged as never })
+			.eq('id', params.id);
+		if (error) return fail(500, { error: 'Could not save thresholds' });
 		return { success: true };
 	},
 
