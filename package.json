@@ -14,6 +14,7 @@
 		"format": "prettier --write .",
 		"bots:join": "tsx tests/bots/run-join.ts",
 		"bots:play": "tsx tests/bots/run-play.ts",
+		"bots:verify-earning": "tsx tests/bots/verify-earning.ts",
 		"bots:fixtures": "tsx scripts/gen-fixtures.ts",
 		"seed:mechanics": "tsx scripts/seed-mechanics-set.ts"
 	},
