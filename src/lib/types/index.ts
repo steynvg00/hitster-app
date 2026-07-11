@@ -368,3 +368,34 @@ export interface TokenShopConfig {
 }
 
 export type SetPowerupConfig = ThresholdConfig | TokenShopConfig;
+
+// ─── Powerup config v2 (per-set earning rules) ───────────────────────────────
+// Normalized shape for game_sets.powerup_config, produced by parseConfig() in
+// src/lib/server/powerups.ts. Piece 1 of the powerup-earning rebuild: this type
+// + parseConfig/mergePowerupConfig are the only pieces built so far — the
+// runtime (maybeAwardPowerup) still reads the legacy `earn_threshold` key until
+// piece 3, and the console's powerup LIST is still legacy until piece 2.
+
+// 'per_challenge': score % is this submission's score / this challenge's max.
+// 'cumulative': score % is total team score / total possible across the set so far.
+export type ThresholdMode = 'per_challenge' | 'cumulative';
+
+// 'all_bands': every threshold crossed in one submission awards a powerup.
+// 'highest_band': only the single highest newly-crossed threshold awards.
+export type BandMode = 'all_bands' | 'highest_band';
+
+export interface PowerupTypeOverride {
+	enabled?: boolean;
+	threshold?: number;
+	chance?: number;
+	inverse?: boolean;
+}
+
+export interface PowerupConfigV2 {
+	version: 2;
+	threshold_mode: ThresholdMode;
+	band_mode: BandMode;
+	thresholds_percent: number[];
+	types: Record<string, PowerupTypeOverride>;
+	categories: Record<string, boolean>;
+}

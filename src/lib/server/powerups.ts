@@ -1,8 +1,88 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/types/database';
+import type { PowerupConfigV2, ThresholdMode, BandMode, PowerupTypeOverride } from '$lib/types';
 
 export type PowerupType = Database['public']['Tables']['powerup_types']['Row'];
 export type TeamPowerupRow = Database['public']['Tables']['team_powerups']['Row'];
+
+// ─── Config v2 (powerup earning rebuild, piece 1) ────────────────────────────
+
+const DEFAULT_THRESHOLDS_PERCENT = [25, 50, 75];
+
+/**
+ * Normalizes game_sets.powerup_config (JSONB — legacy or v2 shape) into a
+ * complete v2 object with every field defaulted. This is the ONE place that
+ * interprets this JSONB; pieces 2 (console) and 3 (runtime) must both go
+ * through this rather than reading powerup_config directly, or the two sides
+ * will drift out of sync again like thresholds_percent vs earn_threshold did.
+ *
+ * Legacy shapes handled:
+ *   { thresholds_percent: [...] } → kept as the ladder, v2 defaults filled in
+ *   { earn_threshold: N }         → treated as a single-rung ladder [N]
+ *   {} | null | anything else     → full v2 defaults
+ *
+ * NOTE: the runtime (maybeAwardPowerup) does not call this yet — it still
+ * reads `earn_threshold` directly until piece 3 ships. This function is only
+ * exported/used by the admin config-save actions in this piece.
+ */
+export function parseConfig(raw: unknown): PowerupConfigV2 {
+	const obj =
+		raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+
+	let thresholdsPercent: number[];
+	if (
+		Array.isArray(obj.thresholds_percent) &&
+		obj.thresholds_percent.every((v) => typeof v === 'number')
+	) {
+		thresholdsPercent = obj.thresholds_percent as number[];
+	} else if (typeof obj.earn_threshold === 'number') {
+		thresholdsPercent = [obj.earn_threshold];
+	} else {
+		thresholdsPercent = DEFAULT_THRESHOLDS_PERCENT;
+	}
+
+	const thresholdMode: ThresholdMode = obj.threshold_mode === 'cumulative' ? 'cumulative' : 'per_challenge';
+	const bandMode: BandMode = obj.band_mode === 'highest_band' ? 'highest_band' : 'all_bands';
+
+	const types: Record<string, PowerupTypeOverride> =
+		obj.types && typeof obj.types === 'object' && !Array.isArray(obj.types)
+			? (obj.types as Record<string, PowerupTypeOverride>)
+			: {};
+
+	const categories: Record<string, boolean> =
+		obj.categories && typeof obj.categories === 'object' && !Array.isArray(obj.categories)
+			? (obj.categories as Record<string, boolean>)
+			: {};
+
+	return {
+		version: 2,
+		threshold_mode: thresholdMode,
+		band_mode: bandMode,
+		thresholds_percent: thresholdsPercent,
+		types,
+		categories
+	};
+}
+
+/**
+ * Merges a patch onto an already-parsed v2 config, preserving every sibling
+ * key the patch doesn't touch — a thresholds-only save must not wipe `types`
+ * or `categories`, and vice versa. `types`/`categories` merge one level deep
+ * (by id/category key) so a single-type save doesn't drop other types'
+ * overrides; the caller is responsible for merging an individual type's own
+ * override fields before passing it in here.
+ */
+export function mergePowerupConfig(
+	current: PowerupConfigV2,
+	patch: Partial<PowerupConfigV2>
+): PowerupConfigV2 {
+	return {
+		...current,
+		...patch,
+		types: patch.types ? { ...current.types, ...patch.types } : current.types,
+		categories: patch.categories ? { ...current.categories, ...patch.categories } : current.categories
+	};
+}
 
 export type EarnedPowerup = {
 	teamPowerupId: string;

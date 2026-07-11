@@ -7,7 +7,9 @@
 		PowerupMode,
 		PowerupVisibility,
 		ThresholdConfig,
-		TokenShopConfig
+		TokenShopConfig,
+		ThresholdMode,
+		BandMode
 	} from '$lib/types';
 	import { getVariantIcon, getVariantColor } from '$lib/variants';
 	import HelpTooltip from '$lib/components/ui/HelpTooltip.svelte';
@@ -315,6 +317,10 @@
 	let thresholds = $state<number[]>(
 		data.powerupMode === 'threshold' ? initThresholds() : [25, 50, 75]
 	);
+	// v2 config fields (piece 1 of the powerup-earning rebuild) — sourced from
+	// the normalized powerupConfigV2, not the legacy powerupSetConfig above.
+	let thresholdMode = $state<ThresholdMode>(data.powerupConfigV2.threshold_mode);
+	let bandMode = $state<BandMode>(data.powerupConfigV2.band_mode);
 
 	// Token shop config state
 	const initShop = () => data.powerupSetConfig as TokenShopConfig;
@@ -1194,7 +1200,7 @@
 					</p>
 					<form
 						method="POST"
-						action="?/save_powerup_config"
+						action="?/saveThresholds"
 						use:enhance={() => {
 							savingPowerupConfig = true;
 							return async ({ update }) => {
@@ -1203,7 +1209,27 @@
 							};
 						}}
 					>
-						<input type="hidden" name="mode" value="threshold" />
+						<div class="mb-3 grid grid-cols-2 gap-3">
+							<div>
+								<label class="admin-label" for="threshold_mode">Threshold basis</label>
+								<select
+									id="threshold_mode"
+									name="threshold_mode"
+									bind:value={thresholdMode}
+									class="admin-input"
+								>
+									<option value="per_challenge">Per challenge</option>
+									<option value="cumulative">Cumulative (whole set)</option>
+								</select>
+							</div>
+							<div>
+								<label class="admin-label" for="band_mode">Bands crossed at once</label>
+								<select id="band_mode" name="band_mode" bind:value={bandMode} class="admin-input">
+									<option value="all_bands">Award all crossed</option>
+									<option value="highest_band">Award highest only</option>
+								</select>
+							</div>
+						</div>
 						{#each thresholds as _pct, i (i)}
 							<div class="mb-1.5 flex items-center gap-2">
 								<input
