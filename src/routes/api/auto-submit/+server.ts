@@ -26,9 +26,16 @@ export const POST: RequestHandler = async ({ locals }) => {
 			.is('ended_at', null);
 
 		const now = Date.now();
+		// Grace window: only claim attempts expired MORE than GRACE_MS past their
+		// deadline. This gives a throttled/backgrounded phone (whose timer interval
+		// was starved) a chance to wake, fire its own `remaining <= 0` tick, and
+		// submit the REAL draft through the normal action first — the backstop then
+		// finds an ended attempt and skips it. Also closes the slow-client 409 race
+		// where the poll's empty insert would beat a client submit landing at t=0.
+		const GRACE_MS = 20_000;
 		const expired = (openAttempts ?? []).filter((a) => {
 			const seconds = timerMap.get(a.challenge_id) ?? 0;
-			return seconds > 0 && new Date(a.started_at).getTime() + seconds * 1000 < now;
+			return seconds > 0 && new Date(a.started_at).getTime() + seconds * 1000 + GRACE_MS < now;
 		});
 
 		if (expired.length > 0) {
