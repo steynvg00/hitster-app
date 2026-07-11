@@ -7,9 +7,9 @@ import { awardCrownPayout } from '$lib/server/crown';
 import { resetGameState } from '$lib/server/reset';
 import { parseConfig, mergePowerupConfig } from '$lib/server/powerups';
 import type {
-	PowerupConfig,
 	PowerupMode,
-	PowerupVisibility,
+	PowerupTypeConsoleRow,
+	PowerupTypeOverride,
 	SetPowerupConfig,
 	ThresholdConfig,
 	TokenShopConfig
@@ -23,8 +23,7 @@ export const load: PageServerLoad = async ({ params }) => {
 		{ data: gameSet },
 		{ data: setChallengesRaw },
 		{ data: allChallenges },
-		{ data: powerupsRaw },
-		{ data: setPowerupsRaw }
+		{ data: powerupTypesRaw }
 	] = await Promise.all([
 		db.from('game_sets').select('*').eq('id', id).maybeSingle(),
 		db
@@ -33,8 +32,11 @@ export const load: PageServerLoad = async ({ params }) => {
 			.eq('set_id', id)
 			.order('position'),
 		db.from('challenges').select('id, title, variant, is_active, nfc_lock_override').order('title'),
-		db.from('powerups').select('*').order('sort_order'),
-		db.from('set_powerups').select('*').eq('set_id', id)
+		// Console powerup list source (piece 2): the real 7 runtime types + the
+		// coming_soon placeholders (migration 0056), NOT the legacy powerups/
+		// set_powerups catalog — that catalog is fully decorative, nothing in
+		// the earning/activation runtime reads it.
+		db.from('powerup_types').select('*').order('category').order('id')
 	]);
 
 	if (!gameSet) redirect(302, '/admin/sets');
@@ -92,31 +94,38 @@ export const load: PageServerLoad = async ({ params }) => {
 		slug: t.slug
 	}));
 
-	// Merge powerups with set_powerups overrides into a unified config list
-	const setPowerupMap = new Map((setPowerupsRaw ?? []).map((sp) => [sp.powerup_id, sp]));
-	const powerupConfigs: PowerupConfig[] = (powerupsRaw ?? []).map((p) => {
-		const sp = setPowerupMap.get(p.id);
-		return {
-			...p,
-			effect_payload: p.effect_payload as Record<string, unknown>,
-			set_powerup_id: sp?.id ?? null,
-			effective_enabled: sp?.enabled ?? true,
-			effective_cost: sp?.cost_override ?? p.default_cost,
-			effective_visibility: sp?.visibility_override ?? p.default_visibility,
-			has_override: !!sp
-		};
-	});
-
 	const powerupMode: PowerupMode = (gameSet.powerup_mode as PowerupMode) ?? 'threshold';
 	const rawConfig = gameSet.powerup_config;
 	const powerupSetConfig: SetPowerupConfig =
 		rawConfig && typeof rawConfig === 'object' && !Array.isArray(rawConfig)
 			? (rawConfig as unknown as SetPowerupConfig)
 			: { thresholds_percent: [25, 50, 75] };
-	// v2-normalized view of the same config, for the threshold_mode/band_mode
-	// selects (piece 1). powerupSetConfig above stays as-is for the existing
-	// thresholds list + token_shop form until piece 2 replaces them.
+	// v2-normalized config — source of truth for both the threshold_mode/band_mode
+	// selects (piece 1) and the per-type/category overrides below (piece 2).
 	const powerupConfigV2 = parseConfig(rawConfig);
+
+	// Console powerup list (piece 2): the real 7 runtime types + coming_soon
+	// placeholders, merged with their per-set override from
+	// powerupConfigV2.types[id]. Replaces the legacy powerupConfigs
+	// (powerups + set_powerups) as the console's data source.
+	const powerupTypeRows: PowerupTypeConsoleRow[] = (powerupTypesRaw ?? []).map((p) => {
+		const override = powerupConfigV2.types[p.id];
+		return {
+			id: p.id,
+			name: p.name,
+			category: p.category,
+			description: p.description,
+			icon: p.icon,
+			enabled_by_default: p.enabled_by_default,
+			coming_soon: p.coming_soon,
+			default_min_score_pct: p.default_min_score_pct,
+			default_max_score_pct: p.default_max_score_pct,
+			effective_enabled: override?.enabled ?? p.enabled_by_default,
+			effective_threshold: override?.threshold ?? null,
+			effective_chance: override?.chance ?? 1,
+			has_override: !!override
+		};
+	});
 
 	return {
 		gameSet,
@@ -127,7 +136,7 @@ export const load: PageServerLoad = async ({ params }) => {
 		recentPlayers,
 		teamProgress,
 		challengeUnlockTags,
-		powerupConfigs,
+		powerupTypeRows,
 		powerupMode,
 		powerupSetConfig,
 		powerupConfigV2
@@ -519,81 +528,88 @@ export const actions: Actions = {
 		return { success: true };
 	},
 
-	update_powerup_config: async ({ request, params }) => {
+	// v2 per-type config, piece 2. Replaces update_powerup_config's set_powerups
+	// upsert — writes into powerup_config.types[type_id] instead (merge, not
+	// replace, via mergePowerupConfig). Each control on the console submits its
+	// own field independently (enabled / threshold / chance), so only the field
+	// present in the request is touched — the others survive untouched.
+	saveTypeConfig: async ({ request, params }) => {
 		const db = createAdminClient();
 		const fd = await request.formData();
-		const powerupId = (fd.get('powerup_id') as string | null)?.trim();
-		const field = fd.get('field') as 'enabled' | 'cost_override' | 'visibility_override' | null;
-		if (!powerupId || !field) return fail(400, { error: 'Missing powerup_id or field' });
+		const typeId = (fd.get('type_id') as string | null)?.trim();
+		if (!typeId) return fail(400, { error: 'Missing type_id' });
 
-		type UpsertData = {
-			set_id: string;
-			powerup_id: string;
-			enabled?: boolean;
-			cost_override?: number | null;
-			visibility_override?: PowerupVisibility | null;
-		};
-		const upsertData: UpsertData = { set_id: params.id, powerup_id: powerupId };
+		const { data: type } = await db
+			.from('powerup_types')
+			.select('coming_soon')
+			.eq('id', typeId)
+			.maybeSingle();
+		if (!type) return fail(400, { error: 'Unknown powerup type' });
+		// Server-side guard: a coming_soon type has no runtime effect — never let
+		// a crafted request enable/configure one, even if the console UI hides
+		// the controls for it.
+		if (type.coming_soon) return fail(400, { error: 'This powerup is not yet available' });
 
-		const VALID_VISIBILITIES: PowerupVisibility[] = ['public', 'target_only', 'hidden', 'silent'];
+		const enabledRaw = fd.get('enabled') as string | null;
+		const thresholdRaw = (fd.get('threshold') as string | null)?.trim();
+		const chanceRaw = (fd.get('chance') as string | null)?.trim();
 
-		if (field === 'enabled') {
-			upsertData.enabled = fd.get('value') === 'true';
-		} else if (field === 'cost_override') {
-			const v = (fd.get('value') as string | null)?.trim();
-			upsertData.cost_override = v ? parseInt(v) || null : null;
-		} else if (field === 'visibility_override') {
-			const v = (fd.get('value') as string | null)?.trim() as PowerupVisibility | '' | null;
-			upsertData.visibility_override = v && VALID_VISIBILITIES.includes(v) ? v : null;
-		} else {
-			return fail(400, { error: 'Unknown field' });
+		const patch: PowerupTypeOverride = {};
+		if (enabledRaw !== null) patch.enabled = enabledRaw === 'true';
+		if (thresholdRaw) {
+			const v = parseInt(thresholdRaw, 10);
+			if (!isNaN(v) && v >= 0 && v <= 100) patch.threshold = v;
+		}
+		if (chanceRaw !== undefined && chanceRaw !== '') {
+			// Console UI is a 0–100% input; stored as a 0–1 float.
+			const pct = parseInt(chanceRaw, 10);
+			if (!isNaN(pct) && pct >= 0 && pct <= 100) patch.chance = pct / 100;
 		}
 
+		const { data: gameSet } = await db
+			.from('game_sets')
+			.select('powerup_config')
+			.eq('id', params.id)
+			.maybeSingle();
+
+		const current = parseConfig(gameSet?.powerup_config);
+		const merged = mergePowerupConfig(current, {
+			types: { [typeId]: { ...current.types[typeId], ...patch } }
+		});
+
 		const { error } = await db
-			.from('set_powerups')
-			.upsert(upsertData, { onConflict: 'set_id,powerup_id' });
+			.from('game_sets')
+			.update({ powerup_config: merged as never })
+			.eq('id', params.id);
 		if (error) return fail(500, { error: 'Could not save powerup config' });
 		return { success: true };
 	},
 
-	togglePowerupCategory: async ({ request, params }) => {
+	// Category master toggle, piece 2. Replaces togglePowerupCategory's
+	// set_powerups upsert — writes into powerup_config.categories[cat] instead.
+	// Never touches coming_soon types (they have no working controls to enable).
+	toggleCategory: async ({ request, params }) => {
 		const db = createAdminClient();
 		const fd = await request.formData();
 		const category = (fd.get('category') as string | null)?.trim();
 		const enabled = fd.get('enabled') === 'true';
 		if (!category) return fail(400, { error: 'Missing category' });
 
-		const { data: powerups } = await db
-			.from('powerups')
-			.select('id')
-			.eq('category', category as never);
-		if (!powerups?.length) return { success: true };
+		const { data: gameSet } = await db
+			.from('game_sets')
+			.select('powerup_config')
+			.eq('id', params.id)
+			.maybeSingle();
 
-		const powerupIds = powerups.map((p) => p.id);
-
-		// Load existing set_powerup rows so we can preserve overrides
-		const { data: existing } = await db
-			.from('set_powerups')
-			.select('powerup_id, cost_override, visibility_override, effect_payload_override')
-			.eq('set_id', params.id)
-			.in('powerup_id', powerupIds);
-		const existingMap = new Map((existing ?? []).map((r) => [r.powerup_id, r]));
-
-		const upsertRows = powerupIds.map((powerupId) => {
-			const ex = existingMap.get(powerupId);
-			return {
-				set_id: params.id,
-				powerup_id: powerupId,
-				enabled,
-				cost_override: ex?.cost_override ?? null,
-				visibility_override: ex?.visibility_override ?? null,
-				effect_payload_override: (ex?.effect_payload_override ?? {}) as never
-			};
+		const current = parseConfig(gameSet?.powerup_config);
+		const merged = mergePowerupConfig(current, {
+			categories: { [category]: enabled }
 		});
 
 		const { error } = await db
-			.from('set_powerups')
-			.upsert(upsertRows, { onConflict: 'set_id,powerup_id' });
+			.from('game_sets')
+			.update({ powerup_config: merged as never })
+			.eq('id', params.id);
 		if (error) return fail(500, { error: error.message });
 		return { success: true };
 	},

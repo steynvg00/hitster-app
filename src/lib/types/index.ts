@@ -319,41 +319,15 @@ export interface SetChallenge {
 
 // ─── Powerups ─────────────────────────────────────────────────────────────────
 
-export type PowerupCategory = 'offensive' | 'defensive' | 'information' | 'social' | 'self';
-export type PowerupVisibility = 'public' | 'target_only' | 'hidden' | 'silent';
-export type PowerupTargetType = 'self' | 'team' | 'all_others' | 'none';
+export type PowerupCategory =
+	| 'offensive'
+	| 'defensive'
+	| 'information'
+	| 'social'
+	| 'self'
+	| 'punishment'
+	| 'wildcard';
 export type PowerupMode = 'threshold' | 'token_shop';
-
-export interface Powerup {
-	id: string;
-	slug: string;
-	name: string;
-	description: string;
-	category: PowerupCategory;
-	default_cost: number;
-	default_visibility: PowerupVisibility;
-	target_type: PowerupTargetType;
-	effect_payload: Record<string, unknown>;
-	sort_order: number;
-}
-
-export interface SetPowerup {
-	id: string;
-	set_id: string;
-	powerup_id: string;
-	enabled: boolean;
-	cost_override: number | null;
-	visibility_override: PowerupVisibility | null;
-	effect_payload_override: Record<string, unknown>;
-}
-
-export interface PowerupConfig extends Powerup {
-	set_powerup_id: string | null;
-	effective_enabled: boolean;
-	effective_cost: number;
-	effective_visibility: PowerupVisibility;
-	has_override: boolean;
-}
 
 export interface ThresholdConfig {
 	thresholds_percent: number[];
@@ -398,4 +372,25 @@ export interface PowerupConfigV2 {
 	thresholds_percent: number[];
 	types: Record<string, PowerupTypeOverride>;
 	categories: Record<string, boolean>;
+}
+
+// ─── Console powerup list (piece 2) ──────────────────────────────────────────
+// One row per powerup_types entry, merged with its per-set override from
+// powerup_config.types[id] (via parseConfig). Replaces the legacy PowerupConfig
+// (powerups + set_powerups) as the console's data source.
+export interface PowerupTypeConsoleRow {
+	id: string;
+	name: string;
+	category: PowerupCategory;
+	description: string | null;
+	icon: string | null;
+	enabled_by_default: boolean;
+	coming_soon: boolean;
+	default_min_score_pct: number;
+	default_max_score_pct: number;
+	effective_enabled: boolean;
+	// null = no override; UI shows default_min_score_pct as a placeholder
+	effective_threshold: number | null;
+	effective_chance: number; // 0–1, defaults to 1.0
+	has_override: boolean;
 }

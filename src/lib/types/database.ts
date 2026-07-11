@@ -921,6 +921,7 @@ export type Database = {
 					sort_order: number;
 					icon: string | null;
 					enabled_by_default: boolean;
+					coming_soon: boolean;
 					created_at: string;
 				};
 				Insert: {
@@ -942,6 +943,7 @@ export type Database = {
 					sort_order?: number;
 					icon?: string | null;
 					enabled_by_default?: boolean;
+					coming_soon?: boolean;
 					created_at?: string;
 				};
 				Update: {
@@ -963,6 +965,7 @@ export type Database = {
 					sort_order?: number;
 					icon?: string | null;
 					enabled_by_default?: boolean;
+					coming_soon?: boolean;
 					created_at?: string;
 				};
 				Relationships: [];
