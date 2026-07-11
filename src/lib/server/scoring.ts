@@ -1,3 +1,5 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
+import type { Database } from '$lib/types/database.js';
 import type {
 	AnswerField,
 	InputMode,
@@ -625,4 +627,141 @@ export function scoreSubmission(
 		answersArray,
 		result: { total: rawBase, maxTotal, tabs: tabResults, tracks: legacyTracks, status, breakdown }
 	};
+}
+
+// ─── Set-max score (powerup earning piece 3a, cumulative mode) ────────────────
+
+/**
+ * Sum of every challenge's base max score across a set — the denominator for
+ * cumulative-mode powerup thresholds (teamScore / setMax). Mirrors the real
+ * scorer: it resolves each tab's source tracks exactly like the submit path
+ * (getSourceTracksForTab) and runs scoreTab with EMPTY drafts to read
+ * tabMaxTotal, so the max math stays identical by construction.
+ *
+ * Track CONTENT never affects the max (only fieldPoints, slot count, and
+ * grouping do), so a stub trackMap of placeholder tracks keyed by the
+ * referenced track_ids is sufficient — this avoids loading the tracks table.
+ *
+ * Heavy (several queries) but called at most once per set: awardPowerups caches
+ * the result in powerup_config.computed_set_max.
+ */
+export async function computeSetMaxScore(
+	admin: SupabaseClient<Database>,
+	setId: string
+): Promise<number> {
+	const { data: setChallengeRows } = await admin
+		.from('set_challenges')
+		.select('challenge_id')
+		.eq('set_id', setId);
+	const challengeIds = [...new Set((setChallengeRows ?? []).map((s) => s.challenge_id))];
+	if (challengeIds.length === 0) return 0;
+
+	const [challengesRes, tabsRes, vdRes] = await Promise.all([
+		admin.from('challenges').select('id, variant, points_config').in('id', challengeIds),
+		admin.from('challenge_tabs').select('*').in('challenge_id', challengeIds),
+		admin.from('variant_defaults').select('variant, points_config')
+	]);
+	const challenges = challengesRes.data ?? [];
+	const tabs = (tabsRes.data ?? []) as Array<{
+		id: string;
+		challenge_id: string;
+		mashup_id?: string | null;
+	}>;
+	if (tabs.length === 0) return 0;
+	const tabIds = tabs.map((t) => t.id);
+
+	const vdPointsByVariant = new Map<string, Record<string, number>>();
+	for (const vd of vdRes.data ?? []) {
+		const fp = ((vd.points_config as Record<string, unknown> | null)?.field_points ?? {}) as Record<
+			string,
+			number
+		>;
+		vdPointsByVariant.set(vd.variant, fp);
+	}
+
+	const [stRes, clipRowsRes] = await Promise.all([
+		admin.from('challenge_tab_source_tracks').select('*').in('tab_id', tabIds),
+		admin.from('challenge_tab_clips').select('*').in('tab_id', tabIds)
+	]);
+	const sourceTracks = (stRes.data ?? []) as TabSourceTrackRaw[];
+	const tabClipRows = clipRowsRes.data ?? [];
+
+	const mashupIds = [...new Set(tabs.map((t) => t.mashup_id).filter((id): id is string => !!id))];
+	const { data: mashupSourceRows } = mashupIds.length
+		? await admin.from('mashup_sources').select('*').in('mashup_id', mashupIds)
+		: { data: [] as MashupSourceRaw[] };
+	const mashupSources: MashupSourceRaw[] = (mashupSourceRows ?? []).map((r) => ({
+		id: r.id,
+		mashup_id: r.mashup_id,
+		track_id: r.track_id,
+		sort_order: r.sort_order
+	}));
+
+	const clipIds = [...new Set(tabClipRows.map((c) => c.clip_id))];
+	const { data: clipRows } = clipIds.length
+		? await admin.from('clips').select('id, track_id').in('id', clipIds)
+		: { data: [] as { id: string; track_id: string }[] };
+	const clips: ClipRaw[] = (clipRows ?? []).map((c) => ({ id: c.id, track_id: c.track_id }));
+
+	const tabClipData: TabClipData[] = tabClipRows.map((c) => ({
+		id: c.id,
+		tabId: c.tab_id,
+		clipId: c.clip_id,
+		fragmentNumber: c.fragment_number,
+		sortOrder: c.sort_order,
+		trackId: clips.find((cl) => cl.id === c.clip_id)?.track_id
+	}));
+
+	// Stub trackMap — content is irrelevant to max, only structure/count matters.
+	const referencedTrackIds = new Set<string>([
+		...sourceTracks.map((s) => s.track_id),
+		...mashupSources.map((s) => s.track_id),
+		...clips.map((c) => c.track_id).filter(Boolean)
+	]);
+	const trackMap = new Map<string, TrackData>();
+	for (const id of referencedTrackIds) trackMap.set(id, { id, artist: '', title: '', year: 0 });
+
+	const tabsByChallenge = new Map<string, typeof tabs>();
+	for (const t of tabs) {
+		const list = tabsByChallenge.get(t.challenge_id) ?? [];
+		list.push(t);
+		tabsByChallenge.set(t.challenge_id, list);
+	}
+
+	let setMax = 0;
+	for (const ch of challenges) {
+		const variant = ch.variant;
+		const variantFields = (TYPE_FIELDS[variant] ?? ['artist', 'title', 'year']) as AnswerField[];
+		const pcRaw = (ch.points_config ?? {}) as Record<string, unknown>;
+		const challengeFieldPoints = (pcRaw.field_points ?? {}) as Record<string, number>;
+		const vdPoints = vdPointsByVariant.get(variant) ?? {};
+		const fieldPoints: Record<string, number> = {};
+		for (const f of variantFields) {
+			fieldPoints[f] = challengeFieldPoints[f] ?? vdPoints[f] ?? DEFAULT_FIELD_MAX[f] ?? 10;
+		}
+		const fieldModes: Record<string, InputMode> = {}; // unused for max
+
+		for (const tab of tabsByChallenge.get(ch.id) ?? []) {
+			const resolvedSrcs = getSourceTracksForTab(
+				variant,
+				tab,
+				sourceTracks,
+				mashupSources,
+				tabClipData,
+				clips,
+				trackMap
+			);
+			const { tabMaxTotal } = scoreTab(
+				variantFields,
+				fieldModes,
+				fieldPoints,
+				resolvedSrcs,
+				tabClipData.filter((c) => c.tabId === tab.id),
+				[] // empty drafts → tabMaxTotal is the pure max
+			);
+			setMax += tabMaxTotal;
+		}
+	}
+
+	return setMax;
 }

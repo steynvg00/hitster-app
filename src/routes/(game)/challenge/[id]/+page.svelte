@@ -393,13 +393,19 @@
 		type: { id: string; name: string; icon: string | null; description: string | null; holdable: boolean; immediate_use: boolean };
 		activation?: { success: boolean; payload?: Record<string, unknown> };
 	};
-	let showPowerupModal = $state(false);
-	let currentEarnedPowerup = $state<EarnedPowerup | null>(null);
+	// A submission can now earn MULTIPLE powerups (x crossed ladder bands + inverse),
+	// so reveals are queued and shown one at a time — the head renders, onclose
+	// shifts, the next opens automatically until drained. Deduped by array identity
+	// (each form result carries a fresh earnedPowerups array) so the $effect doesn't
+	// re-enqueue on unrelated re-runs.
+	let earnedQueue = $state<EarnedPowerup[]>([]);
+	let handledEarnRef: unknown = null;
 
 	$effect(() => {
-		if (f?.earnedPowerup && f.earnedPowerup.teamPowerupId && f.earnedPowerup.type) {
-			currentEarnedPowerup = f.earnedPowerup as EarnedPowerup;
-			showPowerupModal = true;
+		const earned = f?.earnedPowerups;
+		if (earned && earned.length && earned !== handledEarnRef) {
+			handledEarnRef = earned;
+			earnedQueue = [...earnedQueue, ...(earned as EarnedPowerup[])];
 		}
 	});
 
@@ -545,13 +551,15 @@
 	/>
 {/if}
 
-{#if showPowerupModal && currentEarnedPowerup}
-	<PowerupRevealModal
-		teamPowerupId={currentEarnedPowerup.teamPowerupId}
-		type={currentEarnedPowerup.type}
-		activation={currentEarnedPowerup.activation}
-		onclose={() => { showPowerupModal = false; currentEarnedPowerup = null; }}
-	/>
+{#if earnedQueue.length > 0}
+	{#key earnedQueue[0].teamPowerupId}
+		<PowerupRevealModal
+			teamPowerupId={earnedQueue[0].teamPowerupId}
+			type={earnedQueue[0].type}
+			activation={earnedQueue[0].activation}
+			onclose={() => (earnedQueue = earnedQueue.slice(1))}
+		/>
+	{/key}
 {/if}
 
 {#if showHintModal && data.challenge.hint_text}

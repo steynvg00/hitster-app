@@ -3,12 +3,13 @@ import type { PageServerLoad, Actions } from './$types';
 import { createPublicClient, createAdminClient } from '$lib/server/supabase';
 import { isNfcUnlockRequired } from '$lib/server/nfc';
 import {
-	maybeAwardPowerup,
+	awardPowerups,
 	resolvePowerupChoice,
 	activatePowerup,
 	loadActiveEffects,
 	deriveEffectModifiers,
-	consumeEffects
+	consumeEffects,
+	type EarnedPowerup
 } from '$lib/server/powerups';
 import { maybeTransferCrown } from '$lib/server/crown';
 import type {
@@ -797,15 +798,16 @@ export const actions: Actions = {
 			await consumeEffects(admin, effectModifiers.toConsume, params.id);
 		}
 
-		// Powerup earning: score above threshold → award a random powerup
-		let earnedPowerup = null;
+		// Powerup earning (v2, piece 3a): the ladder/inverse planner may award
+		// MULTIPLE powerups from one submission (x crossed bands = up to x awards).
+		let earnedPowerups: EarnedPowerup[] = [];
 		if (playerSetId) {
 			const maxTotal = scoredResult.maxTotal ?? 0;
 			const scorePercent = maxTotal > 0 ? (scoredResult.total / maxTotal) * 100 : 0;
 			const forcePowerupTypeId = import.meta.env.DEV
 				? (cookies.get('dev_force_powerup') ?? undefined)
 				: undefined;
-			earnedPowerup = await maybeAwardPowerup(
+			earnedPowerups = await awardPowerups(
 				admin,
 				teamId,
 				playerSetId,
@@ -819,7 +821,7 @@ export const actions: Actions = {
 		}
 
 		const result: ChallengeResult = { ...scoredResult, submissionId: sub.id, isFinal: true };
-		return { submitted: true, result, earnedPowerup };
+		return { submitted: true, result, earnedPowerups };
 	},
 
 	resolveEarnedPowerup: async ({ request }) => {
