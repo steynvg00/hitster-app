@@ -1503,14 +1503,23 @@
 															update({ reset: false })}
 												>
 													<input type="hidden" name="type_id" value={p.id} />
-													<label class="flex items-center gap-1.5">
-														<span class="text-xs text-zinc-500">Threshold</span>
+													<label
+														class="flex items-center gap-1.5"
+														title={p.is_inverse
+															? 'Awarded when score is BELOW this %'
+															: 'Awarded when score is AT/ABOVE this %'}
+													>
+														<span class="text-xs text-zinc-500"
+															>{p.is_inverse ? 'Earn below' : 'Threshold'}</span
+														>
 														<input
 															type="number"
 															name="threshold"
 															min="0"
 															max="100"
-															placeholder={String(p.default_min_score_pct)}
+															placeholder={String(
+																p.is_inverse ? p.default_max_score_pct : p.default_min_score_pct
+															)}
 															value={p.effective_threshold ?? ''}
 															onblur={(e) => {
 																const f = (e.target as HTMLInputElement).closest(
