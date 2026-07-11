@@ -15,6 +15,7 @@
 		"bots:join": "tsx tests/bots/run-join.ts",
 		"bots:play": "tsx tests/bots/run-play.ts",
 		"bots:verify-earning": "tsx tests/bots/verify-earning.ts",
+		"bots:verify-regression": "tsx tests/bots/verify-regression.ts",
 		"bots:fixtures": "tsx scripts/gen-fixtures.ts",
 		"seed:mechanics": "tsx scripts/seed-mechanics-set.ts"
 	},
