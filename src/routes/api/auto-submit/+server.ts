@@ -1,6 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
+import { scoreAndPersistSubmission } from '$lib/server/submit';
 
 export const POST: RequestHandler = async ({ locals }) => {
 	if (!locals.isAdmin) error(403, 'Forbidden');
@@ -26,33 +27,83 @@ export const POST: RequestHandler = async ({ locals }) => {
 			.is('ended_at', null);
 
 		const now = Date.now();
+
+		// time_boost (audit C1): a team that activated a time boost gets +N seconds
+		// on this challenge's timer. Those effect rows are inserted already-consumed
+		// (client-reaction markers) carrying { added_seconds, challenge_id }, so we
+		// match them by team + payload.challenge_id and extend the deadline — the
+		// backstop must not force-close mid-boost.
+		const boostMap = new Map<string, number>(); // `${team_id}|${challenge_id}` → added seconds
+		if (openAttempts?.length) {
+			const { data: boostEffects } = await db
+				.from('team_effects')
+				.select('team_id, payload')
+				.eq('effect_type', 'time_boost')
+				.in('team_id', [...new Set(openAttempts.map((a) => a.team_id))]);
+			for (const e of boostEffects ?? []) {
+				const p = (e.payload ?? {}) as { added_seconds?: number; challenge_id?: string };
+				if (!p.challenge_id) continue;
+				const key = `${e.team_id}|${p.challenge_id}`;
+				boostMap.set(key, (boostMap.get(key) ?? 0) + (p.added_seconds ?? 0));
+			}
+		}
+
 		// Grace window: only claim attempts expired MORE than GRACE_MS past their
-		// deadline. This gives a throttled/backgrounded phone (whose timer interval
-		// was starved) a chance to wake, fire its own `remaining <= 0` tick, and
-		// submit the REAL draft through the normal action first — the backstop then
-		// finds an ended attempt and skips it. Also closes the slow-client 409 race
-		// where the poll's empty insert would beat a client submit landing at t=0.
+		// (boost-adjusted) deadline. This gives a throttled/backgrounded phone (whose
+		// timer interval was starved) a chance to wake, fire its own `remaining <= 0`
+		// tick, and submit the REAL draft through the normal action first — the
+		// backstop then finds an ended attempt and skips it. Also closes the
+		// slow-client 409 race where the poll's insert would beat a client submit
+		// landing at t=0.
 		const GRACE_MS = 20_000;
 		const expired = (openAttempts ?? []).filter((a) => {
 			const seconds = timerMap.get(a.challenge_id) ?? 0;
-			return seconds > 0 && new Date(a.started_at).getTime() + seconds * 1000 + GRACE_MS < now;
+			if (seconds <= 0) return false;
+			const boost = boostMap.get(`${a.team_id}|${a.challenge_id}`) ?? 0;
+			return new Date(a.started_at).getTime() + (seconds + boost) * 1000 + GRACE_MS < now;
 		});
 
 		if (expired.length > 0) {
 			const expiredChallengeIds = [...new Set(expired.map((a) => a.challenge_id))];
 
-			// Load tabs for expired challenges, then their source tracks
-			const { data: tabRows } = await db
-				.from('challenge_tabs')
-				.select('id, challenge_id, position')
-				.in('challenge_id', expiredChallengeIds)
-				.order('position');
+			// Full challenge rows + tabs, so the backstop can run the SAME scoring
+			// pipeline as the interactive submit (scoreAndPersistSubmission) on an
+			// EMPTY draft — every field scores 0, but the insurance floor, streak
+			// reset, effect consumption, crown, and powerup earning (incl.
+			// penalty_shot) all run, instead of a hand-crafted score-0 row that
+			// skipped them.
+			const [challengesRes, tabsRes, setChRes] = await Promise.all([
+				db.from('challenges').select('*').in('id', expiredChallengeIds),
+				db.from('challenge_tabs').select('*').in('challenge_id', expiredChallengeIds).order('position'),
+				db.from('set_challenges').select('challenge_id, set_id').in('challenge_id', expiredChallengeIds)
+			]);
+			const challengeMap = new Map((challengesRes.data ?? []).map((c) => [c.id, c]));
+			const tabsByChallenge = new Map<string, typeof tabsRes.data>();
+			for (const tab of tabsRes.data ?? []) {
+				const list = tabsByChallenge.get(tab.challenge_id) ?? [];
+				list.push(tab);
+				tabsByChallenge.set(tab.challenge_id, list);
+			}
 
-			// We don't need source track data for empty auto-submit — just tab count
-			const tabsByChallenge = new Map<string, { id: string; position: number }[]>();
-			for (const tab of tabRows ?? []) {
-				if (!tabsByChallenge.has(tab.challenge_id)) tabsByChallenge.set(tab.challenge_id, []);
-				tabsByChallenge.get(tab.challenge_id)!.push({ id: tab.id, position: tab.position });
+			// Resolve each expired challenge's active playing set (for effects /
+			// crown / earning). A challenge can sit in several sets; take the one
+			// that's actually being played right now.
+			const scRows = setChRes.data ?? [];
+			const setIds = [...new Set(scRows.map((r) => r.set_id))];
+			const { data: playingSets } = setIds.length
+				? await db
+						.from('game_sets')
+						.select('id')
+						.in('id', setIds)
+						.eq('status', 'active')
+						.eq('play_state', 'playing')
+				: { data: [] as { id: string }[] };
+			const playingSetIds = new Set((playingSets ?? []).map((s) => s.id));
+			const challengeSetMap = new Map<string, string>();
+			for (const r of scRows) {
+				if (playingSetIds.has(r.set_id) && !challengeSetMap.has(r.challenge_id)) {
+					challengeSetMap.set(r.challenge_id, r.set_id);
+				}
 			}
 
 			const endedAt = new Date().toISOString();
@@ -64,27 +115,41 @@ export const POST: RequestHandler = async ({ locals }) => {
 					.eq('challenge_id', attempt.challenge_id)
 					.eq('team_id', attempt.team_id)
 					.maybeSingle();
-
-				if (!existingSub) {
-					// Build empty TabAnswer[] in new shape
-					const tabs = tabsByChallenge.get(attempt.challenge_id) ?? [];
-					const emptyAnswers = tabs.map((tab) => ({
-						tab_position: tab.position,
-						source_answers: []
-					}));
-
-					const { error: insertErr } = await db.from('submissions').insert({
-						challenge_id: attempt.challenge_id,
-						team_id: attempt.team_id,
-						answers: emptyAnswers as never,
-						score: 0,
-						status: 'auto_wrong',
-						is_final: true
-					});
-					if (!insertErr) created++;
+				if (existingSub) {
+					// The team already submitted (client beat the backstop) — just
+					// make sure the attempt is closed.
+					await db.from('challenge_attempts').update({ ended_at: endedAt }).eq('id', attempt.id);
+					continue;
 				}
 
-				await db.from('challenge_attempts').update({ ended_at: endedAt }).eq('id', attempt.id);
+				const challenge = challengeMap.get(attempt.challenge_id);
+				const challengeTabs = tabsByChallenge.get(attempt.challenge_id) ?? [];
+				if (!challenge || !challengeTabs.length) {
+					// Can't score without a challenge + tabs — close the attempt so it
+					// doesn't get re-polled forever.
+					await db.from('challenge_attempts').update({ ended_at: endedAt }).eq('id', attempt.id);
+					continue;
+				}
+
+				const elapsedSeconds = Math.floor(
+					(now - new Date(attempt.started_at).getTime()) / 1000
+				);
+				const outcome = await scoreAndPersistSubmission(db, {
+					challenge,
+					tabs: challengeTabs,
+					teamId: attempt.team_id,
+					playerSetId: challengeSetMap.get(attempt.challenge_id) ?? null,
+					draftByTab: {}, // empty → every field scores 0 (partial scoring handles it)
+					elapsedSeconds
+				});
+
+				if (outcome.ok) {
+					created++;
+				} else {
+					// 23505 (a client submission landed in the race) or an error — the
+					// helper only ends the attempt on success, so close it here.
+					await db.from('challenge_attempts').update({ ended_at: endedAt }).eq('id', attempt.id);
+				}
 			}
 		}
 	}
