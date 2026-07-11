@@ -345,10 +345,9 @@ export type SetPowerupConfig = ThresholdConfig | TokenShopConfig;
 
 // ─── Powerup config v2 (per-set earning rules) ───────────────────────────────
 // Normalized shape for game_sets.powerup_config, produced by parseConfig() in
-// src/lib/server/powerups.ts. Piece 1 of the powerup-earning rebuild: this type
-// + parseConfig/mergePowerupConfig are the only pieces built so far — the
-// runtime (maybeAwardPowerup) still reads the legacy `earn_threshold` key until
-// piece 3, and the console's powerup LIST is still legacy until piece 2.
+// src/lib/server/powerups.ts. Consumed by the admin console (piece 2) and the
+// earning runtime awardPowerups (piece 3a). Piece 3b (auto-submit backstop) and
+// piece 4 (penalty_shot activation) remain.
 
 // 'per_challenge': score % is this submission's score / this challenge's max.
 // 'cumulative': score % is total team score / total possible across the set so far.
@@ -372,6 +371,11 @@ export interface PowerupConfigV2 {
 	thresholds_percent: number[];
 	types: Record<string, PowerupTypeOverride>;
 	categories: Record<string, boolean>;
+	// Lazy cache (piece 3a) of the set's total base max score, used only by
+	// cumulative threshold_mode to compute teamScore/setMax. Computed once on
+	// first cumulative earning and stored back in powerup_config. NOT invalidated
+	// when the set's challenge list changes — acceptable staleness for a party game.
+	computed_set_max?: number;
 }
 
 // ─── Console powerup list (piece 2) ──────────────────────────────────────────
