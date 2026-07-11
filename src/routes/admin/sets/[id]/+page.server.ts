@@ -181,9 +181,11 @@ export const actions: Actions = {
 				set_id: params.id,
 				challenge_id,
 				position: i,
+				// parseFloat (not parseInt) so half-steps like 1.5 / 2.5 survive.
+				// DB CHECK enforces the 1–2.5 range; UI enforces the 0.5 step.
 				challenge_multiplier: Math.max(
 					1,
-					parseInt(String(multipliersMap[challenge_id] ?? 1), 10) || 1
+					parseFloat(String(multipliersMap[challenge_id] ?? 1)) || 1
 				),
 				created_by: locals.user?.id ?? null
 			}));
