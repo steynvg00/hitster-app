@@ -996,6 +996,12 @@
 														...multipliers,
 														[id]: parseFloat((e.target as HTMLSelectElement).value)
 													};
+													// Auto-persist like the NFC-slug field and the other picker on this
+													// page — this console has no separate "unsaved" state elsewhere, so
+													// a silent no-op here reads as a successful save. formData.set(...)
+													// in the enhance callback below reads `multipliers` directly (not a
+													// hidden-input's DOM value), so the fresh value above is always sent.
+													challengesForm?.requestSubmit();
 												}}
 											>
 												{#each multiplierOptions(multipliers[id] ?? 1) as m}<option value={m}
