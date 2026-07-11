@@ -185,6 +185,16 @@
 		}
 	}
 
+	// Round multiplier picker: 1 / 1.5 / 2 / 2.5 in 0.5 steps.
+	const MULTIPLIER_STEPS = [1, 1.5, 2, 2.5];
+	// Include a pre-existing out-of-range value (e.g. a legacy 3×) so it renders
+	// and the host can lower it, rather than showing a blank/mismatched select.
+	function multiplierOptions(current: number): number[] {
+		return MULTIPLIER_STEPS.includes(current)
+			? MULTIPLIER_STEPS
+			: [...MULTIPLIER_STEPS, current].sort((a, b) => a - b);
+	}
+
 	// ── Toggles ───────────────────────────────────────────────────────────────
 	let nfcLockEnabled = $state(data.gameSet.nfc_lock_enabled ?? false);
 	let teamSelectionMode = $state<'random' | 'selectable'>(
@@ -984,11 +994,19 @@
 												onchange={(e) => {
 													multipliers = {
 														...multipliers,
-														[id]: parseInt((e.target as HTMLSelectElement).value)
+														[id]: parseFloat((e.target as HTMLSelectElement).value)
 													};
+													// Auto-persist like the NFC-slug field and the other picker on this
+													// page — this console has no separate "unsaved" state elsewhere, so
+													// a silent no-op here reads as a successful save. formData.set(...)
+													// in the enhance callback below reads `multipliers` directly (not a
+													// hidden-input's DOM value), so the fresh value above is always sent.
+													challengesForm?.requestSubmit();
 												}}
 											>
-												{#each [1, 2, 3, 4, 5] as m}<option value={m}>{m}×</option>{/each}
+												{#each multiplierOptions(multipliers[id] ?? 1) as m}<option value={m}
+														>{m}×</option
+													>{/each}
 											</select>
 										</div>
 										<div class="flex shrink-0 gap-1">

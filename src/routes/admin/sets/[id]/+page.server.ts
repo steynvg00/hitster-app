@@ -1,5 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { createAdminClient } from '$lib/server/supabase';
 import { generateAssignmentSlots, TEAM_COLOR_ORDER } from '$lib/server/randomize';
 import { awardCrownPayout } from '$lib/server/crown';
@@ -174,22 +175,25 @@ export const actions: Actions = {
 			/* ok */
 		}
 
-		// Rebuild set_challenges
-		await db.from('set_challenges').delete().eq('set_id', params.id);
-		if (challengeIds.length > 0) {
-			const rows = challengeIds.map((challenge_id, i) => ({
-				set_id: params.id,
-				challenge_id,
-				position: i,
-				challenge_multiplier: Math.max(
-					1,
-					parseInt(String(multipliersMap[challenge_id] ?? 1), 10) || 1
-				),
-				created_by: locals.user?.id ?? null
-			}));
-			const { error } = await db.from('set_challenges').insert(rows);
-			if (error) return fail(500, { error: 'Could not save challenges' });
-		}
+		// Rebuild set_challenges atomically (delete + insert in one transaction via
+		// RPC — a separate delete-then-insert left the set with zero challenges if
+		// the insert failed after the delete had already committed).
+		const rows = challengeIds.map((challenge_id, i) => ({
+			challenge_id,
+			position: i,
+			// parseFloat (not parseInt) so half-steps like 1.5 / 2.5 survive.
+			// DB CHECK enforces the 1–2.5 range; UI enforces the 0.5 step.
+			challenge_multiplier: Math.max(
+				1,
+				parseFloat(String(multipliersMap[challenge_id] ?? 1)) || 1
+			),
+			created_by: locals.user?.id ?? null
+		}));
+		const { error: replaceError } = await (db as SupabaseClient).rpc('replace_set_challenges', {
+			p_set_id: params.id,
+			p_rows: rows
+		});
+		if (replaceError) return fail(500, { error: 'Could not save challenges' });
 
 		// Update NFC unlock tags: remove old ones for this set, add new ones from nfcSlugsMap
 		await db.from('nfc_tags').delete().eq('purpose', 'challenge_unlock').eq('set_id', params.id);

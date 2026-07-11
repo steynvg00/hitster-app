@@ -499,7 +499,9 @@ export function getSourceTracksForTab(
 // ─── Bonus scoring ────────────────────────────────────────────────────────────
 
 export function computeBreakdown(base: number, bonus: BonusParams): ScoreBreakdown {
-	const difficulty_multiplier = bonus.difficulty_rating / 3;
+	// Floor at 1.0 so an easy challenge (rating ≤3) is neutral, never a penalty.
+	// Bonus preserved on hard: rating 4 → 1.33×, rating 5 → 1.67×.
+	const difficulty_multiplier = Math.max(1.0, bonus.difficulty_rating / 3);
 	const round_multiplier = bonus.challenge_multiplier;
 	const comeback_multiplier =
 		base > 0 && bonus.leader_score > 0 && bonus.team_score < bonus.leader_score * 0.5 ? 1.5 : 1.0;

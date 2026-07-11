@@ -85,7 +85,7 @@ EXCEPTION WHEN others THEN null; END $$;
 INSERT INTO powerup_types (id, name, category, description, immediate_use, holdable, default_min_score_pct, icon, sort_order) VALUES
 ('shield',              'Shield',                   'defensive',    'Blocks one offensive attack on your team.',                                                              false, true,  60,  '🛡️', 10),
 ('time_boost',          'Time Boost',               'defensive',    '+30 seconds on your next challenge timer.',                                                              false, true,  50,  '⏱️', 20),
-('insurance',           'Insurance',                'defensive',    'If you score 0 on your next challenge, retroactively get 50% of max possible.',                         false, true,  70,  '🪙', 30),
+('insurance',           'Insurance',                'defensive',    'If your score is below 50% of max, it''s floored to 50%.',                                              false, true,  70,  '🪙', 30),
 ('bonus_points',        'Bonus Points',             'self',         '+5 points to your team immediately.',                                                                    true,  false, 50,  '✨', 40),
 ('hard_gaan',           'Hard Gaan',                'self',         'x1.3 multiplier on challenge points for the next 15 minutes.',                                           true,  false, 70,  '🔥', 50),
 ('single_event_mult',   'Single-Event Multiplier',  'self',         'Random multiplier (x1.2/x1.4/x1.6) applied to your next challenge.',                                    true,  false, 70,  '🎲', 60),

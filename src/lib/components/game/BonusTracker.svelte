@@ -7,7 +7,9 @@
 	}: { breakdown: ScoreBreakdown; teamColor?: string } = $props();
 
 	const diffPct = $derived(Math.round(breakdown.difficulty_multiplier * 100));
-	const hasDifficulty = $derived(breakdown.difficulty_multiplier !== 1);
+	// Only a positive difficulty delta (hard challenge) is shown. Neutral (1.0) and
+	// the now-impossible penalty case (<1.0) render no badge.
+	const hasDifficulty = $derived(breakdown.difficulty_multiplier > 1);
 	const hasRound = $derived(breakdown.round_multiplier > 1);
 	const hasComeback = $derived(breakdown.comeback_multiplier > 1);
 	const hasStreak = $derived(breakdown.streak_bonus > 0);
@@ -23,10 +25,8 @@
 				class="flex items-center gap-1.5 rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-xs font-semibold"
 			>
 				<span class="text-amber-400">★</span>
-				<span class="text-zinc-300">Difficulty {diffPct < 100 ? 'penalty' : 'bonus'}</span>
-				<span style="color: {diffPct >= 100 ? '#4ade80' : '#f87171'}">
-					{diffPct < 100 ? '' : '+'}{diffPct - 100}%
-				</span>
+				<span class="text-zinc-300">Difficulty bonus</span>
+				<span style="color: #4ade80">+{diffPct - 100}%</span>
 			</div>
 		{/if}
 
