@@ -174,6 +174,11 @@
 
 	// ── Lifecycle ──────────────────────────────────────────────────────────────
 
+	/** Whether the server-side one-shot force cookie is still present (unconsumed). */
+	function hasForceCookie(): boolean {
+		return typeof document !== 'undefined' && /(?:^|;\s*)dev_force_powerup=[^;]+/.test(document.cookie);
+	}
+
 	onMount(() => {
 		try {
 			const savedOpen = localStorage.getItem('hitster_devnav_open');
@@ -181,7 +186,15 @@
 			const savedCollapsed = localStorage.getItem('hitster_devnav_sections');
 			if (savedCollapsed !== null) collapsed = JSON.parse(savedCollapsed);
 			const savedForce = localStorage.getItem('dev_force_next_powerup');
-			if (savedForce !== null) forcePowerupTypeId = savedForce;
+			// Only re-arm the force if the server hasn't consumed its cookie yet. If
+			// the cookie is gone, the force already fired — clear the localStorage echo
+			// so it doesn't silently re-arm on this mount. (That echo defeating the
+			// server's one-shot cookie delete is what made the force effectively
+			// permanent, hijacking every earn until localStorage was hand-cleared.)
+			if (savedForce) {
+				if (hasForceCookie()) forcePowerupTypeId = savedForce;
+				else localStorage.removeItem('dev_force_next_powerup');
+			}
 		} catch {
 			// ignore malformed storage
 		}
@@ -321,6 +334,7 @@
 
 	// ── Powerup tools state ───────────────────────────────────────────────────
 	let forcePowerupTypeId = $state('');
+	const forcedType = $derived(POWERUP_TYPES.find((p) => p.id === forcePowerupTypeId));
 	let awardTeamColor = $state('blue');
 	let awardTypeId = $state('shield');
 	let awardStatus = $state<'idle' | 'loading' | 'ok' | 'error'>('idle');
@@ -400,6 +414,14 @@
 				<span class="text-xs font-bold tracking-widest text-lime-400 uppercase">Dev Nav</span>
 				{#if loading}
 					<RefreshCw size={10} class="animate-spin text-zinc-500" />
+				{/if}
+				{#if forcePowerupTypeId}
+					<span
+						class="rounded border border-amber-500/50 bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold text-amber-300"
+						title="A powerup force is armed — it fires once on the next earn"
+					>
+						⚠ FORCE: {forcedType?.name ?? forcePowerupTypeId}
+					</span>
 				{/if}
 			</div>
 			<button
@@ -600,8 +622,11 @@
 								{/if}
 							</div>
 							{#if forcePowerupTypeId}
-								<div class="mt-0.5 text-[10px] text-purple-500">
-									Cookie set — fires on next earn
+								<div
+									class="mt-1 rounded border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-[10px] font-bold text-amber-300"
+								>
+									⚠ FORCE ARMED: {forcedType?.icon}
+									{forcedType?.name ?? forcePowerupTypeId} — fires once on next earn, then clears
 								</div>
 							{/if}
 						</div>

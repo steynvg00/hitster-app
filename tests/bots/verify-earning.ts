@@ -281,6 +281,18 @@ async function main() {
 		}
 	} finally {
 		await browser.close();
+		// Leave the set in a known-good state so a later manual/live test doesn't
+		// inherit the LAST scenario's config (e.g. the categories:{self:false} that
+		// once confused live testing). Clean reset + a plain default v2 config.
+		await softReset(db);
+		await db
+			.from('game_sets')
+			.update({
+				powerups_enabled: true,
+				powerup_config: cfg({}) // per_challenge / all_bands / [25,50,75], no type/category overrides
+			})
+			.eq('id', SET_ID);
+		console.log('↩ restored powerup_config to default + reset the set\n');
 	}
 
 	// ── Report table ──────────────────────────────────────────────────────────
