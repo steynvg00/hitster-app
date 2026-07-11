@@ -32,13 +32,26 @@
 	// ── Draft (localStorage) ──────────────────────────────────────────────────
 	// New shape: Record<tabPosition, SlotDraft[]>
 	// SlotDraft = { fieldValues: Record<string, string>, fragments?: number[] }
-	const DRAFT_KEY = `hitster_draft_${data.team.id}_${data.challenge.id}`;
+	// Scoped by attempt.id so a fresh attempt (new run after reset, or replay)
+	// never rehydrates a previous run's answers — challenge_attempts gets a new
+	// id/started_at on every reset, so this key always changes with it.
+	const DRAFT_KEY_PREFIX = `hitster_draft_${data.team.id}_${data.challenge.id}`;
+	const DRAFT_KEY = `${DRAFT_KEY_PREFIX}_${data.attempt?.id ?? 'pregame'}`;
 
 	type SlotDraft = { fieldValues: Record<string, string>; fragments?: number[] };
 
 	function loadDraft(): Record<string, SlotDraft[]> {
 		if (typeof localStorage === 'undefined') return {};
 		try {
+			// Drop stale drafts for this team+challenge from prior attempts (and the
+			// legacy unscoped key, which is a strict prefix of the new format) so old
+			// answers can never resurface under a different attempt id.
+			for (let i = localStorage.length - 1; i >= 0; i--) {
+				const key = localStorage.key(i);
+				if (key && key.startsWith(DRAFT_KEY_PREFIX) && key !== DRAFT_KEY) {
+					localStorage.removeItem(key);
+				}
+			}
 			const raw = JSON.parse(localStorage.getItem(DRAFT_KEY) ?? '{}');
 			// Detect and discard old shape (keyed by track UUID, not tab position)
 			const keys = Object.keys(raw);
@@ -143,6 +156,13 @@
 
 	// Persist draft to localStorage on any state change
 	$effect(() => {
+		// No attempt yet (pre-game gate) → nothing to persist. Result landed → this
+		// run is done, clear instead of re-persisting the hydrated draft (referencing
+		// `result` here makes the effect re-fire and clear once it's set).
+		if (!data.attempt || result) {
+			if (result && typeof localStorage !== 'undefined') localStorage.removeItem(DRAFT_KEY);
+			return;
+		}
 		const d: Record<string, SlotDraft[]> = {};
 		for (let ti = 0; ti < data.tabs.length; ti++) {
 			const tab = data.tabs[ti];
