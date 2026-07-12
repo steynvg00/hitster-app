@@ -203,6 +203,12 @@
 		if (a.event_type === 'shield_block' && payload) {
 			return `🛡️ ${teamLabel(a.team_id)} blocked ${teamLabel(payload.source_team_id as string | null) ?? '?'}'s attack`;
 		}
+		if (a.event_type === 'freeze' && payload) {
+			return `🧊 ${teamLabel(a.team_id)} froze ${teamLabel(payload.target_team_id as string | null) ?? '?'}`;
+		}
+		if (a.event_type === 'time_drain' && payload) {
+			return `⏳ ${teamLabel(a.team_id)} drained ${teamLabel(payload.target_team_id as string | null) ?? '?'}'s time`;
+		}
 		if (a.event_type === 'challenge_closed') return 'Challenge closed';
 		if (a.event_type === 'attempt_reset') return 'Attempt reset';
 		return a.event_type.replace(/_/g, ' ');
