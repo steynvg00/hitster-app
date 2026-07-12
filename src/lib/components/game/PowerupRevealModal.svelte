@@ -44,11 +44,14 @@
 		}
 	}
 
-	// Slot-machine animation: cycle through random icons for 2 seconds then settle
+	// Slot-machine animation: cycle through random icons for 2 seconds then settle.
+	// penalty_shot is a spontaneous social popup, not a prize roll — skip the roll
+	// and render the settled state immediately.
 	const ICONS = ['🎲', '⚡', '🛡️', '🔥', '💡', '✨', '⏱️', '🪙', '🎯', '🌀'];
+	const animate = powerupType.id !== 'penalty_shot';
 
-	let displayIcon = $state(ICONS[0]);
-	let settled = $state(false);
+	let displayIcon = $state(animate ? ICONS[0] : (powerupType.icon ?? '✦'));
+	let settled = $state(!animate);
 	let resolving = $state(false);
 
 	// Start animation immediately on mount
@@ -56,7 +59,7 @@
 	let startTime = 0;
 	const DURATION_MS = 1800;
 
-	function animate(ts: number) {
+	function runAnimation(ts: number) {
 		if (!startTime) startTime = ts;
 		const elapsed = ts - startTime;
 
@@ -66,7 +69,7 @@
 			const interval = 60 + progress * 200; // 60ms → 260ms
 			const idx = Math.floor(elapsed / interval) % ICONS.length;
 			displayIcon = ICONS[idx];
-			animFrame = requestAnimationFrame(animate);
+			animFrame = requestAnimationFrame(runAnimation);
 		} else {
 			displayIcon = powerupType.icon ?? '✦';
 			settled = true;
@@ -74,7 +77,8 @@
 	}
 
 	$effect(() => {
-		animFrame = requestAnimationFrame(animate);
+		if (!animate) return;
+		animFrame = requestAnimationFrame(runAnimation);
 		return () => cancelAnimationFrame(animFrame);
 	});
 </script>
