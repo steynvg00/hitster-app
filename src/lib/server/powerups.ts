@@ -42,7 +42,8 @@ export function parseConfig(raw: unknown): PowerupConfigV2 {
 		thresholdsPercent = DEFAULT_THRESHOLDS_PERCENT;
 	}
 
-	const thresholdMode: ThresholdMode = obj.threshold_mode === 'cumulative' ? 'cumulative' : 'per_challenge';
+	const thresholdMode: ThresholdMode =
+		obj.threshold_mode === 'cumulative' ? 'cumulative' : 'per_challenge';
 	const bandMode: BandMode = obj.band_mode === 'highest_band' ? 'highest_band' : 'all_bands';
 
 	const types: Record<string, PowerupTypeOverride> =
@@ -57,7 +58,8 @@ export function parseConfig(raw: unknown): PowerupConfigV2 {
 
 	// Preserved through the parse so console saves (which round-trip through
 	// parseConfig → mergePowerupConfig) don't wipe the cumulative-mode cache.
-	const computedSetMax = typeof obj.computed_set_max === 'number' ? obj.computed_set_max : undefined;
+	const computedSetMax =
+		typeof obj.computed_set_max === 'number' ? obj.computed_set_max : undefined;
 
 	return {
 		version: 2,
@@ -86,7 +88,9 @@ export function mergePowerupConfig(
 		...current,
 		...patch,
 		types: patch.types ? { ...current.types, ...patch.types } : current.types,
-		categories: patch.categories ? { ...current.categories, ...patch.categories } : current.categories
+		categories: patch.categories
+			? { ...current.categories, ...patch.categories }
+			: current.categories
 	};
 }
 
@@ -447,8 +451,9 @@ export async function consumeEffects(
 // ─── Activation ───────────────────────────────────────────────────────────────
 
 export type ActivateOptions = {
-	field?: string;            // free_answer: which field to reveal
+	field?: string; // free_answer: which field to reveal
 	currentChallengeId?: string; // free_answer / time_boost / insurance gating
+	targetTeamId?: string; // offensive types (give_a_shot, …): the team being attacked
 	// Immediate-use types (bonus_points, hard_gaan, single_event_mult) auto-activate
 	// straight from the earn path, before the player ever "holds" them.
 	allowFromPending?: boolean;
@@ -460,7 +465,51 @@ export type ActivateResult = {
 	effectId?: string;
 	revealedValue?: string; // free_answer only
 	payload?: Record<string, unknown>; // the team_effects payload that was written
+	blocked?: boolean; // offensive types: the target's shield absorbed the attack
 };
+
+/**
+ * Shield check for an incoming offensive effect (stuk 1). If the target team has
+ * an active (non-consumed) shield in this set, claim it ATOMICALLY — the same
+ * compare-and-swap pattern as the cumulative-highwater claim in awardPowerups —
+ * and return blocked=true. The CAS closes the race where two teams attack the
+ * same shielded target in the same instant: the first UPDATE flips consumed_at,
+ * the second's `.is('consumed_at', null)` matches no row, so its attack applies.
+ * The shield's own team_powerup is marked consumed so the pill drops.
+ */
+async function tryConsumeShield(
+	supabase: SupabaseClient<Database>,
+	targetTeamId: string,
+	setId: string
+): Promise<{ blocked: boolean }> {
+	const { data: shield } = await supabase
+		.from('team_effects')
+		.select('id, source_team_powerup_id')
+		.eq('team_id', targetTeamId)
+		.eq('set_id', setId)
+		.eq('effect_type', 'shield')
+		.is('consumed_at', null)
+		.limit(1)
+		.maybeSingle();
+	if (!shield) return { blocked: false };
+
+	const { data: claimed } = await supabase
+		.from('team_effects')
+		.update({ consumed_at: new Date().toISOString() } as never)
+		.eq('id', shield.id)
+		.is('consumed_at', null)
+		.select('id');
+	// Lost the race (another attacker just burned this shield) → not blocked here.
+	if (!claimed?.length) return { blocked: false };
+
+	if (shield.source_team_powerup_id) {
+		await supabase
+			.from('team_powerups')
+			.update({ status: 'consumed' } as never)
+			.eq('id', shield.source_team_powerup_id);
+	}
+	return { blocked: true };
+}
 
 /**
  * Activate a held powerup. Creates a team_effects row and transitions status.
@@ -479,7 +528,8 @@ export async function activatePowerup(
 		.eq('id', teamPowerupId)
 		.maybeSingle();
 
-	const statusOk = tpu?.status === 'held' || (options?.allowFromPending && tpu?.status === 'pending');
+	const statusOk =
+		tpu?.status === 'held' || (options?.allowFromPending && tpu?.status === 'pending');
 	if (!tpu || !statusOk) return { success: false, error: 'Powerup not in held state' };
 
 	if (!tpu.set_id) return { success: false, error: 'Powerup has no set_id' };
@@ -550,7 +600,8 @@ export async function activatePowerup(
 
 		case 'hard_gaan': {
 			const windowMinutes =
-				(gameSet as unknown as { hard_gaan_window_minutes?: number }).hard_gaan_window_minutes ?? 15;
+				(gameSet as unknown as { hard_gaan_window_minutes?: number }).hard_gaan_window_minutes ??
+				15;
 			const expiresAt = new Date(Date.now() + windowMinutes * 60 * 1000).toISOString();
 			const payload = { multiplier: 1.5, window_minutes: windowMinutes };
 			const { data: eff, error } = await supabase
@@ -574,6 +625,19 @@ export async function activatePowerup(
 		}
 
 		case 'shield': {
+			// Guard C: only one shield up at a time. A second activation is rejected
+			// and the powerup stays held (status unchanged).
+			const { data: existingShield } = await supabase
+				.from('team_effects')
+				.select('id')
+				.eq('team_id', tpu.team_id)
+				.eq('set_id', tpu.set_id)
+				.eq('effect_type', 'shield')
+				.is('consumed_at', null)
+				.limit(1)
+				.maybeSingle();
+			if (existingShield) return { success: false, error: 'Shield already up' };
+
 			const { data: eff, error } = await supabase
 				.from('team_effects')
 				.insert({
@@ -595,8 +659,7 @@ export async function activatePowerup(
 
 		case 'time_boost': {
 			const challengeId = options?.currentChallengeId;
-			if (!challengeId)
-				return { success: false, error: 'Time boost requires an active challenge' };
+			if (!challengeId) return { success: false, error: 'Time boost requires an active challenge' };
 
 			const { data: attempt } = await supabase
 				.from('challenge_attempts')
@@ -619,17 +682,15 @@ export async function activatePowerup(
 
 			// Store a consumed team_effects row — client reacts via realtime and adds 30s
 			// to its countdown. Auto-submit will fire ~30s late which is acceptable.
-			await supabase
-				.from('team_effects')
-				.insert({
-					team_id: tpu.team_id,
-					set_id: tpu.set_id,
-					effect_type: 'time_boost',
-					payload: { added_seconds: 30, challenge_id: challengeId },
-					consumed_at: new Date().toISOString(),
-					consumed_challenge_id: challengeId,
-					source_team_powerup_id: teamPowerupId
-				} as never);
+			await supabase.from('team_effects').insert({
+				team_id: tpu.team_id,
+				set_id: tpu.set_id,
+				effect_type: 'time_boost',
+				payload: { added_seconds: 30, challenge_id: challengeId },
+				consumed_at: new Date().toISOString(),
+				consumed_challenge_id: challengeId,
+				source_team_powerup_id: teamPowerupId
+			} as never);
 
 			await supabase
 				.from('team_powerups')
@@ -641,8 +702,7 @@ export async function activatePowerup(
 
 		case 'insurance': {
 			const challengeId = options?.currentChallengeId;
-			if (!challengeId)
-				return { success: false, error: 'Insurance requires an active challenge' };
+			if (!challengeId) return { success: false, error: 'Insurance requires an active challenge' };
 
 			const { data: attempt } = await supabase
 				.from('challenge_attempts')
@@ -730,17 +790,15 @@ export async function activatePowerup(
 				}
 			}
 
-			await supabase
-				.from('team_effects')
-				.insert({
-					team_id: tpu.team_id,
-					set_id: tpu.set_id,
-					effect_type: 'free_answer',
-					payload: { field, value: revealedValue ?? '', challenge_id: challengeId },
-					consumed_at: new Date().toISOString(),
-					consumed_challenge_id: challengeId,
-					source_team_powerup_id: teamPowerupId
-				} as never);
+			await supabase.from('team_effects').insert({
+				team_id: tpu.team_id,
+				set_id: tpu.set_id,
+				effect_type: 'free_answer',
+				payload: { field, value: revealedValue ?? '', challenge_id: challengeId },
+				consumed_at: new Date().toISOString(),
+				consumed_challenge_id: challengeId,
+				source_team_powerup_id: teamPowerupId
+			} as never);
 
 			await supabase
 				.from('team_powerups')
@@ -758,6 +816,78 @@ export async function activatePowerup(
 				team_id: tpu.team_id,
 				event_type: 'penalty_shot',
 				payload: { team_id: tpu.team_id }
+			} as never);
+			await supabase
+				.from('team_powerups')
+				.update({ status: 'consumed' } as never)
+				.eq('id', teamPowerupId);
+			return { success: true };
+		}
+
+		case 'give_a_shot': {
+			// First cross-team attack (stuk 1). Purely social — no scoring impact,
+			// same class as penalty_shot — but TARGETED at another team.
+			const targetTeamId = options?.targetTeamId;
+			if (!targetTeamId) return { success: false, error: 'Give a Shot requires a target team' };
+			if (targetTeamId === tpu.team_id)
+				return { success: false, error: 'Cannot target your own team' };
+
+			// Denormalize the caster's name so the target's realtime client can render
+			// "from Team Red" without a join back through source_team_powerup_id.
+			const { data: casterTeam } = await supabase
+				.from('teams')
+				.select('display_name')
+				.eq('id', tpu.team_id)
+				.maybeSingle();
+			const sourceName = casterTeam?.display_name ?? '';
+
+			// Shield check FIRST — a shielded target absorbs the shot.
+			const { blocked } = await tryConsumeShield(supabase, targetTeamId, tpu.set_id);
+			if (blocked) {
+				// Pre-consumed marker row → the target's realtime INSERT notification
+				// ("your shield blocked …"). consumed so it never lingers in active effects.
+				await supabase.from('team_effects').insert({
+					team_id: targetTeamId,
+					set_id: tpu.set_id,
+					effect_type: 'shield_block',
+					payload: {
+						blocked_type: 'give_a_shot',
+						source_team_id: tpu.team_id,
+						source_team_name: sourceName
+					},
+					consumed_at: new Date().toISOString(),
+					source_team_powerup_id: teamPowerupId
+				} as never);
+				await supabase.from('activity_log').insert({
+					team_id: targetTeamId,
+					event_type: 'shield_block',
+					payload: {
+						blocked_type: 'give_a_shot',
+						source_team_id: tpu.team_id,
+						target_team_id: targetTeamId
+					}
+				} as never);
+				// The caster's powerup is STILL spent — attacking a shielded team costs you the powerup.
+				await supabase
+					.from('team_powerups')
+					.update({ status: 'consumed' } as never)
+					.eq('id', teamPowerupId);
+				return { success: true, blocked: true };
+			}
+
+			// Not blocked: a NON-consumed effect on the target. Non-consumed means an
+			// idle target catches it on their next page load, not a missed toast — the
+			// target acknowledges it ("Drunk!") which consumes the row.
+			await supabase.from('team_effects').insert({
+				team_id: targetTeamId,
+				set_id: tpu.set_id,
+				effect_type: 'give_a_shot',
+				payload: { source_team_id: tpu.team_id, source_team_name: sourceName }
+			} as never);
+			await supabase.from('activity_log').insert({
+				team_id: tpu.team_id,
+				event_type: 'give_a_shot',
+				payload: { source_team_id: tpu.team_id, target_team_id: targetTeamId }
 			} as never);
 			await supabase
 				.from('team_powerups')

@@ -9,12 +9,8 @@ import {
 	type EarnedPowerup
 } from '$lib/server/powerups';
 import { scoreAndPersistSubmission } from '$lib/server/submit';
-import type {
-	AnswerField,
-	ChallengeResult,
-	TabAnswer,
-	EffectsConfig
-} from '$lib/types/index.js';
+import { getTeamsInSet } from '$lib/server/randomize';
+import type { AnswerField, ChallengeResult, TabAnswer, EffectsConfig } from '$lib/types/index.js';
 import {
 	resolveChallengeFields,
 	fieldMapsFromResolved,
@@ -97,10 +93,7 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 			: [];
 	const [{ data: mashupRows }, { data: mashupSourceRows }] = await (mashupIds.length
 		? Promise.all([
-				admin
-					.from('mashups')
-					.select('id, audio_storage_path')
-					.in('id', mashupIds),
+				admin.from('mashups').select('id, audio_storage_path').in('id', mashupIds),
 				admin.from('mashup_sources').select('*').in('mashup_id', mashupIds).order('sort_order')
 			])
 		: Promise.resolve([{ data: [] }, { data: [] }]));
@@ -129,7 +122,15 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 	// so we need the clip rows before we can build the full trackIds list.
 	const clipsResult = await (clipIds.length
 		? supabase.from('clips').select('id, track_id, storage_path, type, effects').in('id', clipIds)
-		: Promise.resolve({ data: [] as { id: string; track_id: string; storage_path: string; type: string; effects: unknown }[] }));
+		: Promise.resolve({
+				data: [] as {
+					id: string;
+					track_id: string;
+					storage_path: string;
+					type: string;
+					effects: unknown;
+				}[]
+			}));
 
 	const trackIds = [
 		...new Set([
@@ -169,8 +170,12 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 
 	// Single source of truth for fields + modes + points + bonus flags.
 	const resolvedFields = resolveChallengeFields(variant, pcRaw, variantDefaultPoints);
-	const { fields: variantFields, fieldModes, fieldPoints, bonusFields } =
-		fieldMapsFromResolved(resolvedFields);
+	const {
+		fields: variantFields,
+		fieldModes,
+		fieldPoints,
+		bonusFields
+	} = fieldMapsFromResolved(resolvedFields);
 
 	// ── Build per-tab view data (audio URLs, source tracks) ──────────────────
 	const allTabClipDataLoad: TabClipData[] = tabClips.map((c) => ({
@@ -414,12 +419,21 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		id: string;
 		powerup_type_id: string;
 		granted_at: string;
-		type: { id: string; name: string; icon: string | null; description: string | null; holdable: boolean; immediate_use: boolean };
+		type: {
+			id: string;
+			name: string;
+			icon: string | null;
+			description: string | null;
+			holdable: boolean;
+			immediate_use: boolean;
+		};
 	}> = [];
 	if (activeSetId && locals.teamId) {
 		const { data: hpRows } = await admin
 			.from('team_powerups')
-			.select('id, powerup_type_id, granted_at, powerup_types(id, name, icon, description, holdable, immediate_use)')
+			.select(
+				'id, powerup_type_id, granted_at, powerup_types(id, name, icon, description, holdable, immediate_use)'
+			)
 			.eq('team_id', locals.teamId)
 			.eq('set_id', activeSetId)
 			.eq('status', 'held')
@@ -428,8 +442,25 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 			id: r.id,
 			powerup_type_id: r.powerup_type_id,
 			granted_at: r.granted_at ?? '',
-			type: (r as unknown as { powerup_types: { id: string; name: string; icon: string | null; description: string | null; holdable: boolean; immediate_use: boolean } }).powerup_types
+			type: (
+				r as unknown as {
+					powerup_types: {
+						id: string;
+						name: string;
+						icon: string | null;
+						description: string | null;
+						holdable: boolean;
+						immediate_use: boolean;
+					};
+				}
+			).powerup_types
 		}));
+	}
+
+	// Teams in this set — the target list for offensive-powerup activation (stuk 1).
+	let setTeams: Array<{ id: string; color: string; display_name: string }> = [];
+	if (activeSetId) {
+		setTeams = await getTeamsInSet(admin, activeSetId);
 	}
 
 	// Active powerup effects + free-answer reveals
@@ -477,7 +508,8 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		tutorialText,
 		heldPowerups,
 		activeEffects,
-		freeAnswerReveal
+		freeAnswerReveal,
+		setTeams
 	};
 };
 
@@ -596,13 +628,15 @@ export const actions: Actions = {
 		const fd = await request.formData();
 		const teamPowerupId = (fd.get('team_powerup_id') as string | null)?.trim();
 		const field = (fd.get('field') as string | null)?.trim() || undefined;
+		const targetTeamId = (fd.get('target_team_id') as string | null)?.trim() || undefined;
 		if (!teamPowerupId) return fail(400, { activateError: 'Missing powerup ID' });
 		const result = await activatePowerup(admin, teamPowerupId, {
 			currentChallengeId: params.id,
-			field
+			field,
+			targetTeamId
 		});
 		if (!result.success) return fail(400, { activateError: result.error });
-		return { activated: true, revealedValue: result.revealedValue };
+		return { activated: true, revealedValue: result.revealedValue, blocked: result.blocked };
 	},
 
 	startChallenge: async ({ params, locals }) => {

@@ -19,7 +19,14 @@
 		effects: ActiveEffect[];
 	} = $props();
 
-	let effects = $state<ActiveEffect[]>(initialEffects.filter((e) => !isExpired(e)));
+	// Incoming-attack effect rows target THIS team but aren't the team's own buffs —
+	// give_a_shot is surfaced by IncomingEffectsListener's acknowledge modal, not as
+	// a banner pill. Exclude them here so the banner only shows self-buffs.
+	const BANNER_EXCLUDE = new Set(['give_a_shot', 'shield_block']);
+
+	let effects = $state<ActiveEffect[]>(
+		initialEffects.filter((e) => !isExpired(e) && !BANNER_EXCLUDE.has(e.effect_type))
+	);
 	let now = $state(Date.now());
 
 	function isExpired(e: ActiveEffect): boolean {
@@ -73,7 +80,7 @@
 				payload: (r.payload ?? {}) as Record<string, unknown>,
 				expires_at: r.expires_at
 			}))
-			.filter((e) => !isExpired(e));
+			.filter((e) => !isExpired(e) && !BANNER_EXCLUDE.has(e.effect_type));
 	}
 
 	onMount(() => {

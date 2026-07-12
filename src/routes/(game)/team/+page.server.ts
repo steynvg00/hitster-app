@@ -2,7 +2,7 @@ import { fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { createPublicClient, createAdminClient } from '$lib/server/supabase';
 import { activatePowerup, loadActiveEffects } from '$lib/server/powerups';
-import { TEAM_COLOR_ORDER } from '$lib/server/randomize';
+import { TEAM_COLOR_ORDER, getTeamsInSet } from '$lib/server/randomize';
 
 export const load: PageServerLoad = async ({ locals, cookies }) => {
 	if (!locals.teamId) redirect(302, '/join');
@@ -113,7 +113,9 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		{
 			const { data: gs } = await admin
 				.from('game_sets')
-				.select('id, status, play_state, name, recap_state, team_count, nfc_lock_enabled, crown_holder_team_id')
+				.select(
+					'id, status, play_state, name, recap_state, team_count, nfc_lock_enabled, crown_holder_team_id'
+				)
 				.eq('id', playerSetId)
 				.maybeSingle();
 
@@ -263,6 +265,12 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		}));
 	}
 
+	// Teams in this set — target list for offensive-powerup activation (stuk 1).
+	let setTeams: Array<{ id: string; color: string; display_name: string }> = [];
+	if (playerSetId) {
+		setTeams = await getTeamsInSet(admin, playerSetId);
+	}
+
 	// Derive crown holder for this set (carried separately for reactivity)
 	let crownHolderTeamId: string | null = null;
 	if (playerSetId) {
@@ -289,7 +297,8 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		heldPowerups,
 		playerSetId,
 		activeEffects,
-		crownHolderTeamId
+		crownHolderTeamId,
+		setTeams
 	};
 };
 
@@ -298,9 +307,12 @@ export const actions: Actions = {
 		const admin = createAdminClient();
 		const fd = await request.formData();
 		const teamPowerupId = (fd.get('team_powerup_id') as string | null)?.trim();
+		// Offensive activation from /team is the normal case — the caster needn't be
+		// in a challenge, only forward the target. (give_a_shot has no attempt gate.)
+		const targetTeamId = (fd.get('target_team_id') as string | null)?.trim() || undefined;
 		if (!teamPowerupId) return fail(400, { activateError: 'Missing powerup ID' });
-		const result = await activatePowerup(admin, teamPowerupId);
+		const result = await activatePowerup(admin, teamPowerupId, { targetTeamId });
 		if (!result.success) return fail(400, { activateError: result.error });
-		return { activated: true };
+		return { activated: true, blocked: result.blocked };
 	}
 };

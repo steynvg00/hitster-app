@@ -43,6 +43,33 @@ export async function generateAssignmentSlots(
 }
 
 /**
+ * The teams that belong to a set, in canonical TEAM_COLOR_ORDER. Scoped to the
+ * set's team_count — the same derivation the /team lobby uses (there is no
+ * set_teams table). Used by the offensive-powerup target picker (stuk 1) to
+ * list the teams a caster can attack.
+ */
+export async function getTeamsInSet(
+	db: SupabaseClient<Database>,
+	set_id: string
+): Promise<Array<{ id: string; color: string; display_name: string }>> {
+	const { data: gs } = await db
+		.from('game_sets')
+		.select('team_count')
+		.eq('id', set_id)
+		.maybeSingle();
+	const teamCount = gs?.team_count ?? 6;
+	const scopedColors = TEAM_COLOR_ORDER.slice(0, teamCount);
+	const { data: teams } = await db
+		.from('teams')
+		.select('id, color, display_name')
+		.in('color', scopedColors);
+	return scopedColors
+		.map((color) => (teams ?? []).find((t) => t.color === color))
+		.filter((t): t is NonNullable<typeof t> => t != null)
+		.map((t) => ({ id: t.id, color: t.color, display_name: t.display_name }));
+}
+
+/**
  * Assign a team to a player joining a game set, and write the assignment to
  * the player's row. Uses pre-shuffled slots (atomic via Postgres FOR UPDATE)
  * when configured; otherwise the advisory-locked assign_team_fallback RPC

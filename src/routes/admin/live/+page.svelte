@@ -88,7 +88,11 @@
 		final: 'Final'
 	};
 
-	type ParsedSlot = { slotIndex: number; fieldValues: Record<string, unknown>; scored: Record<string, number> };
+	type ParsedSlot = {
+		slotIndex: number;
+		fieldValues: Record<string, unknown>;
+		scored: Record<string, number>;
+	};
 	type ParsedTab = { tabPosition: number; slots: ParsedSlot[] };
 
 	// submissions.answers is TabAnswer[] (post-migration-0036 shape) — see CLAUDE.md.
@@ -192,6 +196,12 @@
 		}
 		if (a.event_type === 'penalty_shot') {
 			return `🥃 ${teamLabel(a.team_id)} owes a shot`;
+		}
+		if (a.event_type === 'give_a_shot' && payload) {
+			return `🥂 ${teamLabel(a.team_id)} gave ${teamLabel(payload.target_team_id as string | null) ?? '?'} a shot`;
+		}
+		if (a.event_type === 'shield_block' && payload) {
+			return `🛡️ ${teamLabel(a.team_id)} blocked ${teamLabel(payload.source_team_id as string | null) ?? '?'}'s attack`;
 		}
 		if (a.event_type === 'challenge_closed') return 'Challenge closed';
 		if (a.event_type === 'attempt_reset') return 'Attempt reset';
@@ -351,7 +361,8 @@
 								if (!fresh) return;
 								const row = fresh as unknown as TeamPowerupRow;
 								const i = teamPowerups.findIndex((tp) => tp.id === row.id);
-								if (i >= 0) teamPowerups = [...teamPowerups.slice(0, i), row, ...teamPowerups.slice(i + 1)];
+								if (i >= 0)
+									teamPowerups = [...teamPowerups.slice(0, i), row, ...teamPowerups.slice(i + 1)];
 								else teamPowerups = [...teamPowerups, row];
 							});
 					}
@@ -551,7 +562,8 @@
 									class="h-2.5 w-2.5 shrink-0 rounded-full"
 									style="background-color: {teamColorHex[team.color] ?? '#666'}"
 								></div>
-								<span class="truncate text-sm font-semibold text-zinc-200">{team.display_name}</span>
+								<span class="truncate text-sm font-semibold text-zinc-200">{team.display_name}</span
+								>
 								{#if crownHolderTeamId === team.id}
 									<Crown size={14} color="#ffe600" fill="#ffe600" />
 								{/if}
@@ -772,13 +784,16 @@
 						<div class="rounded-lg border border-zinc-800 bg-zinc-950 p-3">
 							<div class="mb-2 flex items-center justify-between gap-2">
 								<div class="flex min-w-0 items-center gap-1.5">
-									<span class="truncate text-sm font-semibold text-zinc-200">{challenge.title}</span>
+									<span class="truncate text-sm font-semibold text-zinc-200">{challenge.title}</span
+									>
 									<span class="shrink-0 rounded bg-zinc-800 px-1 py-0.5 text-[10px] text-zinc-500"
 										>{challenge.variant}</span
 									>
 								</div>
 								{#if sub}
-									<span class="shrink-0 text-sm font-black text-white tabular-nums">{sub.score ?? 0}</span>
+									<span class="shrink-0 text-sm font-black text-white tabular-nums"
+										>{sub.score ?? 0}</span
+									>
 								{/if}
 							</div>
 
@@ -814,7 +829,9 @@
 								{/if}
 
 								{#if parsed.breakdown}
-									<div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 border-t border-zinc-800 pt-2 text-[11px] text-zinc-500">
+									<div
+										class="mt-2 flex flex-wrap gap-x-3 gap-y-1 border-t border-zinc-800 pt-2 text-[11px] text-zinc-500"
+									>
 										{#each Object.entries(parsed.breakdown) as [key, value]}
 											<span>{BREAKDOWN_LABELS[key as keyof ScoreBreakdown] ?? key} {value}</span>
 										{/each}
