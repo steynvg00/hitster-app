@@ -190,6 +190,9 @@
 		if (a.event_type === 'crown_payout' && payload) {
 			return `👑 ${teamLabel(a.team_id)} held the crown — earned 2 bonus points`;
 		}
+		if (a.event_type === 'penalty_shot') {
+			return `🥃 ${teamLabel(a.team_id)} owes a shot`;
+		}
 		if (a.event_type === 'challenge_closed') return 'Challenge closed';
 		if (a.event_type === 'attempt_reset') return 'Attempt reset';
 		return a.event_type.replace(/_/g, ' ');

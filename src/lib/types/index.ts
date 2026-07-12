@@ -392,8 +392,15 @@ export interface PowerupTypeConsoleRow {
 	coming_soon: boolean;
 	default_min_score_pct: number;
 	default_max_score_pct: number;
+	// Piece 4: whether this type earns via the inverse channel (score BELOW a
+	// bound) rather than the normal ladder (score AT/ABOVE a bound). A fixed
+	// trait of the type (powerup_types.default_inverse) — the console has no
+	// per-set override for it, only for enabled/threshold/chance. Drives the
+	// Threshold field's label/placeholder ("earn below" vs "earn at/above").
+	is_inverse: boolean;
 	effective_enabled: boolean;
-	// null = no override; UI shows default_min_score_pct as a placeholder
+	// null = no override; UI shows default_min_score_pct (or default_max_score_pct
+	// for an inverse type) as a placeholder
 	effective_threshold: number | null;
 	effective_chance: number; // 0–1, defaults to 1.0
 	has_override: boolean;

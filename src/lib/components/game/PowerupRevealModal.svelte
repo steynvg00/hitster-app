@@ -37,6 +37,8 @@
 				return `×${payload.multiplier ?? 1.5} on challenge points for the next ${payload.window_minutes ?? 15} minutes!`;
 			case 'single_event_mult':
 				return `×${payload.multiplier ?? 1.5} on your next challenge!`;
+			case 'penalty_shot':
+				return 'You scored low — penalty shot! 🥃 Bottoms up.';
 			default:
 				return powerupType.description ?? 'Effect applied!';
 		}

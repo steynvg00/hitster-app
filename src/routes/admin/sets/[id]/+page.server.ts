@@ -120,6 +120,7 @@ export const load: PageServerLoad = async ({ params }) => {
 			coming_soon: p.coming_soon,
 			default_min_score_pct: p.default_min_score_pct,
 			default_max_score_pct: p.default_max_score_pct,
+			is_inverse: override?.inverse ?? p.default_inverse,
 			effective_enabled: override?.enabled ?? p.enabled_by_default,
 			effective_threshold: override?.threshold ?? null,
 			effective_chance: override?.chance ?? 1,

@@ -129,8 +129,11 @@ export type PlanContext = {
  *    chance (override ?? 1); if any survive, one is randomly picked.
  *  - Inverse channel (per submission, ladder-independent): each enabled inverse type
  *    whose submissionPct < its bound (override ?? default_max_score_pct) rolls its
- *    chance. penalty_shot is coming_soon this piece, so it's excluded here and only
- *    becomes reachable when piece 4 flips coming_soon off.
+ *    chance. "Inverse" is resolved as `override.inverse ?? type.default_inverse`
+ *    (piece 4) — the console has no control to set the per-set override, so a
+ *    type's inverse-ness is a fixed trait (default_inverse), just like
+ *    enabled_by_default; the config key exists only as a theoretical future
+ *    per-set override, never written by the console today.
  */
 export function planAwards(
 	cfg: PowerupConfigV2,
@@ -158,7 +161,7 @@ export function planAwards(
 		if (t.coming_soon) return false;
 		if (!(ov?.enabled ?? t.enabled_by_default)) return false;
 		if (!(cfg.categories[t.category] ?? true)) return false;
-		if (ov?.inverse) return false;
+		if (ov?.inverse ?? t.default_inverse) return false;
 		const minThreshold = ov?.threshold ?? t.default_min_score_pct;
 		return ctx.submissionPct >= minThreshold && ctx.submissionPct <= t.default_max_score_pct;
 	});
@@ -177,12 +180,12 @@ export function planAwards(
 	// Inverse channel: per-submission, independent of the ladder / highwater.
 	for (const t of types) {
 		const ov = cfg.types[t.id];
-		if (!ov?.inverse) continue;
+		if (!(ov?.inverse ?? t.default_inverse)) continue;
 		if (t.coming_soon) continue;
-		if (!(ov.enabled ?? t.enabled_by_default)) continue;
+		if (!(ov?.enabled ?? t.enabled_by_default)) continue;
 		if (!(cfg.categories[t.category] ?? true)) continue;
-		const bound = ov.threshold ?? t.default_max_score_pct;
-		if (ctx.submissionPct < bound && rand() < (ov.chance ?? 1)) {
+		const bound = ov?.threshold ?? t.default_max_score_pct;
+		if (ctx.submissionPct < bound && rand() < (ov?.chance ?? 1)) {
 			awards.push({ typeId: t.id, channel: 'inverse' });
 		}
 	}
@@ -745,6 +748,22 @@ export async function activatePowerup(
 				.eq('id', teamPowerupId);
 
 			return { success: true, revealedValue };
+		}
+
+		case 'penalty_shot': {
+			// Purely social — no team_effects row (no scoring impact, no carry-over
+			// to any submission), just an activity_log entry so the host sees who
+			// owes a shot on /admin/live, and the powerup is spent immediately.
+			await supabase.from('activity_log').insert({
+				team_id: tpu.team_id,
+				event_type: 'penalty_shot',
+				payload: { team_id: tpu.team_id }
+			} as never);
+			await supabase
+				.from('team_powerups')
+				.update({ status: 'consumed' } as never)
+				.eq('id', teamPowerupId);
+			return { success: true };
 		}
 
 		default:
