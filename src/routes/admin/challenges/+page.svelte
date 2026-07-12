@@ -4,7 +4,7 @@
 	import type { PageData, ActionData } from './$types';
 	import { CHALLENGE_TYPES, getTypeIcon, getTypeColor, getTypeDescription } from '$lib/variants';
 	import Modal from '$lib/components/ui/Modal.svelte';
-	import { ListMusic } from 'lucide-svelte';
+	import { ListMusic, Guitar } from 'lucide-svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -235,6 +235,23 @@
 					</button>
 				</form>
 			{/each}
+			<form method="POST" action="?/createChallenge" use:enhance class="contents">
+				<input type="hidden" name="type" value="instrument" />
+				<button
+					type="submit"
+					class="flex flex-col items-start gap-2 rounded-xl border border-zinc-700 bg-zinc-900 p-4 text-left transition-all hover:border-amber-400/50 hover:bg-zinc-800"
+				>
+					<div
+						class="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-900/20 text-emerald-400"
+					>
+						<Guitar size={18} />
+					</div>
+					<div>
+						<div class="font-semibold text-white">Instrument</div>
+						<div class="mt-0.5 text-xs text-zinc-500">Identify the artist from a sound · Artist</div>
+					</div>
+				</button>
+			</form>
 		</div>
 	</Modal>
 {/if}
