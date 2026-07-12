@@ -623,6 +623,36 @@ export const actions: Actions = {
 		return { resolved: true };
 	},
 
+	// "Use now" from the reveal modal (stuk 1.5): fires a holdable-but-targeted
+	// powerup (give_a_shot) immediately against a chosen target, straight from its
+	// freshly-earned 'pending' status — no Store step first. Distinct from
+	// ?/activatePowerup (which requires status='held') so that action's contract
+	// stays untouched; this one explicitly allows the pending status and reuses
+	// the exact same activatePowerup()/targeting/shield-block path underneath.
+	useNowEarnedPowerup: async ({ request, params }) => {
+		const admin = createAdminClient();
+		const fd = await request.formData();
+		const teamPowerupId = (fd.get('team_powerup_id') as string | null)?.trim();
+		const targetTeamId = (fd.get('target_team_id') as string | null)?.trim() || undefined;
+		if (!teamPowerupId) return fail(400, { activateError: 'Missing powerup ID' });
+
+		const { data: tpu } = await admin
+			.from('team_powerups')
+			.select('status')
+			.eq('id', teamPowerupId)
+			.maybeSingle();
+		if (!tpu || tpu.status !== 'pending')
+			return fail(400, { activateError: 'Powerup is not pending' });
+
+		const result = await activatePowerup(admin, teamPowerupId, {
+			currentChallengeId: params.id,
+			targetTeamId,
+			allowFromPending: true
+		});
+		if (!result.success) return fail(400, { activateError: result.error });
+		return { activated: true, blocked: result.blocked };
+	},
+
 	activatePowerup: async ({ request, params }) => {
 		const admin = createAdminClient();
 		const fd = await request.formData();

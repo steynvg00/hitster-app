@@ -20,7 +20,8 @@
 		onclose,
 		currentChallengeId,
 		variantFields = [],
-		targetTeams = []
+		targetTeams = [],
+		activateAction = '?/activatePowerup'
 	}: {
 		teamPowerupId: string;
 		type: PowerupType;
@@ -28,6 +29,11 @@
 		currentChallengeId?: string;
 		variantFields?: string[];
 		targetTeams?: TargetTeam[];
+		// The form action to POST to. Defaults to the held-powerup activation path
+		// (?/activatePowerup, requires status='held'). The reveal modal's "Use now"
+		// flow (a fresh, still-pending earn) reuses this same component but points it
+		// at a pending-specific action instead — same targeting UI, different action.
+		activateAction?: string;
 	} = $props();
 
 	let activating = $state(false);
@@ -235,7 +241,7 @@
 			<!-- Actions -->
 			<div class="flex gap-3">
 				{#if !gated}
-					<form method="POST" action="?/activatePowerup" use:enhance={handleSubmit} class="flex-1">
+					<form method="POST" action={activateAction} use:enhance={handleSubmit} class="flex-1">
 						<input type="hidden" name="team_powerup_id" value={teamPowerupId} />
 						{#if currentChallengeId}
 							<input type="hidden" name="current_challenge_id" value={currentChallengeId} />

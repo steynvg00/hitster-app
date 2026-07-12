@@ -575,6 +575,8 @@
 			teamPowerupId={earnedQueue[0].teamPowerupId}
 			type={earnedQueue[0].type}
 			activation={earnedQueue[0].activation}
+			teamId={data.team.id}
+			setTeams={data.setTeams}
 			onclose={() => (earnedQueue = earnedQueue.slice(1))}
 		/>
 	{/key}
