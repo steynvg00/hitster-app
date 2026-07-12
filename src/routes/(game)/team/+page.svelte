@@ -5,6 +5,7 @@
 	import TutorialOverlay from '$lib/components/game/TutorialOverlay.svelte';
 	import HeldPowerups from '$lib/components/game/HeldPowerups.svelte';
 	import ActiveEffectsBanner from '$lib/components/game/ActiveEffectsBanner.svelte';
+	import IncomingEffectsListener from '$lib/components/game/IncomingEffectsListener.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -102,7 +103,11 @@
 						filter: `id=eq.${data.activeSet.id}`
 					},
 					(payload) => {
-						const p = payload.new as { play_state?: string; recap_state?: string; crown_holder_team_id?: string | null };
+						const p = payload.new as {
+							play_state?: string;
+							recap_state?: string;
+							crown_holder_team_id?: string | null;
+						};
 						if (p.play_state) livePlayState = p.play_state;
 						if ('crown_holder_team_id' in p) crownHolderTeamId = p.crown_holder_team_id ?? null;
 						if (p.play_state === 'recap' && data.activeSet) {
@@ -284,6 +289,15 @@
 			</div>
 		{/if}
 
+		<!-- Incoming cross-team attacks (give_a_shot modal + shield-block toast) -->
+		{#if data.playerSetId}
+			<IncomingEffectsListener
+				teamId={data.team.id}
+				setId={data.playerSetId}
+				effects={data.activeEffects}
+			/>
+		{/if}
+
 		<!-- Active powerup effects banner -->
 		{#if data.playerSetId && data.activeEffects?.length > 0}
 			<ActiveEffectsBanner
@@ -299,6 +313,7 @@
 				teamId={data.team.id}
 				setId={data.playerSetId}
 				powerups={data.heldPowerups}
+				setTeams={data.setTeams}
 			/>
 		{/if}
 

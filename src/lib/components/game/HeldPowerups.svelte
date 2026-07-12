@@ -19,12 +19,15 @@
 		type: PowerupType;
 	};
 
+	type TargetTeam = { id: string; color: string; display_name: string };
+
 	let {
 		teamId,
 		setId,
 		powerups: initialPowerups,
 		currentChallengeId,
 		variantFields = [],
+		setTeams = [],
 		onactivated
 	}: {
 		teamId: string;
@@ -32,8 +35,12 @@
 		powerups: HeldPowerup[];
 		currentChallengeId?: string;
 		variantFields?: string[];
+		setTeams?: TargetTeam[];
 		onactivated?: (revealedValue?: string, revealedField?: string) => void;
 	} = $props();
+
+	// The teams a caster can attack — every team in the set except their own.
+	const targetTeams = $derived(setTeams.filter((t) => t.id !== teamId));
 
 	let powerups = $state<HeldPowerup[]>(initialPowerups);
 	let selectedPowerup = $state<HeldPowerup | null>(null);
@@ -87,7 +94,7 @@
 	<div class="flex items-center gap-2 py-1">
 		<span class="shrink-0 text-xs font-semibold tracking-widest text-zinc-500 uppercase">Held</span>
 		{#if powerups.length === 0}
-			<span class="text-xs italic text-zinc-600">No powerups held</span>
+			<span class="text-xs text-zinc-600 italic">No powerups held</span>
 		{:else}
 			<div class="flex flex-wrap gap-1.5">
 				{#each powerups as p (p.id)}
@@ -115,5 +122,6 @@
 		onclose={onModalClose}
 		{currentChallengeId}
 		{variantFields}
+		{targetTeams}
 	/>
 {/if}

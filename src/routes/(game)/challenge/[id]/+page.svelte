@@ -14,6 +14,7 @@
 	import TutorialOverlay from '$lib/components/game/TutorialOverlay.svelte';
 	import HeldPowerups from '$lib/components/game/HeldPowerups.svelte';
 	import ActiveEffectsBanner from '$lib/components/game/ActiveEffectsBanner.svelte';
+	import IncomingEffectsListener from '$lib/components/game/IncomingEffectsListener.svelte';
 	import PowerupRevealModal from '$lib/components/game/PowerupRevealModal.svelte';
 	import { getTypeIcon, getTypeColor } from '$lib/variants';
 
@@ -297,7 +298,12 @@
 			.channel(`challenge-time-boost-${data.team.id}-${data.challenge.id}`)
 			.on(
 				'postgres_changes',
-				{ event: 'INSERT', schema: 'public', table: 'team_effects', filter: `team_id=eq.${data.team.id}` },
+				{
+					event: 'INSERT',
+					schema: 'public',
+					table: 'team_effects',
+					filter: `team_id=eq.${data.team.id}`
+				},
 				(payload) => {
 					const row = payload.new as { effect_type: string; payload: Record<string, unknown> };
 					if (row.effect_type === 'time_boost') {
@@ -390,7 +396,14 @@
 	// ── Powerup reveal modal ──────────────────────────────────────────────────
 	type EarnedPowerup = {
 		teamPowerupId: string;
-		type: { id: string; name: string; icon: string | null; description: string | null; holdable: boolean; immediate_use: boolean };
+		type: {
+			id: string;
+			name: string;
+			icon: string | null;
+			description: string | null;
+			holdable: boolean;
+			immediate_use: boolean;
+		};
 		activation?: { success: boolean; payload?: Record<string, unknown> };
 	};
 	// A submission can now earn MULTIPLE powerups (x crossed ladder bands + inverse),
@@ -562,6 +575,8 @@
 			teamPowerupId={earnedQueue[0].teamPowerupId}
 			type={earnedQueue[0].type}
 			activation={earnedQueue[0].activation}
+			teamId={data.team.id}
+			setTeams={data.setTeams}
 			onclose={() => (earnedQueue = earnedQueue.slice(1))}
 		/>
 	{/key}
@@ -607,8 +622,8 @@
 		<div class="space-y-3 rounded-2xl border border-zinc-800 bg-zinc-900 p-8 text-center">
 			<p class="text-lg font-semibold text-zinc-200">This challenge isn't set up yet</p>
 			<p class="text-sm text-zinc-500">
-				The host hasn't added any tracks to this challenge yet. Check back in a bit, or head
-				back to your team page.
+				The host hasn't added any tracks to this challenge yet. Check back in a bit, or head back to
+				your team page.
 			</p>
 			<a
 				href="/team"
@@ -958,6 +973,14 @@
 			{/if}
 		</div>
 
+		{#if data.activeSetId}
+			<IncomingEffectsListener
+				teamId={data.team.id}
+				setId={data.activeSetId}
+				effects={data.activeEffects}
+			/>
+		{/if}
+
 		{#if data.activeSetId && data.heldPowerups}
 			<div class="pb-1">
 				{#if data.activeEffects?.length > 0}
@@ -975,6 +998,7 @@
 					powerups={data.heldPowerups}
 					currentChallengeId={data.challenge.id}
 					variantFields={variantFields.map((f) => String(f))}
+					setTeams={data.setTeams}
 					onactivated={onPowerupActivated}
 				/>
 			</div>
@@ -1157,7 +1181,10 @@
 							{/each}
 						</div>
 					{/if}
-					{@const slotIdx = Math.min(activeSlotIndex, Math.max(activeTab.sourceTracks.length, 1) - 1)}
+					{@const slotIdx = Math.min(
+						activeSlotIndex,
+						Math.max(activeTab.sourceTracks.length, 1) - 1
+					)}
 					<div class="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
 						{#each variantFields.filter((f) => f !== 'grouping') as field (field)}
 							{@const mode = data.fieldModes[field] as InputMode}

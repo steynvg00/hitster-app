@@ -176,7 +176,9 @@
 
 	/** Whether the server-side one-shot force cookie is still present (unconsumed). */
 	function hasForceCookie(): boolean {
-		return typeof document !== 'undefined' && /(?:^|;\s*)dev_force_powerup=[^;]+/.test(document.cookie);
+		return (
+			typeof document !== 'undefined' && /(?:^|;\s*)dev_force_powerup=[^;]+/.test(document.cookie)
+		);
 	}
 
 	onMount(() => {
@@ -327,7 +329,8 @@
 		{ id: 'bonus_points', name: 'Bonus Points', icon: '✨' },
 		{ id: 'hard_gaan', name: 'Hard Gaan', icon: '🔥' },
 		{ id: 'single_event_mult', name: 'Single-Event Mult', icon: '🎲' },
-		{ id: 'free_answer', name: 'Free Answer', icon: '💡' }
+		{ id: 'free_answer', name: 'Free Answer', icon: '💡' },
+		{ id: 'give_a_shot', name: 'Give a Shot', icon: '🥂' }
 	];
 
 	const TEAM_COLORS = ['blue', 'yellow', 'green', 'red', 'indigo', 'black'];
@@ -366,7 +369,11 @@
 			const res = await fetch('/api/dev/award-powerup', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ team_color: awardTeamColor, powerup_type_id: awardTypeId, set_id: activeSetId })
+				body: JSON.stringify({
+					team_color: awardTeamColor,
+					powerup_type_id: awardTypeId,
+					set_id: activeSetId
+				})
 			});
 			const data = await res.json();
 			if (!res.ok) {
@@ -617,8 +624,8 @@
 									<button
 										onclick={() => (forcePowerupTypeId = '')}
 										class="shrink-0 rounded border border-zinc-700 px-2 text-[11px] text-zinc-500 hover:border-zinc-500 hover:text-zinc-300"
-										title="Clear override"
-									>✕</button>
+										title="Clear override">✕</button
+									>
 								{/if}
 							</div>
 							{#if forcePowerupTypeId}
@@ -634,7 +641,8 @@
 						<!-- Tool B: Award directly -->
 						<div>
 							<div class="mb-1 text-[11px] text-zinc-500">
-								Award direct {#if !activeSetId}<span class="text-red-500">(no active set)</span>{/if}
+								Award direct {#if !activeSetId}<span class="text-red-500">(no active set)</span
+									>{/if}
 							</div>
 							<div class="mb-1 flex gap-1">
 								<select
