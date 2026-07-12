@@ -29,6 +29,9 @@
 // feature/powerup-runtime-v2 branch (the earning runtime under test), the
 // Mechanics Test set seeded (npm run seed:mechanics), and its fixture at
 // tests/bots/fixtures/<setId>.json (npm run bots:fixtures).
+//
+// Config safety: restores the set's powerup_config to its pre-run state so
+// manual console settings survive a harness run.
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -143,6 +146,27 @@ const SCENARIOS: Scenario[] = [
 		expect: { total: 18, selfCount: 0 }
 	}
 ];
+
+/**
+ * Snapshot the set's powerup_config BEFORE any scenario mutates it, so the
+ * final cleanup can restore it instead of overwriting it with a hardcoded
+ * default (which used to silently wipe a host's manually-configured console
+ * settings — e.g. a category toggle or an enabled type).
+ */
+async function stashConfig(db: SupabaseClient): Promise<V2Config> {
+	const { data, error } = await db
+		.from('game_sets')
+		.select('powerup_config')
+		.eq('id', SET_ID)
+		.maybeSingle();
+	if (error) {
+		console.warn(
+			`⚠ could not read pre-run powerup_config (${error.message}) — cleanup will fall back to the hardcoded default instead of restoring`
+		);
+		return cfg({});
+	}
+	return (data?.powerup_config as V2Config | null) ?? cfg({});
+}
 
 /** Soft-reset scoped to the Mechanics set — mirrors reset.ts's operations. */
 async function softReset(db: SupabaseClient) {
@@ -270,6 +294,7 @@ async function main() {
 	console.log(`▶ Powerup earning verification — ${SCENARIOS.length} scenarios against ${BOT_BASE_URL}`);
 	console.log(`  set: ${SET_ID}  profile: ace (accuracy 1.0)\n`);
 
+	const preRunConfig = await stashConfig(db);
 	const browser = await chromium.launch();
 	const results: Array<{ scenario: Scenario; actual: Expected; pass: boolean; note?: string }> = [];
 	try {
@@ -283,16 +308,17 @@ async function main() {
 		await browser.close();
 		// Leave the set in a known-good state so a later manual/live test doesn't
 		// inherit the LAST scenario's config (e.g. the categories:{self:false} that
-		// once confused live testing). Clean reset + a plain default v2 config.
+		// once confused live testing). Clean reset + restore the PRE-RUN config —
+		// not a hardcoded default — so a host's manual console settings survive.
 		await softReset(db);
 		await db
 			.from('game_sets')
 			.update({
 				powerups_enabled: true,
-				powerup_config: cfg({}) // per_challenge / all_bands / [25,50,75], no type/category overrides
+				powerup_config: preRunConfig
 			})
 			.eq('id', SET_ID);
-		console.log('↩ restored powerup_config to default + reset the set\n');
+		console.log('↩ restored powerup_config to its pre-run state + reset the set\n');
 	}
 
 	// ── Report table ──────────────────────────────────────────────────────────

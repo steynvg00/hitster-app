@@ -39,6 +39,9 @@
 // Requires: app running (BOT_BASE_URL) on feature/powerup-backstop-pipeline,
 // the Mechanics Test set seeded, and its fixture. Reuses the bot infra
 // (player.ts, challenge.ts, personality.ts, fixtures.ts).
+//
+// Config safety: restores the set's powerup_config to its pre-run state so
+// manual console settings survive a harness run.
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -82,6 +85,27 @@ function defaultConfig() {
 		types: {},
 		categories: {}
 	};
+}
+
+/**
+ * Snapshot the set's powerup_config BEFORE any phase mutates it, so the final
+ * cleanup can restore it instead of overwriting it with a hardcoded default
+ * (which used to silently wipe a host's manually-configured console settings
+ * — e.g. a category toggle or an enabled type).
+ */
+async function stashConfig(db: SupabaseClient): Promise<ReturnType<typeof defaultConfig>> {
+	const { data, error } = await db
+		.from('game_sets')
+		.select('powerup_config')
+		.eq('id', SET_ID)
+		.maybeSingle();
+	if (error) {
+		console.warn(
+			`⚠ could not read pre-run powerup_config (${error.message}) — cleanup will fall back to the hardcoded default instead of restoring`
+		);
+		return defaultConfig();
+	}
+	return (data?.powerup_config as ReturnType<typeof defaultConfig> | null) ?? defaultConfig();
 }
 
 /** Soft-reset scoped to the Mechanics set — mirrors reset.ts's operations. */
@@ -392,6 +416,7 @@ async function main() {
 	console.log(`▶ Regression + backstop verification against ${BOT_BASE_URL}`);
 	console.log(`  set: ${SET_ID}  profile: ace (accuracy 1.0)\n`);
 
+	const preRunConfig = await stashConfig(db);
 	const browser = await chromium.launch();
 	try {
 		console.log('  Phase A: interactive regression (ace plays the full set) …');
@@ -402,13 +427,14 @@ async function main() {
 		await backstopRun(db, browser, { withInsurance: true, label: 'insurance' });
 	} finally {
 		await browser.close();
-		// Hygiene: leave the set clean with a default config (same as verify-earning).
+		// Hygiene: leave the set clean, restoring the PRE-RUN config — not a
+		// hardcoded default — so a host's manual console settings survive.
 		await softReset(db);
 		await db
 			.from('game_sets')
-			.update({ powerups_enabled: true, powerup_config: defaultConfig() })
+			.update({ powerups_enabled: true, powerup_config: preRunConfig })
 			.eq('id', SET_ID);
-		console.log('↩ restored powerup_config to default + reset the set\n');
+		console.log('↩ restored powerup_config to its pre-run state + reset the set\n');
 	}
 
 	// ── Report ────────────────────────────────────────────────────────────────
