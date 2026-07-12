@@ -146,7 +146,10 @@ export const actions: Actions = {
 		const existingPc = (existing?.points_config ?? {}) as Record<string, unknown>;
 		const existingModes = (existingPc.field_modes ?? {}) as Record<string, string>;
 
+		// Read-modify-write: preserve every sibling key (e.g. a configurable
+		// fields[] added in stuk 2) rather than rebuilding points_config wholesale.
 		const points_config = {
+			...existingPc,
 			field_modes: existingModes,
 			field_points: fieldPointEntries
 		};
