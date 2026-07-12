@@ -6,6 +6,7 @@
 	import MashupEditor from '$lib/components/admin/challenge-editors/MashupEditor.svelte';
 	import FragmentsEditor from '$lib/components/admin/challenge-editors/FragmentsEditor.svelte';
 	import EffectsEditor from '$lib/components/admin/challenge-editors/EffectsEditor.svelte';
+	import FieldsEditor from '$lib/components/admin/challenge-editors/FieldsEditor.svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -35,10 +36,6 @@
 	let nfcOverride = $state<NfcOverride>(
 		nfcOverrideRaw === true ? 'true' : nfcOverrideRaw === false ? 'false' : 'inherit'
 	);
-
-	const pc = $derived((data.challenge.points_config ?? {}) as Record<string, unknown>);
-	const pointsConfig = $derived((pc.field_points ?? {}) as Record<string, number>);
-	const savedFieldModes = $derived((pc.field_modes ?? {}) as Record<string, string>);
 
 	const VariantIcon = $derived(getTypeIcon(data.challenge.variant));
 	const variantColor = $derived(getTypeColor(data.challenge.variant));
@@ -238,22 +235,18 @@
 	</section>
 
 	<!-- ── Type-aware editor ── -->
-	<div class="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
+	<div class="mb-8 rounded-xl border border-zinc-800 bg-zinc-900 p-5">
 		<h2 class="mb-4 text-sm font-bold tracking-widest text-amber-400 uppercase">
 			{TYPE_LABELS[data.challenge.variant] ?? data.challenge.variant} Editor
 		</h2>
 
 		{#if isStandardLike}
 			<StandardEditor
-				type={data.challenge.variant}
 				tabs={data.tabs}
 				sourceTracksByTab={data.sourceTracksByTab}
 				clipsByTab={data.clipsByTab}
 				allTracks={data.allTracks}
 				clips={data.clips}
-				answerOptions={data.answerOptions}
-				{pointsConfig}
-				fieldModes={savedFieldModes}
 			/>
 		{:else if isMashup}
 			<MashupEditor
@@ -262,18 +255,9 @@
 				mashupSources={data.mashupSources}
 				allTracks={data.allTracks}
 				clips={data.clips}
-				{pointsConfig}
-				fieldModes={savedFieldModes}
 			/>
 		{:else if isFragments}
-			<FragmentsEditor
-				tabs={data.tabs}
-				clipsByTab={data.clipsByTab}
-				allTracks={data.allTracks}
-				clips={data.clips}
-				{pointsConfig}
-				fieldModes={savedFieldModes}
-			/>
+			<FragmentsEditor tabs={data.tabs} clipsByTab={data.clipsByTab} allTracks={data.allTracks} clips={data.clips} />
 		{:else if isEffects}
 			<EffectsEditor
 				tabs={data.tabs}
@@ -281,11 +265,18 @@
 				clipsByTab={data.clipsByTab}
 				allTracks={data.allTracks}
 				clips={data.clips}
-				{pointsConfig}
-				fieldModes={savedFieldModes}
 				userPresets={(data as unknown as { userPresets?: import('$lib/types/index.js').EffectPreset[] }).userPresets ?? []}
 			/>
 		{/if}
+	</div>
+
+	<!-- ── Answer fields (configurable, variant-agnostic) ── -->
+	<div class="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
+		<FieldsEditor
+			resolvedFields={data.resolvedFields}
+			poolBackedFields={data.poolBackedFields}
+			answerOptions={data.answerOptions}
+		/>
 	</div>
 </div>
 

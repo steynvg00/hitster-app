@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
-	import { TYPE_FIELDS } from '$lib/variants';
 	import SearchablePicker from '$lib/components/admin/SearchablePicker.svelte';
 
 	type Track = { id: string; artist: string; title: string; year: number };
@@ -20,36 +19,19 @@
 		mashups,
 		mashupSources,
 		allTracks,
-		clips,
-		pointsConfig,
-		fieldModes: savedFieldModes
+		clips
 	}: {
 		tabs: Tab[];
 		mashups: Mashup[];
 		mashupSources: MashupSource[];
 		allTracks: Track[];
 		clips: Clip[];
-		pointsConfig: Record<string, number>;
-		fieldModes: Record<string, string>;
 	} = $props();
-
-	const INPUT_MODES = [
-		'combobox',
-		'multiple_choice',
-		'open_text',
-		'slider',
-		'typeable_number'
-	] as const;
-	const fields = TYPE_FIELDS['mashup'];
 
 	function sourcesForMashup(mashupId: string): MashupSource[] {
 		return mashupSources
 			.filter((s) => s.mashup_id === mashupId)
 			.sort((a, b) => a.sort_order - b.sort_order);
-	}
-
-	function currentMode(field: string): string {
-		return savedFieldModes[field] ?? 'open_text';
 	}
 </script>
 
@@ -144,49 +126,4 @@
 			{/each}
 		</div>
 	{/if}
-</section>
-
-<!-- ── Field config ── -->
-<section>
-	<h2 class="mb-3 text-sm font-bold tracking-widest text-amber-400 uppercase">
-		Field Config (applied per slot)
-	</h2>
-	<div class="space-y-3">
-		{#each fields as field (field)}
-			<div
-				class="flex flex-wrap items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900 p-3"
-			>
-				<span class="w-28 text-sm font-semibold text-zinc-300 capitalize">{field}</span>
-				<label class="flex items-center gap-1.5 text-xs text-zinc-400">
-					Max pts
-					<form method="POST" action="?/saveFieldPoints" use:enhance class="inline">
-						<input
-							type="number"
-							name="field_points[{field}]"
-							value={pointsConfig[field] ?? 10}
-							min="1"
-							max="50"
-							class="w-16 rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-white"
-							onblur={(e) => (e.target as HTMLInputElement).form?.requestSubmit()}
-						/>
-					</form>
-				</label>
-				<label class="flex items-center gap-1.5 text-xs text-zinc-400">
-					Mode
-					<form method="POST" action="?/saveInputMode" use:enhance class="inline">
-						<input type="hidden" name="field" value={field} />
-						<select
-							name="mode"
-							class="rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-white"
-							onchange={(e) => (e.target as HTMLSelectElement).form?.requestSubmit()}
-						>
-							{#each INPUT_MODES as m (m)}
-								<option value={m} selected={currentMode(field) === m}>{m}</option>
-							{/each}
-						</select>
-					</form>
-				</label>
-			</div>
-		{/each}
-	</div>
 </section>
