@@ -67,6 +67,109 @@ export const DEFAULT_FIELD_MAX: Partial<Record<AnswerField, number>> = {
 	grouping: 10
 };
 
+// ─── Configurable fields resolver (stuk 1) ────────────────────────────────────
+// The SINGLE source of truth for "which fields does this challenge have, and
+// each field's input mode / max points / bonus flag." When
+// `points_config.fields[]` is present it wins; otherwise we derive today's
+// behavior from the variant's fixed field list, the three-tier point
+// resolution, and DEFAULT_INPUT_MODES — with is_bonus:false everywhere. With no
+// fields[] this is bit-identical to pre-configurable-fields resolution.
+
+export interface ResolvedField {
+	name: AnswerField;
+	input_mode: InputMode;
+	max_points: number;
+	is_bonus: boolean;
+}
+
+// Field names are constrained to the known AnswerField union this piece —
+// free-form names are deferred (scoreField needs a track-backed answer).
+const KNOWN_FIELDS: readonly AnswerField[] = [
+	'artist',
+	'title',
+	'year',
+	'label',
+	'festival',
+	'vocal_source',
+	'grouping'
+];
+
+const VALID_INPUT_MODES: readonly InputMode[] = [
+	'multiple_choice',
+	'combobox',
+	'open_text',
+	'typeable_number',
+	'slider'
+];
+
+export function resolveChallengeFields(
+	variant: string,
+	pointsConfig: unknown,
+	variantDefaultPoints: Record<string, number> = {}
+): ResolvedField[] {
+	const pc = (pointsConfig ?? {}) as Record<string, unknown>;
+	const savedModes = (pc.field_modes ?? {}) as Record<string, string>;
+	const challengeFieldPoints = (pc.field_points ?? {}) as Record<string, number>;
+
+	// Legacy resolution, reused for both the derive-from-variant path and any
+	// per-row fallbacks in the configured path (so an under-specified row still
+	// resolves exactly as it would have without fields[]).
+	const resolveMode = (f: AnswerField): InputMode =>
+		(savedModes[f] as InputMode) ?? DEFAULT_INPUT_MODES[variant]?.[f] ?? 'open_text';
+	const resolvePoints = (f: AnswerField): number =>
+		challengeFieldPoints[f] ?? variantDefaultPoints[f] ?? DEFAULT_FIELD_MAX[f] ?? 10;
+
+	const configured = Array.isArray(pc.fields) ? (pc.fields as unknown[]) : null;
+	if (configured && configured.length > 0) {
+		const out: ResolvedField[] = [];
+		for (const raw of configured) {
+			if (!raw || typeof raw !== 'object') continue;
+			const row = raw as Record<string, unknown>;
+			const name = row.name as AnswerField;
+			if (!KNOWN_FIELDS.includes(name)) continue; // ignore unknown names gracefully
+			const modeRaw = row.input_mode as InputMode;
+			const input_mode = VALID_INPUT_MODES.includes(modeRaw) ? modeRaw : resolveMode(name);
+			const max_points =
+				typeof row.max_points === 'number' && Number.isFinite(row.max_points)
+					? row.max_points
+					: resolvePoints(name);
+			out.push({ name, input_mode, max_points, is_bonus: row.is_bonus === true });
+		}
+		// Only take the configured path if at least one row was valid — an all-unknown
+		// fields[] falls through to the variant default rather than a fieldless challenge.
+		if (out.length > 0) return out;
+	}
+
+	const variantFields = (TYPE_FIELDS[variant] ?? ['artist', 'title', 'year']) as AnswerField[];
+	return variantFields.map((name) => ({
+		name,
+		input_mode: resolveMode(name),
+		max_points: resolvePoints(name),
+		is_bonus: false
+	}));
+}
+
+/**
+ * Flatten a ResolvedField[] into the parallel structures the scoring pipeline
+ * consumes. Keeps every call site's field-map derivation identical and DRY.
+ */
+export function fieldMapsFromResolved(resolved: ResolvedField[]): {
+	fields: AnswerField[];
+	fieldModes: Record<string, InputMode>;
+	fieldPoints: Record<string, number>;
+	bonusFields: Set<string>;
+} {
+	const fieldModes: Record<string, InputMode> = {};
+	const fieldPoints: Record<string, number> = {};
+	const bonusFields = new Set<string>();
+	for (const r of resolved) {
+		fieldModes[r.name] = r.input_mode;
+		fieldPoints[r.name] = r.max_points;
+		if (r.is_bonus) bonusFields.add(r.name);
+	}
+	return { fields: resolved.map((r) => r.name), fieldModes, fieldPoints, bonusFields };
+}
+
 // ─── Track data type ──────────────────────────────────────────────────────────
 
 export type TrackData = {
@@ -167,7 +270,8 @@ export function buildFieldResults(
 	answers: Record<string, string>,
 	track: TrackData,
 	fieldModes: Record<string, InputMode>,
-	pointsConfig: Record<string, number>
+	pointsConfig: Record<string, number>,
+	bonusFields: Set<string> = new Set()
 ): FieldResult[] {
 	return variantFields
 		.filter((f) => f !== 'grouping')
@@ -180,7 +284,7 @@ export function buildFieldResults(
 				field === 'year'
 					? String(track.year)
 					: String(track[field === 'label' ? 'record_label' : (field as keyof TrackData)] ?? '');
-			return { field, submitted, correct, score, maxScore, fuzzyScore };
+			return { field, submitted, correct, score, maxScore, fuzzyScore, isBonus: bonusFields.has(field) };
 		});
 }
 
@@ -230,16 +334,39 @@ export function scoreTab(
 	fieldPoints: Record<string, number>,
 	tabSourceTracks: TabSourceTrackData[], // ordered by sort_order
 	tabClips: TabClipData[], // clips for this tab (with fragment_number)
-	playerSlotDrafts: SlotDraft[] // player's answers indexed by slot
+	playerSlotDrafts: SlotDraft[], // player's answers indexed by slot
+	bonusFields: Set<string> = new Set()
 ): {
 	slotResults: SlotFieldResult[];
 	tabTotal: number;
 	tabMaxTotal: number;
+	tabThresholdTotal: number;
+	tabThresholdMax: number;
 	sourceAnswers: SourceAnswer[];
 } {
 	const nonGroupingFields = variantFields.filter((f) => f !== 'grouping');
 	const hasGrouping = variantFields.includes('grouping');
 	const groupingMax = fieldPoints['grouping'] ?? DEFAULT_FIELD_MAX['grouping'] ?? 10;
+	const groupingIsBonus = bonusFields.has('grouping');
+
+	// Threshold (bonus-excluded) sums from a scored FieldResult[]; the results
+	// already carry isBonus (buildFieldResults tags them from bonusFields).
+	const thresholdOf = (frs: FieldResult[]): { total: number; max: number } => {
+		let total = 0;
+		let max = 0;
+		for (const fr of frs) {
+			if (fr.isBonus) continue;
+			total += fr.score;
+			max += fr.maxScore;
+		}
+		return { total, max };
+	};
+	// Bonus-excluded max for a field list (empty/overflow slots have no FieldResult[]).
+	const nonBonusFieldMax = (fields: AnswerField[]): number =>
+		fields.reduce(
+			(s, f) => s + (bonusFields.has(f) ? 0 : (fieldPoints[f] ?? DEFAULT_FIELD_MAX[f] ?? 10)),
+			0
+		);
 
 	if (tabSourceTracks.length === 1) {
 		// ── Single-source tab (standard / anthem / label) ────────────────────────
@@ -250,10 +377,12 @@ export function scoreTab(
 			draft.fieldValues,
 			src.track,
 			fieldModes,
-			fieldPoints
+			fieldPoints,
+			bonusFields
 		);
 		const slotTotal = fieldResultsList.reduce((s, fr) => s + fr.score, 0);
 		const slotMax = fieldResultsList.reduce((s, fr) => s + fr.maxScore, 0);
+		const th = thresholdOf(fieldResultsList);
 
 		const scored: Record<string, number> = {};
 		for (const fr of fieldResultsList) scored[fr.field] = fr.score;
@@ -278,6 +407,8 @@ export function scoreTab(
 			slotResults: [slotResult],
 			tabTotal: slotTotal,
 			tabMaxTotal: slotMax,
+			tabThresholdTotal: th.total,
+			tabThresholdMax: th.max,
 			sourceAnswers: [sourceAnswer]
 		};
 	}
@@ -288,6 +419,8 @@ export function scoreTab(
 	const unmatched = new Set(tabSourceTracks.map((_, i) => i));
 	const slotResults: SlotFieldResult[] = [];
 	const sourceAnswers: SourceAnswer[] = [];
+	let tabThresholdTotal = 0;
+	let tabThresholdMax = 0;
 
 	for (let slotIdx = 0; slotIdx < playerSlotDrafts.length; slotIdx++) {
 		const draft = playerSlotDrafts[slotIdx] ?? { fieldValues: {} };
@@ -302,7 +435,8 @@ export function scoreTab(
 				draft.fieldValues,
 				src.track,
 				fieldModes,
-				fieldPoints
+				fieldPoints,
+				bonusFields
 			);
 			const total = fieldResultsList.reduce((s, fr) => s + fr.score, 0);
 			if (total > bestScore) {
@@ -313,11 +447,13 @@ export function scoreTab(
 		}
 
 		if (bestTrackIdx === -1) {
-			// More player slots than source tracks — score 0 for overflow slots
+			// More player slots than source tracks — score 0 for overflow slots.
+			// (Mirrors the max: overflow slots do NOT include groupingMax.)
 			const maxTotal = nonGroupingFields.reduce(
 				(s, f) => s + (fieldPoints[f] ?? DEFAULT_FIELD_MAX[f] ?? 10),
 				0
 			);
+			tabThresholdMax += nonBonusFieldMax(nonGroupingFields);
 			slotResults.push({
 				slotIndex: slotIdx,
 				matchedTrackId: null,
@@ -367,11 +503,19 @@ export function scoreTab(
 					.sort((a, b) => (a ?? 0) - (b ?? 0))
 					.join(', '),
 				score: groupingScore,
-				maxScore: groupingMax
+				maxScore: groupingMax,
+				isBonus: groupingIsBonus
 			});
 		}
 
 		const totalMax = slotMax + (hasGrouping ? groupingMax : 0);
+
+		// Threshold (bonus-excluded): non-bonus regular fields + grouping when it's
+		// present and not flagged bonus. Max always includes groupingMax when
+		// hasGrouping (mirrors totalMax); total adds groupingScore (0 if no fragments).
+		const slotTh = thresholdOf(bestFields);
+		tabThresholdTotal += slotTh.total + (hasGrouping && !groupingIsBonus ? groupingScore : 0);
+		tabThresholdMax += slotTh.max + (hasGrouping && !groupingIsBonus ? groupingMax : 0);
 
 		slotResults.push({
 			slotIndex: slotIdx,
@@ -399,6 +543,8 @@ export function scoreTab(
 			0
 		);
 		const maxTotal = maxPerField + (hasGrouping ? groupingMax : 0);
+		// Mirrors maxTotal: unmatched slots DO include groupingMax (unlike overflow).
+		tabThresholdMax += nonBonusFieldMax(nonGroupingFields) + (hasGrouping && !groupingIsBonus ? groupingMax : 0);
 		slotResults.push({
 			slotIndex: playerSlotDrafts.length + trackIdx,
 			matchedTrackId: tabSourceTracks[trackIdx].trackId,
@@ -418,7 +564,7 @@ export function scoreTab(
 	const tabTotal = slotResults.reduce((s, sr) => s + sr.total, 0);
 	const tabMaxTotal = slotResults.reduce((s, sr) => s + sr.maxTotal, 0);
 
-	return { slotResults, tabTotal, tabMaxTotal, sourceAnswers };
+	return { slotResults, tabTotal, tabMaxTotal, tabThresholdTotal, tabThresholdMax, sourceAnswers };
 }
 
 // ─── Source-track resolver ────────────────────────────────────────────────────
@@ -558,7 +704,8 @@ export function scoreSubmission(
 	variantFields: AnswerField[],
 	fieldModes: Record<string, InputMode>,
 	fieldPoints: Record<string, number>,
-	bonus?: BonusParams
+	bonus?: BonusParams,
+	bonusFields: Set<string> = new Set()
 ): {
 	answersArray: TabAnswer[];
 	result: Omit<ChallengeResult, 'submissionId' | 'isFinal'> & { status: SubmissionStatus };
@@ -569,16 +716,24 @@ export function scoreSubmission(
 	// Flat legacy tracks list for simple result display (1 slot per tab for standard/anthem/label)
 	const legacyTracks: TrackFieldResult[] = [];
 
+	// Bonus-excluded running totals — the powerup-threshold pair.
+	let thresholdTotal = 0;
+	let thresholdMax = 0;
+
 	for (let i = 0; i < tabs.length; i++) {
 		const tab = tabs[i];
-		const { slotResults, tabTotal, tabMaxTotal, sourceAnswers } = scoreTab(
-			variantFields,
-			fieldModes,
-			fieldPoints,
-			tab.sourceTracks,
-			tab.clips,
-			tab.playerDraft
-		);
+		const { slotResults, tabTotal, tabMaxTotal, tabThresholdTotal, tabThresholdMax, sourceAnswers } =
+			scoreTab(
+				variantFields,
+				fieldModes,
+				fieldPoints,
+				tab.sourceTracks,
+				tab.clips,
+				tab.playerDraft,
+				bonusFields
+			);
+		thresholdTotal += tabThresholdTotal;
+		thresholdMax += tabThresholdMax;
 
 		tabResults.push({
 			tabPosition: tab.tabPosition,
@@ -609,13 +764,16 @@ export function scoreSubmission(
 	const rawBase = tabResults.reduce((s, tr) => s + tr.total, 0);
 	const maxTotal = tabResults.reduce((s, tr) => s + tr.maxTotal, 0);
 
-	// Insurance: floor base to 50% of max if active
+	// Insurance: floor base to 50% of the THRESHOLD max (bonus-excluded) if active —
+	// insurance guarantees half the real task, not half of optional bonus points.
 	const base =
-		bonus?.insuranceActive && rawBase < Math.floor(maxTotal * 0.5)
-			? Math.floor(maxTotal * 0.5)
+		bonus?.insuranceActive && rawBase < Math.floor(thresholdMax * 0.5)
+			? Math.floor(thresholdMax * 0.5)
 			: rawBase;
 
-	const status: SubmissionStatus = rawBase === maxTotal ? 'auto_correct' : 'auto_wrong';
+	// auto_correct = threshold-perfect: every non-bonus field correct. Bonus fields
+	// are optional, so a blank bonus never demotes a perfect main answer to wrong.
+	const status: SubmissionStatus = thresholdTotal === thresholdMax ? 'auto_correct' : 'auto_wrong';
 
 	const breakdown = bonus ? computeBreakdown(base, bonus) : undefined;
 
@@ -625,7 +783,16 @@ export function scoreSubmission(
 
 	return {
 		answersArray,
-		result: { total: rawBase, maxTotal, tabs: tabResults, tracks: legacyTracks, status, breakdown }
+		result: {
+			total: rawBase,
+			maxTotal,
+			thresholdTotal,
+			thresholdMax,
+			tabs: tabResults,
+			tracks: legacyTracks,
+			status,
+			breakdown
+		}
 	};
 }
 
@@ -731,15 +898,12 @@ export async function computeSetMaxScore(
 	let setMax = 0;
 	for (const ch of challenges) {
 		const variant = ch.variant;
-		const variantFields = (TYPE_FIELDS[variant] ?? ['artist', 'title', 'year']) as AnswerField[];
-		const pcRaw = (ch.points_config ?? {}) as Record<string, unknown>;
-		const challengeFieldPoints = (pcRaw.field_points ?? {}) as Record<string, number>;
 		const vdPoints = vdPointsByVariant.get(variant) ?? {};
-		const fieldPoints: Record<string, number> = {};
-		for (const f of variantFields) {
-			fieldPoints[f] = challengeFieldPoints[f] ?? vdPoints[f] ?? DEFAULT_FIELD_MAX[f] ?? 10;
-		}
-		const fieldModes: Record<string, InputMode> = {}; // unused for max
+		// Route field resolution through the single source of truth so bonus fields
+		// are excluded from the cumulative-threshold denominator.
+		const resolved = resolveChallengeFields(variant, ch.points_config, vdPoints);
+		const { fields: variantFields, fieldModes, fieldPoints, bonusFields } =
+			fieldMapsFromResolved(resolved);
 
 		for (const tab of tabsByChallenge.get(ch.id) ?? []) {
 			const resolvedSrcs = getSourceTracksForTab(
@@ -751,15 +915,16 @@ export async function computeSetMaxScore(
 				clips,
 				trackMap
 			);
-			const { tabMaxTotal } = scoreTab(
+			const { tabThresholdMax } = scoreTab(
 				variantFields,
 				fieldModes,
 				fieldPoints,
 				resolvedSrcs,
 				tabClipData.filter((c) => c.tabId === tab.id),
-				[] // empty drafts → tabMaxTotal is the pure max
+				[], // empty drafts → tabThresholdMax is the pure bonus-excluded max
+				bonusFields
 			);
-			setMax += tabMaxTotal;
+			setMax += tabThresholdMax;
 		}
 	}
 

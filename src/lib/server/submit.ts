@@ -1,10 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/types/database';
-import type { AnswerField, InputMode, ChallengeResult, SubmissionStatus } from '$lib/types/index.js';
+import type { ChallengeResult, SubmissionStatus } from '$lib/types/index.js';
 import {
-	TYPE_FIELDS,
-	DEFAULT_INPUT_MODES,
-	DEFAULT_FIELD_MAX,
+	resolveChallengeFields,
+	fieldMapsFromResolved,
 	scoreSubmission,
 	getSourceTracksForTab,
 	type TrackData,
@@ -148,17 +147,7 @@ export async function scoreAndPersistSubmission(
 		trackId: clips.find((cl) => cl.id === c.clip_id)?.track_id
 	}));
 
-	const variantFields = (TYPE_FIELDS[variant] ?? ['artist', 'title', 'year']) as AnswerField[];
-
 	const pcRaw = (challenge.points_config ?? {}) as Record<string, unknown>;
-	const savedModes = (pcRaw.field_modes ?? {}) as Record<string, string>;
-	const fieldModes: Record<string, InputMode> = {};
-	for (const f of variantFields) {
-		fieldModes[f] =
-			(savedModes[f] as InputMode) ??
-			DEFAULT_INPUT_MODES[variant]?.[f as AnswerField] ??
-			'open_text';
-	}
 
 	const { data: vdRow } = await admin
 		.from('variant_defaults')
@@ -170,15 +159,10 @@ export async function scoreAndPersistSubmission(
 	const streakThresholds = ((vdRow?.streak_config as Record<string, unknown> | null)?.thresholds ??
 		[]) as Array<{ streak: number; bonus: number }>;
 
-	const challengeFieldPoints = (pcRaw.field_points ?? {}) as Record<string, number>;
-	const fieldPoints: Record<string, number> = {};
-	for (const f of variantFields) {
-		fieldPoints[f] =
-			challengeFieldPoints[f] ??
-			variantDefaultPoints[f] ??
-			DEFAULT_FIELD_MAX[f as AnswerField] ??
-			10;
-	}
+	// Single source of truth for fields + modes + points + bonus flags.
+	const resolvedFields = resolveChallengeFields(variant, pcRaw, variantDefaultPoints);
+	const { fields: variantFields, fieldModes, fieldPoints, bonusFields } =
+		fieldMapsFromResolved(resolvedFields);
 
 	// ── Bonus params ──────────────────────────────────────────────────────
 	const [teamRes, allTeamsRes] = await Promise.all([
@@ -241,7 +225,8 @@ export async function scoreAndPersistSubmission(
 		variantFields,
 		fieldModes,
 		fieldPoints,
-		bonusParams
+		bonusParams,
+		bonusFields
 	);
 
 	const finalScore = scoredResult.breakdown?.final ?? scoredResult.total;
@@ -296,8 +281,11 @@ export async function scoreAndPersistSubmission(
 	// powerups from one submission (x crossed bands = up to x awards).
 	let earnedPowerups: EarnedPowerup[] = [];
 	if (playerSetId) {
-		const maxTotal = scoredResult.maxTotal ?? 0;
-		const scorePercent = maxTotal > 0 ? (scoredResult.total / maxTotal) * 100 : 0;
+		// Threshold %: bonus-excluded pair (falls back to total/maxTotal when the
+		// challenge has no bonus fields, i.e. every existing challenge).
+		const thresholdMax = scoredResult.thresholdMax ?? scoredResult.maxTotal ?? 0;
+		const thresholdTotal = scoredResult.thresholdTotal ?? scoredResult.total;
+		const scorePercent = thresholdMax > 0 ? (thresholdTotal / thresholdMax) * 100 : 0;
 		earnedPowerups = await awardPowerups(
 			admin,
 			teamId,

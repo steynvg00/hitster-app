@@ -11,15 +11,13 @@ import {
 import { scoreAndPersistSubmission } from '$lib/server/submit';
 import type {
 	AnswerField,
-	InputMode,
 	ChallengeResult,
 	TabAnswer,
 	EffectsConfig
 } from '$lib/types/index.js';
 import {
-	TYPE_FIELDS,
-	VARIANT_FIELDS,
-	DEFAULT_INPUT_MODES,
+	resolveChallengeFields,
+	fieldMapsFromResolved,
 	FIELD_POOL_TABLE,
 	DEFAULT_FIELD_MAX,
 	buildFieldResults,
@@ -154,11 +152,7 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 
 	// ── Derive field modes & points ───────────────────────────────────────────
 	const variant = challenge.variant;
-	const variantFields: AnswerField[] = (TYPE_FIELDS[variant] ??
-		VARIANT_FIELDS[variant] ?? ['artist', 'title', 'year']) as AnswerField[];
-
 	const pcRaw = (challenge.points_config ?? {}) as Record<string, unknown>;
-	const savedModes = (pcRaw.field_modes ?? {}) as Record<string, string>;
 
 	let variantDefaultPoints: Record<string, number> = {};
 	let tutorialText: string | null = null;
@@ -173,23 +167,10 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		tutorialText = (vd as { tutorial_text?: string | null }).tutorial_text ?? null;
 	}
 
-	const challengeFieldPoints = (pcRaw.field_points ?? {}) as Record<string, number>;
-	const fieldPoints: Record<string, number> = {};
-	for (const f of variantFields) {
-		fieldPoints[f] =
-			challengeFieldPoints[f] ??
-			variantDefaultPoints[f] ??
-			DEFAULT_FIELD_MAX[f as AnswerField] ??
-			10;
-	}
-
-	const fieldModes: Record<string, InputMode> = {};
-	for (const f of variantFields) {
-		fieldModes[f] =
-			(savedModes[f] as InputMode) ??
-			DEFAULT_INPUT_MODES[variant]?.[f as AnswerField] ??
-			'open_text';
-	}
+	// Single source of truth for fields + modes + points + bonus flags.
+	const resolvedFields = resolveChallengeFields(variant, pcRaw, variantDefaultPoints);
+	const { fields: variantFields, fieldModes, fieldPoints, bonusFields } =
+		fieldMapsFromResolved(resolvedFields);
 
 	// ── Build per-tab view data (audio URLs, source tracks) ──────────────────
 	const allTabClipDataLoad: TabClipData[] = tabClips.map((c) => ({
@@ -327,7 +308,8 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 							sa.field_values as Record<string, string>,
 							track,
 							fieldModes,
-							fieldPoints
+							fieldPoints,
+							bonusFields
 						)
 					: [];
 				const total = sa.total ?? fields.reduce((s, fr) => s + fr.score, 0);

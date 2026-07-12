@@ -235,6 +235,9 @@ export interface FieldResult {
 	score: number;
 	maxScore: number;
 	fuzzyScore?: number;
+	// Bonus fields add to the team's score but are excluded from powerup-threshold
+	// math. Optional so pre-configurable-fields results and rebuilds are unaffected.
+	isBonus?: boolean;
 }
 
 // Per-slot scoring result (one slot = one source track assignment)
@@ -268,6 +271,10 @@ export interface TrackFieldResult {
 export interface ChallengeResult {
 	total: number;
 	maxTotal: number;
+	// Bonus-excluded pair — the denominator/numerator for all powerup-threshold
+	// math. Equal to total/maxTotal when the challenge has no bonus fields.
+	thresholdTotal?: number;
+	thresholdMax?: number;
 	tabs: TabFieldResult[]; // per-tab breakdown (new)
 	tracks: TrackFieldResult[]; // legacy flat list for simple result display
 	status: SubmissionStatus;
