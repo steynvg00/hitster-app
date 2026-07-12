@@ -1,7 +1,5 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
-	import type { ChallengeType } from '$lib/types/index.js';
-	import { TYPE_FIELDS } from '$lib/variants';
 	import SearchablePicker from '$lib/components/admin/SearchablePicker.svelte';
 
 	type Track = { id: string; artist: string; title: string; year: number };
@@ -21,39 +19,20 @@
 		fragment_number: number | null;
 		sort_order: number;
 	};
-	type AnswerOption = { id: string; field: string; value: string };
 
 	let {
-		type,
 		tabs,
 		sourceTracksByTab,
 		clipsByTab,
 		allTracks,
-		clips,
-		answerOptions,
-		pointsConfig,
-		fieldModes: savedFieldModes
+		clips
 	}: {
-		type: ChallengeType;
 		tabs: Tab[];
 		sourceTracksByTab: Src[];
 		clipsByTab: TabClip[];
 		allTracks: Track[];
 		clips: Clip[];
-		answerOptions: AnswerOption[];
-		pointsConfig: Record<string, number>;
-		fieldModes: Record<string, string>;
 	} = $props();
-
-	const INPUT_MODES = [
-		'combobox',
-		'multiple_choice',
-		'open_text',
-		'slider',
-		'typeable_number'
-	] as const;
-
-	const fields = $derived(TYPE_FIELDS[type] ?? ['artist', 'title', 'year']);
 
 	function srcsForTab(tabId: string): Src[] {
 		return sourceTracksByTab
@@ -67,14 +46,6 @@
 
 	function clipsForTrack(trackId: string): Clip[] {
 		return clips.filter((c) => c.track_id === trackId);
-	}
-
-	function optionsFor(field: string): string[] {
-		return answerOptions.filter((o) => o.field === field).map((o) => o.value);
-	}
-
-	function currentMode(field: string): string {
-		return savedFieldModes[field] ?? 'open_text';
 	}
 </script>
 
@@ -178,71 +149,4 @@
 			{/each}
 		</div>
 	{/if}
-</section>
-
-<!-- ── Field config ── -->
-<section>
-	<h2 class="mb-3 text-sm font-bold tracking-widest text-amber-400 uppercase">Field Config</h2>
-	<div class="space-y-3">
-		{#each fields as field (field)}
-			<div
-				class="flex flex-wrap items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900 p-3"
-			>
-				<span class="w-28 text-sm font-semibold text-zinc-300 capitalize">{field}</span>
-
-				<!-- Max points -->
-				<label class="flex items-center gap-1.5 text-xs text-zinc-400">
-					Max pts
-					<form method="POST" action="?/saveFieldPoints" use:enhance class="inline">
-						<input
-							type="number"
-							name="field_points[{field}]"
-							value={pointsConfig[field] ?? 10}
-							min="1"
-							max="50"
-							class="w-16 rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-white"
-							onblur={(e) => (e.target as HTMLInputElement).form?.requestSubmit()}
-						/>
-					</form>
-				</label>
-
-				<!-- Input mode -->
-				<label class="flex items-center gap-1.5 text-xs text-zinc-400">
-					Mode
-					<form method="POST" action="?/saveInputMode" use:enhance class="inline">
-						<input type="hidden" name="field" value={field} />
-						<select
-							name="mode"
-							class="rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-white"
-							onchange={(e) => (e.target as HTMLSelectElement).form?.requestSubmit()}
-						>
-							{#each INPUT_MODES as m (m)}
-								<option value={m} selected={currentMode(field) === m}>{m}</option>
-							{/each}
-						</select>
-					</form>
-				</label>
-
-				<!-- Manage multiple-choice options -->
-				{#if currentMode(field) === 'multiple_choice'}
-					<div class="w-full">
-						<form method="POST" action="?/saveOptions" use:enhance class="flex flex-col gap-1">
-							<input type="hidden" name="field" value={field} />
-							<textarea
-								name="options"
-								rows="3"
-								placeholder="One option per line"
-								class="input-field font-mono text-xs">{optionsFor(field).join('\n')}</textarea
-							>
-							<button
-								type="submit"
-								class="self-start rounded bg-zinc-700 px-3 py-1 text-xs text-white hover:bg-zinc-600"
-								>Save options</button
-							>
-						</form>
-					</div>
-				{/if}
-			</div>
-		{/each}
-	</div>
 </section>

@@ -2,6 +2,7 @@ import { error, fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
 import { CHALLENGE_TYPES } from '$lib/variants';
+import { resolveChallengeFields, FIELD_POOL_TABLE } from '$lib/server/scoring.js';
 
 export const load: PageServerLoad = async ({ params, locals }) => {
 	const db = createAdminClient();
@@ -84,8 +85,29 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 				).data ?? [])
 			: [];
 
+	// Single source of truth for which fields this challenge has, seeding the
+	// fields editor from either the saved points_config.fields[] or — when none
+	// exists yet — the variant's default fields (bit-identical to today's
+	// TYPE_FIELDS[variant] behavior). Route through the SAME resolver the
+	// scoring pipeline uses so the editor never drifts from what actually scores.
+	const { data: vdRow } = await db
+		.from('variant_defaults')
+		.select('points_config')
+		.eq('variant', challenge.variant)
+		.maybeSingle();
+	const variantDefaultPoints = ((vdRow?.points_config as Record<string, unknown> | null)
+		?.field_points ?? {}) as Record<string, number>;
+	const resolvedFields = resolveChallengeFields(
+		challenge.variant,
+		challenge.points_config,
+		variantDefaultPoints
+	);
+	const poolBackedFields = Object.keys(FIELD_POOL_TABLE);
+
 	return {
 		challenge,
+		resolvedFields,
+		poolBackedFields,
 		tabs: tabs ?? [],
 		sourceTracksByTab: sourceTracksResult.data ?? [],
 		clipsByTab: tabClipsResult.data ?? [],
@@ -122,38 +144,16 @@ export const actions: Actions = {
 		const nfc_lock_override =
 			nfcOverrideRaw === 'true' ? true : nfcOverrideRaw === 'false' ? false : null;
 
-		// Collect field_points from form (field_points[artist]=10 etc.)
-		const fieldPointEntries: Record<string, number> = {};
-		for (const [key, val] of data.entries()) {
-			if (key.startsWith('field_points[') && key.endsWith(']')) {
-				const field = key.slice(13, -1);
-				const n = parseInt(val as string, 10);
-				if (!isNaN(n)) fieldPointEntries[field] = n;
-			}
-		}
-
 		if (!title) return fail(400, { error: 'Title is required' });
 		if (!variant || !(CHALLENGE_TYPES as readonly string[]).includes(variant)) {
 			return fail(400, { error: 'Invalid type' });
 		}
 
-		// Preserve existing field_modes when saving meta
-		const { data: existing } = await db
-			.from('challenges')
-			.select('points_config')
-			.eq('id', params.id)
-			.single();
-		const existingPc = (existing?.points_config ?? {}) as Record<string, unknown>;
-		const existingModes = (existingPc.field_modes ?? {}) as Record<string, string>;
-
-		// Read-modify-write: preserve every sibling key (e.g. a configurable
-		// fields[] added in stuk 2) rather than rebuilding points_config wholesale.
-		const points_config = {
-			...existingPc,
-			field_modes: existingModes,
-			field_points: fieldPointEntries
-		};
-
+		// points_config is owned entirely by saveFields (fields[]) — this form has no
+		// field-config inputs, so it must not touch that column at all. Omitting it
+		// from the update leaves it untouched (previously this rebuilt points_config
+		// from an always-empty field_points[] scan of THIS form's own data — a latent
+		// bug that wiped field_points to {} on every "Save details" click).
 		const { error: e } = await db
 			.from('challenges')
 			.update({
@@ -161,7 +161,6 @@ export const actions: Actions = {
 				stage_label,
 				timer_seconds,
 				variant: variant as never,
-				points_config: points_config as never,
 				difficulty_rating,
 				speed_threshold_seconds,
 				hint_text,
@@ -429,62 +428,70 @@ export const actions: Actions = {
 		return { success: true, action: 'saveOptions' };
 	},
 
-	saveInputMode: async ({ request, params }) => {
+	// Configurable fields (stuk 2): merge-save the whole points_config.fields[]
+	// array as one unit — a JSONB array can't be safely edited key-by-key the way
+	// field_modes/field_points were, so the client holds the full array in local
+	// state (add/remove/reorder/edit) and debounces a save of the entire thing,
+	// same auto-persist pattern as saveTabEffects.
+	saveFields: async ({ request, params }) => {
 		const db = createAdminClient();
 		const data = await request.formData();
-		const field = data.get('field') as string;
-		const mode = data.get('mode') as string;
+		const raw = data.get('fields_json') as string | null;
+		if (raw == null) return fail(400, { error: 'Missing fields_json' });
 
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(raw);
+		} catch {
+			return fail(400, { error: 'Invalid fields JSON' });
+		}
+		if (!Array.isArray(parsed)) return fail(400, { error: 'fields must be an array' });
+
+		// Server-side validation mirrors resolveChallengeFields's constraints —
+		// never trust the wire, even though the client UI already enforces these.
+		const KNOWN_FIELDS = ['artist', 'title', 'year', 'label', 'festival', 'vocal_source', 'grouping'];
 		const VALID_MODES = ['multiple_choice', 'combobox', 'open_text', 'typeable_number', 'slider'];
-		if (!field || !VALID_MODES.includes(mode)) return fail(400, { error: 'Invalid field or mode' });
-
-		const { data: challenge } = await db
-			.from('challenges')
-			.select('points_config')
-			.eq('id', params.id)
-			.single();
-		if (!challenge) return fail(404, { error: 'Challenge not found' });
-
-		const pc = (challenge.points_config ?? {}) as Record<string, unknown>;
-		const fieldModes = (pc.field_modes ?? {}) as Record<string, string>;
-		fieldModes[field] = mode;
-
-		const { error: e } = await db
-			.from('challenges')
-			.update({ points_config: { ...pc, field_modes: fieldModes } as never })
-			.eq('id', params.id);
-		if (e) return fail(500, { error: e.message });
-		return { success: true, action: 'saveInputMode' };
-	},
-
-	saveFieldPoints: async ({ request, params }) => {
-		const db = createAdminClient();
-		const data = await request.formData();
-
-		const submitted: Record<string, number> = {};
-		for (const [key, val] of data.entries()) {
-			if (key.startsWith('field_points[') && key.endsWith(']')) {
-				const field = key.slice(13, -1);
-				const n = parseInt(val as string, 10);
-				if (!isNaN(n) && n > 0) submitted[field] = n;
-			}
+		const poolBackedFields = new Set(Object.keys(FIELD_POOL_TABLE));
+		const seen = new Set<string>();
+		const cleaned: Array<{
+			name: string;
+			input_mode: string;
+			max_points: number;
+			is_bonus: boolean;
+		}> = [];
+		for (const row of parsed) {
+			if (!row || typeof row !== 'object') continue;
+			const name = (row as Record<string, unknown>).name;
+			if (typeof name !== 'string' || !KNOWN_FIELDS.includes(name) || seen.has(name)) continue;
+			seen.add(name);
+			const modeRaw = (row as Record<string, unknown>).input_mode;
+			let input_mode = typeof modeRaw === 'string' && VALID_MODES.includes(modeRaw) ? modeRaw : 'open_text';
+			// combobox is backed by a shared answer pool (artist/label/festival) — any
+			// other field falls back to open_text, same as the client-side guard.
+			if (input_mode === 'combobox' && !poolBackedFields.has(name)) input_mode = 'open_text';
+			const pointsRaw = (row as Record<string, unknown>).max_points;
+			const max_points = typeof pointsRaw === 'number' && Number.isFinite(pointsRaw) ? pointsRaw : 10;
+			const is_bonus = (row as Record<string, unknown>).is_bonus === true;
+			cleaned.push({ name, input_mode, max_points, is_bonus });
 		}
 
-		const { data: challenge } = await db
+		const { data: existing } = await db
 			.from('challenges')
 			.select('points_config')
 			.eq('id', params.id)
 			.single();
-		if (!challenge) return fail(404, { error: 'Challenge not found' });
+		const existingPc = (existing?.points_config ?? {}) as Record<string, unknown>;
 
-		const pc = (challenge.points_config ?? {}) as Record<string, unknown>;
-		const existing = (pc.field_points ?? {}) as Record<string, number>;
+		// Read-modify-write: spread fields[] over the existing points_config,
+		// never wholesale-replace (same trap as the powerup-config merge fix).
+		const points_config = { ...existingPc, fields: cleaned };
+
 		const { error: e } = await db
 			.from('challenges')
-			.update({ points_config: { ...pc, field_points: { ...existing, ...submitted } } as never })
+			.update({ points_config: points_config as never })
 			.eq('id', params.id);
 		if (e) return fail(500, { error: e.message });
-		return { success: true, action: 'saveFieldPoints' };
+		return { success: true, action: 'saveFields' };
 	},
 
 	saveTabEffects: async ({ request }) => {
