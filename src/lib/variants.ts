@@ -42,15 +42,6 @@ const TYPE_DESCRIPTION: Record<ChallengeType, string> = {
 	effects: 'Audio FX chain per tab — artist · title · year'
 };
 
-export const TYPE_FIELDS: Record<ChallengeType, string[]> = {
-	standard: ['artist', 'title', 'year'],
-	anthem: ['festival', 'artist', 'title', 'year'],
-	label: ['label', 'artist', 'title', 'year'],
-	mashup: ['artist', 'title', 'year'],
-	fragments: ['artist', 'title', 'year', 'grouping'],
-	effects: ['artist', 'title', 'year']
-};
-
 export function getTypeIcon(type: string): typeof LucideIcons.Music {
 	const name = TYPE_ICON[type as ChallengeType] ?? 'HelpCircle';
 	return (LucideIcons as Record<string, unknown>)[name] as typeof LucideIcons.Music;

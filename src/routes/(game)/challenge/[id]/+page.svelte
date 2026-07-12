@@ -469,6 +469,11 @@
 		return FIELD_LABELS[field as string] ?? field;
 	}
 
+	const bonusFieldSet = $derived(new Set(data.bonusFields));
+	function isBonusField(field: AnswerField) {
+		return bonusFieldSet.has(String(field));
+	}
+
 	let reviewingKey = $state<string | null>(null);
 
 	const TypeIcon = $derived(getTypeIcon(data.challenge.variant));
@@ -682,8 +687,16 @@
 						<div class="py-3">
 							<div class="flex items-center justify-between">
 								<div>
-									<div class="mb-0.5 text-xs font-semibold tracking-wide text-zinc-500 uppercase">
+									<div
+										class="mb-0.5 flex items-center gap-1.5 text-xs font-semibold tracking-wide text-zinc-500 uppercase"
+									>
 										{fieldLabel(fr.field)}
+										{#if fr.isBonus}
+											<span
+												class="rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-amber-300 normal-case"
+												>Bonus</span
+											>
+										{/if}
 									</div>
 									<div class="font-semibold">{fr.submitted || '—'}</div>
 									{#if !isCorrect}
@@ -705,7 +718,13 @@
 									>
 										{isCorrect ? '✓' : isPartial ? '~' : '✗'}
 									</div>
-									<div class="text-sm text-zinc-400">+{fr.score} / {fr.maxScore}</div>
+									<div class="text-sm text-zinc-400">
+										{#if fr.isBonus}
+											+{fr.score} bonus
+										{:else}
+											+{fr.score} / {fr.maxScore}
+										{/if}
+									</div>
 								</div>
 							</div>
 
@@ -779,8 +798,16 @@
 					<div class="py-3">
 						<div class="flex items-center justify-between">
 							<div>
-								<div class="mb-0.5 text-xs font-semibold tracking-wide text-zinc-500 uppercase">
+								<div
+									class="mb-0.5 flex items-center gap-1.5 text-xs font-semibold tracking-wide text-zinc-500 uppercase"
+								>
 									{fieldLabel(fr.field)}
+									{#if fr.isBonus}
+										<span
+											class="rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-amber-300 normal-case"
+											>Bonus</span
+										>
+									{/if}
 								</div>
 								<div class="font-semibold">{fr.submitted || '—'}</div>
 								{#if !isCorrect}<div class="text-xs text-zinc-500">Correct: {fr.correct}</div>{/if}
@@ -795,7 +822,13 @@
 								>
 									{isCorrect ? '✓' : isPartial ? '~' : '✗'}
 								</div>
-								<div class="text-sm text-zinc-400">+{fr.score} / {fr.maxScore}</div>
+								<div class="text-sm text-zinc-400">
+									{#if fr.isBonus}
+										+{fr.score} bonus
+									{:else}
+										+{fr.score} / {fr.maxScore}
+									{/if}
+								</div>
 							</div>
 						</div>
 					</div>
@@ -1129,9 +1162,15 @@
 						{#each variantFields.filter((f) => f !== 'grouping') as field (field)}
 							{@const mode = data.fieldModes[field] as InputMode}
 							<div class="mb-4">
-								<label class="mb-1.5 block text-sm font-semibold text-zinc-400"
-									>{fieldLabel(field)}</label
-								>
+								<label class="mb-1.5 flex items-center gap-1.5 text-sm font-semibold text-zinc-400">
+									{fieldLabel(field)}
+									{#if isBonusField(field)}
+										<span
+											class="rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-amber-300 uppercase"
+											>Bonus</span
+										>
+									{/if}
+								</label>
 								{#if freeAnswerReveals[String(field)]}
 									<div
 										class="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-amber-300"
@@ -1240,9 +1279,15 @@
 					{#each variantFields as field (field)}
 						{@const mode = data.fieldModes[field] as InputMode}
 						<div>
-							<label class="mb-1.5 block text-sm font-semibold text-zinc-400"
-								>{fieldLabel(field)}</label
-							>
+							<label class="mb-1.5 flex items-center gap-1.5 text-sm font-semibold text-zinc-400">
+								{fieldLabel(field)}
+								{#if isBonusField(field)}
+									<span
+										class="rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-amber-300 uppercase"
+										>Bonus</span
+									>
+								{/if}
+							</label>
 							{#if freeAnswerReveals[String(field)]}
 								<div class="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-amber-300">
 									<span>💡</span>

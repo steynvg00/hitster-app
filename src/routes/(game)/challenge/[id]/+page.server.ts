@@ -463,6 +463,7 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		team,
 		variantFields,
 		fieldModes,
+		bonusFields: [...bonusFields],
 		pools,
 		multipleChoiceOptions,
 		fieldPoints,
