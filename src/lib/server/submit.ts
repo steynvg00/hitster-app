@@ -23,6 +23,7 @@ import {
 	type EarnedPowerup
 } from '$lib/server/powerups';
 import { maybeTransferCrown } from '$lib/server/crown';
+import { maybeResolveBattle } from '$lib/server/battle';
 
 type AdminClient = SupabaseClient<Database>;
 
@@ -149,6 +150,14 @@ export async function scoreAndPersistSubmission(
 
 	const pcRaw = (challenge.points_config ?? {}) as Record<string, unknown>;
 
+	// Battle mode (additive): a battle challenge scores + awards EXACTLY like a
+	// normal one here (nothing below is deferred or skipped). The only battle-
+	// specific work at submit is recording the ranking key (base+bonus, written
+	// into the submission insert below); the rank-based ladder bonus is added
+	// later by resolveBattle. Detecting it here keeps the whole feature to a
+	// couple of guarded lines in this shared pipeline.
+	const isBattle = ((pcRaw.battle ?? {}) as { enabled?: boolean }).enabled === true;
+
 	const { data: vdRow } = await admin
 		.from('variant_defaults')
 		.select('points_config, streak_config')
@@ -238,8 +247,13 @@ export async function scoreAndPersistSubmission(
 			team_id: teamId,
 			answers: answersArray as never,
 			score: finalScore,
-			is_final: true
-		})
+			is_final: true,
+			// Ranking key for battle mode: base+bonus (scoredResult.total), PRE any
+			// multiplier / insurance floor / speed / streak. Only set for a battle
+			// challenge — a normal submission never references the column, so normal
+			// play is decoupled from the 0061 migration.
+			...(isBattle ? { battle_raw_score: scoredResult.total } : {})
+		} as never)
 		.select('id')
 		.single();
 
@@ -294,6 +308,20 @@ export async function scoreAndPersistSubmission(
 			scorePercent,
 			input.forcePowerupTypeId
 		);
+	}
+
+	// Battle resolution hook: this team's attempt was just ended above, so if it
+	// was the last set-team to finish, resolve now (rank + ladder bonus + crown).
+	// The timer→auto-submit→ended_at machinery drives this for the auto path too,
+	// since the backstop also flows through here. Idempotent (CAS in resolveBattle)
+	// and best-effort — a resolution hiccup must never fail the submit itself, and
+	// the host "Resolve now" fallback (stuk 2) can always re-trigger it.
+	if (isBattle && playerSetId) {
+		try {
+			await maybeResolveBattle(admin, playerSetId, challengeId);
+		} catch {
+			/* non-fatal: submit already succeeded; resolution can be re-triggered */
+		}
 	}
 
 	return { ok: true, submissionId: sub.id, scoredResult, earnedPowerups };

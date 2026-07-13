@@ -58,7 +58,10 @@ function loadEnv() {
 			const m = line.match(/^\s*([\w.]+)\s*=\s*(.*)\s*$/);
 			if (!m) continue;
 			let val = m[2].trim();
-			if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+			if (
+				(val.startsWith('"') && val.endsWith('"')) ||
+				(val.startsWith("'") && val.endsWith("'"))
+			) {
 				val = val.slice(1, -1);
 			}
 			if (!(m[1] in process.env)) process.env[m[1]] = val;
@@ -99,6 +102,11 @@ async function softReset(db: SupabaseClient) {
 		await db.from('challenge_hints_used').delete().in('challenge_id', challengeIds);
 	}
 	await db.from('challenge_unlocks').delete().eq('set_id', SET_ID);
+	// Battle Mode resolution state on set_challenges (rows persist across a reset).
+	await db
+		.from('set_challenges')
+		.update({ battle_resolved_at: null, battle_ranking: null })
+		.eq('set_id', SET_ID);
 	await db
 		.from('teams')
 		.update({ score: 0, current_streak: 0, held_powerups: [], last_threshold_crossed: 0 })
@@ -143,11 +151,7 @@ async function joinAndStart(
 		return null;
 	}
 	await db.from('game_sets').update({ play_state: 'playing' }).eq('id', SET_ID);
-	const { data: team } = await db
-		.from('teams')
-		.select('id')
-		.eq('color', bot.team!)
-		.maybeSingle();
+	const { data: team } = await db.from('teams').select('id').eq('color', bot.team!).maybeSingle();
 	return { bot, teamColor: bot.team!, teamId: team!.id as string };
 }
 
@@ -156,7 +160,13 @@ type Check = { name: string; pass: boolean; detail: string };
 const checks: Check[] = [];
 function assert(name: string, got: unknown, want: unknown) {
 	const pass = JSON.stringify(got) === JSON.stringify(want);
-	checks.push({ name, pass, detail: pass ? `${JSON.stringify(got)}` : `got ${JSON.stringify(got)} want ${JSON.stringify(want)}` });
+	checks.push({
+		name,
+		pass,
+		detail: pass
+			? `${JSON.stringify(got)}`
+			: `got ${JSON.stringify(got)} want ${JSON.stringify(want)}`
+	});
 }
 
 // ─── Phase A: interactive regression ──────────────────────────────────────────
@@ -180,7 +190,12 @@ async function phaseA(db: SupabaseClient, browser: Browser) {
 			const e = fx.get(id);
 			await playChallenge(
 				page,
-				{ id, variant: e?.variant ?? 'standard', fields: e?.fields ?? {}, accepted_titles: e?.accepted_titles },
+				{
+					id,
+					variant: e?.variant ?? 'standard',
+					fields: e?.fields ?? {},
+					accepted_titles: e?.accepted_titles
+				},
 				PRESETS.ace,
 				bot.team!
 			);
@@ -196,11 +211,17 @@ async function phaseA(db: SupabaseClient, browser: Browser) {
 			db.from('set_challenges').select('challenge_id, challenge_multiplier').eq('set_id', SET_ID),
 			db.from('variant_defaults').select('variant, points_config')
 		]);
-		const multBy = new Map((scs ?? []).map((s) => [s.challenge_id, Number(s.challenge_multiplier)]));
+		const multBy = new Map(
+			(scs ?? []).map((s) => [s.challenge_id, Number(s.challenge_multiplier)])
+		);
 		const baseByVariant = new Map<string, number>();
 		for (const vd of vds ?? []) {
-			const fp = ((vd.points_config as Record<string, unknown> | null)?.field_points ?? {}) as Record<string, number>;
-			baseByVariant.set(vd.variant, Object.values(fp).reduce((a, b) => a + b, 0));
+			const fp = ((vd.points_config as Record<string, unknown> | null)?.field_points ??
+				{}) as Record<string, number>;
+			baseByVariant.set(
+				vd.variant,
+				Object.values(fp).reduce((a, b) => a + b, 0)
+			);
 		}
 		const chById = new Map((chs ?? []).map((c) => [c.id, c]));
 
@@ -235,7 +256,10 @@ async function phaseA(db: SupabaseClient, browser: Browser) {
 				checks.push({ name: `A ch${short}: submission exists`, pass: false, detail: 'missing' });
 				continue;
 			}
-			const bd = ((sub.answers as Array<Record<string, unknown>>)?.[0]?.breakdown ?? {}) as Record<string, number>;
+			const bd = ((sub.answers as Array<Record<string, unknown>>)?.[0]?.breakdown ?? {}) as Record<
+				string,
+				number
+			>;
 			assert(`A ch${short}: status auto_correct`, sub.status, 'auto_correct');
 			assert(`A ch${short}: breakdown.base`, bd.base, exp.base);
 			assert(`A ch${short}: difficulty_multiplier`, bd.difficulty_multiplier, exp.diff);
@@ -328,7 +352,11 @@ async function backstopRun(
 			.is('ended_at', null)
 			.maybeSingle();
 		if (!attempt) {
-			checks.push({ name: `B ${opts.label}: attempt created`, pass: false, detail: 'no open attempt' });
+			checks.push({
+				name: `B ${opts.label}: attempt created`,
+				pass: false,
+				detail: 'no open attempt'
+			});
 			return;
 		}
 		const past = new Date(Date.now() - 200_000).toISOString(); // 200s ago > 90+20
@@ -386,7 +414,8 @@ async function main() {
 	loadEnv();
 	const url = process.env.PUBLIC_SUPABASE_URL;
 	const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-	if (!url || !key) throw new Error('Missing PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY in .env');
+	if (!url || !key)
+		throw new Error('Missing PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY in .env');
 	const db = createClient(url, key, { auth: { persistSession: false } });
 
 	console.log(`▶ Regression + backstop verification against ${BOT_BASE_URL}`);
