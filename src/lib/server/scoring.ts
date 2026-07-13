@@ -247,18 +247,31 @@ export function scoreField(
 	);
 
 	if (mode === 'open_text') {
-		const targets =
+		// Only compare against targets with real content. A null/empty (or
+		// punctuation-only, e.g. "?!") correct value normalizes to '' — without this
+		// filter strSimilarity('','') returns 1 and EVERY submission (including a
+		// blank one) would score full points on a misconfigured field. Model (a):
+		// such a field is unscorable → 0 for everyone; the max is untouched so the
+		// misconfiguration surfaces on the results screen. Keyed on normalizeAnswer
+		// (the same normalizer scoring uses) so UI and scoring agree on "empty".
+		const rawTargets =
 			field === 'title'
 				? track.accepted_titles?.length
 					? track.accepted_titles
 					: [track.title]
 				: [trackValue];
+		const targets = rawTargets.filter((t) => normalizeAnswer(t) !== '');
+		if (targets.length === 0) return { score: 0, fuzzyScore: 0 };
 		const bestSim = Math.max(...targets.map((t) => strSimilarity(submitted, t)));
 		if (bestSim >= 0.80) return { score: maxPoints, fuzzyScore: bestSim };
 		if (bestSim >= 0.65) return { score: Math.round(maxPoints * 0.5), fuzzyScore: bestSim };
 		return { score: 0, fuzzyScore: bestSim };
 	}
 
+	// Exact-match modes (combobox / multiple_choice / any non-year mode). Same
+	// unscorable-zero guard: a correct value that normalizes to '' can't be matched
+	// (''===''  would otherwise hand out full points for a blank submission).
+	if (normalizeAnswer(trackValue) === '') return { score: 0 };
 	const correct = submitted.trim().toLowerCase() === trackValue.trim().toLowerCase();
 	return { score: correct ? maxPoints : 0 };
 }
@@ -297,6 +310,10 @@ export function scoreGrouping(
 	actualFragmentNumbers: number[],
 	maxPoints: number
 ): number {
+	// Unscorable-zero guard (same class as scoreField's null-value guard): a source
+	// track with no fragment-numbered clips has an empty actual-nums array, and
+	// [].join === [].join would hand a player who submitted no fragments full points.
+	if (actualFragmentNumbers.length === 0) return 0;
 	const sorted = (arr: number[]) => [...arr].sort((a, b) => a - b);
 	const p = sorted(playerFragments).join(',');
 	const a = sorted(actualFragmentNumbers).join(',');
@@ -773,7 +790,12 @@ export function scoreSubmission(
 
 	// auto_correct = threshold-perfect: every non-bonus field correct. Bonus fields
 	// are optional, so a blank bonus never demotes a perfect main answer to wrong.
-	const status: SubmissionStatus = thresholdTotal === thresholdMax ? 'auto_correct' : 'auto_wrong';
+	// thresholdMax > 0 hardening: a challenge with NO non-bonus scorable points
+	// (all-bonus / zero-field Custom, or every non-bonus field unscorable-null)
+	// would satisfy 0 === 0 and hand out a free auto_correct — require real
+	// threshold points to exist. No-op for existing challenges (thresholdMax > 0).
+	const status: SubmissionStatus =
+		thresholdMax > 0 && thresholdTotal === thresholdMax ? 'auto_correct' : 'auto_wrong';
 
 	const breakdown = bonus ? computeBreakdown(base, bonus) : undefined;
 
