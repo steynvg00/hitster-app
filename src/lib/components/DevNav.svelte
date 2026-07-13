@@ -330,7 +330,9 @@
 		{ id: 'hard_gaan', name: 'Hard Gaan', icon: '🔥' },
 		{ id: 'single_event_mult', name: 'Single-Event Mult', icon: '🎲' },
 		{ id: 'free_answer', name: 'Free Answer', icon: '💡' },
-		{ id: 'give_a_shot', name: 'Give a Shot', icon: '🥂' }
+		{ id: 'give_a_shot', name: 'Give a Shot', icon: '🥂' },
+		{ id: 'freeze', name: 'Freeze', icon: '🧊' },
+		{ id: 'time_drain', name: 'Time Drain', icon: '⏳' }
 	];
 
 	const TEAM_COLORS = ['blue', 'yellow', 'green', 'red', 'indigo', 'black'];

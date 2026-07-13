@@ -247,6 +247,35 @@
 	let timerBoostMs = $state(0);
 	let freeAnswerReveals = $state<Record<string, string>>({ ...data.freeAnswerReveal });
 
+	// ── Incoming timer attacks (stuk 2: freeze + time_drain) ───────────────────
+	// Both are payload-driven marker rows on the SAME realtime channel/convention
+	// as time_boost — timerBoostMs += added_seconds*1000 moves the deadline this
+	// page reads from (line ~287); the server-side deadline is moved identically
+	// by /api/auto-submit's summation over the same effect rows. freeze ALSO gets
+	// a blocking visual overlay (no server round-trip — it just times out client-side).
+	let freezeUntil = $state<number | null>(null);
+	let freezeSourceName = $state('');
+	let freezeRemainingMs = $state(0);
+	const isFrozen = $derived(!!freezeUntil && freezeRemainingMs > 0);
+
+	let drainToast = $state<{ sourceName: string } | null>(null);
+	let drainToastTimer: ReturnType<typeof setTimeout> | undefined;
+
+	$effect(() => {
+		if (!freezeUntil) {
+			freezeRemainingMs = 0;
+			return;
+		}
+		const tick = () => {
+			const rem = Math.max(0, freezeUntil! - Date.now());
+			freezeRemainingMs = rem;
+			if (rem === 0) freezeUntil = null;
+		};
+		tick();
+		const iv = setInterval(tick, 250);
+		return () => clearInterval(iv);
+	});
+
 	function onPowerupActivated(revealedValue?: string, revealedField?: string) {
 		if (!revealedField || !revealedValue) return;
 		freeAnswerReveals = { ...freeAnswerReveals, [revealedField]: revealedValue };
@@ -310,6 +339,29 @@
 						const p = row.payload as { added_seconds?: number; challenge_id?: string };
 						if (p.challenge_id === data.challenge.id) {
 							timerBoostMs += (p.added_seconds ?? 30) * 1000;
+						}
+					} else if (row.effect_type === 'freeze') {
+						const p = row.payload as {
+							added_seconds?: number;
+							challenge_id?: string;
+							source_team_name?: string;
+						};
+						if (p.challenge_id === data.challenge.id) {
+							timerBoostMs += (p.added_seconds ?? 30) * 1000;
+							freezeSourceName = p.source_team_name || 'Another team';
+							freezeUntil = Date.now() + 30_000;
+						}
+					} else if (row.effect_type === 'time_drain') {
+						const p = row.payload as {
+							added_seconds?: number;
+							challenge_id?: string;
+							source_team_name?: string;
+						};
+						if (p.challenge_id === data.challenge.id) {
+							timerBoostMs += (p.added_seconds ?? -15) * 1000;
+							drainToast = { sourceName: p.source_team_name || 'Another team' };
+							if (drainToastTimer) clearTimeout(drainToastTimer);
+							drainToastTimer = setTimeout(() => (drainToast = null), 4000);
 						}
 					}
 				}
@@ -379,6 +431,7 @@
 
 		return () => {
 			if (iv) clearInterval(iv);
+			if (drainToastTimer) clearTimeout(drainToastTimer);
 			supabaseBrowser.removeChannel(effectsBoostChannel);
 			supabaseBrowser.removeChannel(attemptChannel);
 			supabaseBrowser.removeChannel(submissionInsertChannel);
@@ -957,6 +1010,32 @@
 {:else}
 	<!-- ── Challenge form ─────────────────────────────────────────────────────── -->
 	<div class="mx-auto min-h-screen max-w-lg p-4">
+		<!-- Freeze overlay (stuk 2): blocking frost layer, clears itself after 30s
+		     client-side — no server round-trip, it's a marker row only. -->
+		{#if isFrozen}
+			<div
+				class="fixed inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-cyan-950/70 backdrop-blur-md"
+			>
+				<span class="text-6xl">🧊</span>
+				<p class="text-lg font-black text-white">Frozen by {freezeSourceName}!</p>
+				<p class="font-mono text-3xl font-black text-cyan-200 tabular-nums">
+					{Math.ceil(freezeRemainingMs / 1000)}s
+				</p>
+			</div>
+		{/if}
+
+		<!-- Time-drain toast (stuk 2) -->
+		{#if drainToast}
+			<div class="fixed inset-x-0 top-4 z-50 flex justify-center px-4">
+				<div
+					class="flex items-center gap-2 rounded-xl border border-red-500/50 bg-red-950/90 px-4 py-2.5 text-sm font-semibold text-red-200 shadow-2xl backdrop-blur-sm"
+				>
+					<span class="text-lg">⏳</span>
+					<span>−15s — {drainToast.sourceName} drained your time!</span>
+				</div>
+			</div>
+		{/if}
+
 		<div class="flex items-center justify-between pt-4 pb-3">
 			<span
 				class="rounded-full px-3 py-1 text-xs font-bold tracking-widest text-white uppercase"
@@ -1157,7 +1236,7 @@
 					submitting = false;
 				};
 			}}
-			class="space-y-5"
+			class="space-y-5 {isFrozen ? 'pointer-events-none opacity-40' : ''}"
 		>
 			<input type="hidden" name="team_id" value={data.team.id} />
 

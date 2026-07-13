@@ -16,3 +16,14 @@ export const TARGETED_POWERUP_IDS = [
 export function isTargetedPowerup(id: string): boolean {
 	return (TARGETED_POWERUP_IDS as readonly string[]).includes(id);
 }
+
+// Timer attacks — the subset of targeted powerups that need the target to be IN
+// a live timed challenge right now (design B: no apply-on-next-challenge). The
+// target picker greys teams without an active timed attempt for these; the
+// server (resolveTargetTimedAttempt) enforces the same rule as a safety net.
+// give_a_shot / tap_to_break stay valid against any team, so they're excluded.
+export const TIMER_POWERUP_IDS = ['freeze', 'time_drain'] as const;
+
+export function isTimerPowerup(id: string): boolean {
+	return (TIMER_POWERUP_IDS as readonly string[]).includes(id);
+}

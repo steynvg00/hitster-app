@@ -512,6 +512,140 @@ async function tryConsumeShield(
 }
 
 /**
+ * Shared shield-block handling for an offensive activation (give_a_shot,
+ * freeze, time_drain — same shape for all of them): inserts the pre-consumed
+ * shield_block marker (the target's realtime notice), logs it, and marks the
+ * CASTER's powerup consumed — attacking a shielded team still spends the
+ * powerup. Returns the ActivateResult to hand straight back from the case.
+ */
+async function recordShieldBlock(
+	supabase: SupabaseClient<Database>,
+	params: {
+		targetTeamId: string;
+		setId: string;
+		teamPowerupId: string;
+		sourceTeamId: string;
+		sourceName: string;
+		blockedType: string;
+	}
+): Promise<ActivateResult> {
+	const { targetTeamId, setId, teamPowerupId, sourceTeamId, sourceName, blockedType } = params;
+	await supabase.from('team_effects').insert({
+		team_id: targetTeamId,
+		set_id: setId,
+		effect_type: 'shield_block',
+		payload: {
+			blocked_type: blockedType,
+			source_team_id: sourceTeamId,
+			source_team_name: sourceName
+		},
+		consumed_at: new Date().toISOString(),
+		source_team_powerup_id: teamPowerupId
+	} as never);
+	await supabase.from('activity_log').insert({
+		team_id: targetTeamId,
+		event_type: 'shield_block',
+		payload: {
+			blocked_type: blockedType,
+			source_team_id: sourceTeamId,
+			target_team_id: targetTeamId
+		}
+	} as never);
+	await supabase
+		.from('team_powerups')
+		.update({ status: 'consumed' } as never)
+		.eq('id', teamPowerupId);
+	return { success: true, blocked: true };
+}
+
+/**
+ * The target's most recently STARTED open timed attempt — the attempt a timer
+ * attack (freeze/time_drain) actually hits. Unlike give_a_shot (activatable
+ * anytime), timer effects need a live attempt to adjust — null means the
+ * caller should reject the activation (design B: no apply-on-next-challenge).
+ */
+async function resolveTargetTimedAttempt(
+	supabase: SupabaseClient<Database>,
+	targetTeamId: string
+): Promise<{ attemptId: string; challengeId: string } | null> {
+	const { data: attempts } = await supabase
+		.from('challenge_attempts')
+		.select('id, challenge_id, started_at')
+		.eq('team_id', targetTeamId)
+		.is('ended_at', null)
+		.order('started_at', { ascending: false });
+	if (!attempts?.length) return null;
+
+	const challengeIds = [...new Set(attempts.map((a) => a.challenge_id))];
+	const { data: challenges } = await supabase
+		.from('challenges')
+		.select('id, timer_seconds')
+		.in('id', challengeIds);
+	const timedIds = new Set(
+		(challenges ?? []).filter((c) => (c.timer_seconds ?? 0) > 0).map((c) => c.id)
+	);
+
+	const hit = attempts.find((a) => timedIds.has(a.challenge_id));
+	return hit ? { attemptId: hit.id, challengeId: hit.challenge_id } : null;
+}
+
+/**
+ * Batched version of the resolveTargetTimedAttempt predicate for the target
+ * picker: which of `teamIds` currently have an open attempt on a timed
+ * challenge. Two queries total for the whole set (not one per team) — the picker
+ * greys the rest for freeze/time_drain. Same rule the per-team resolver enforces
+ * server-side, so UI and activation agree.
+ */
+export async function getTeamsWithActiveTimedAttempt(
+	supabase: SupabaseClient<Database>,
+	teamIds: string[]
+): Promise<Set<string>> {
+	if (!teamIds.length) return new Set();
+	const { data: attempts } = await supabase
+		.from('challenge_attempts')
+		.select('team_id, challenge_id')
+		.in('team_id', teamIds)
+		.is('ended_at', null);
+	if (!attempts?.length) return new Set();
+
+	const challengeIds = [...new Set(attempts.map((a) => a.challenge_id))];
+	const { data: challenges } = await supabase
+		.from('challenges')
+		.select('id, timer_seconds')
+		.in('id', challengeIds);
+	const timedIds = new Set(
+		(challenges ?? []).filter((c) => (c.timer_seconds ?? 0) > 0).map((c) => c.id)
+	);
+
+	const result = new Set<string>();
+	for (const a of attempts) if (timedIds.has(a.challenge_id)) result.add(a.team_id);
+	return result;
+}
+
+/**
+ * Guard against stacking freeze (a STATE, unlike time_drain's arithmetic stack):
+ * true if the target already has a freeze marker on this challenge whose 30s
+ * window hasn't elapsed. Freeze rows are pre-consumed (same as time_boost), so
+ * "still active" is derived from activated_at rather than consumed_at.
+ */
+async function hasActiveFreeze(
+	supabase: SupabaseClient<Database>,
+	targetTeamId: string,
+	challengeId: string
+): Promise<boolean> {
+	const cutoff = new Date(Date.now() - 30_000).toISOString();
+	const { data } = await supabase
+		.from('team_effects')
+		.select('payload')
+		.eq('team_id', targetTeamId)
+		.eq('effect_type', 'freeze')
+		.gte('activated_at', cutoff);
+	return (data ?? []).some(
+		(r) => ((r.payload ?? {}) as { challenge_id?: string }).challenge_id === challengeId
+	);
+}
+
+/**
  * Activate a held powerup. Creates a team_effects row and transitions status.
  * Commit 1 handles: bonus_points, single_event_mult, hard_gaan, shield.
  * Commit 2 adds: free_answer, time_boost, insurance.
@@ -844,35 +978,14 @@ export async function activatePowerup(
 			// Shield check FIRST — a shielded target absorbs the shot.
 			const { blocked } = await tryConsumeShield(supabase, targetTeamId, tpu.set_id);
 			if (blocked) {
-				// Pre-consumed marker row → the target's realtime INSERT notification
-				// ("your shield blocked …"). consumed so it never lingers in active effects.
-				await supabase.from('team_effects').insert({
-					team_id: targetTeamId,
-					set_id: tpu.set_id,
-					effect_type: 'shield_block',
-					payload: {
-						blocked_type: 'give_a_shot',
-						source_team_id: tpu.team_id,
-						source_team_name: sourceName
-					},
-					consumed_at: new Date().toISOString(),
-					source_team_powerup_id: teamPowerupId
-				} as never);
-				await supabase.from('activity_log').insert({
-					team_id: targetTeamId,
-					event_type: 'shield_block',
-					payload: {
-						blocked_type: 'give_a_shot',
-						source_team_id: tpu.team_id,
-						target_team_id: targetTeamId
-					}
-				} as never);
-				// The caster's powerup is STILL spent — attacking a shielded team costs you the powerup.
-				await supabase
-					.from('team_powerups')
-					.update({ status: 'consumed' } as never)
-					.eq('id', teamPowerupId);
-				return { success: true, blocked: true };
+				return recordShieldBlock(supabase, {
+					targetTeamId,
+					setId: tpu.set_id,
+					teamPowerupId,
+					sourceTeamId: tpu.team_id,
+					sourceName,
+					blockedType: 'give_a_shot'
+				});
 			}
 
 			// Not blocked: a NON-consumed effect on the target. Non-consumed means an
@@ -887,6 +1000,87 @@ export async function activatePowerup(
 			await supabase.from('activity_log').insert({
 				team_id: tpu.team_id,
 				event_type: 'give_a_shot',
+				payload: { source_team_id: tpu.team_id, target_team_id: targetTeamId }
+			} as never);
+			await supabase
+				.from('team_powerups')
+				.update({ status: 'consumed' } as never)
+				.eq('id', teamPowerupId);
+			return { success: true };
+		}
+
+		case 'freeze':
+		case 'time_drain': {
+			// Stuk 2: the two TIMER offensive attacks. Both are payload-driven marker
+			// rows, same convention as time_boost — a 30s freeze/pause is arithmetically
+			// a +30s extension; a drain is -15s. The auto-submit backstop sums
+			// payload.added_seconds across time_boost/freeze/time_drain, so this row
+			// alone moves BOTH the client countdown (realtime handler) and the server
+			// deadline — no second timer mechanism (the C1 trap this reuses time_boost
+			// specifically to avoid).
+			const targetTeamId = options?.targetTeamId;
+			if (!targetTeamId)
+				return { success: false, error: `${powerupType.name} requires a target team` };
+			if (targetTeamId === tpu.team_id)
+				return { success: false, error: 'Cannot target your own team' };
+
+			// Design B: unlike give_a_shot's anytime exemption, timer effects need a
+			// live timed attempt on the target to adjust — no apply-on-next-challenge.
+			const targetAttempt = await resolveTargetTimedAttempt(supabase, targetTeamId);
+			if (!targetAttempt)
+				return { success: false, error: "That team isn't in a timed challenge right now" };
+
+			// Design E: freeze is a STATE (a second freeze while one is active is
+			// rejected); time_drain is arithmetic and always stacks (the backstop's
+			// summation + the client's += handle that for free, no guard needed).
+			if (typeId === 'freeze') {
+				const alreadyFrozen = await hasActiveFreeze(
+					supabase,
+					targetTeamId,
+					targetAttempt.challengeId
+				);
+				if (alreadyFrozen) return { success: false, error: 'Target is already frozen' };
+			}
+
+			const { data: casterTeam } = await supabase
+				.from('teams')
+				.select('display_name')
+				.eq('id', tpu.team_id)
+				.maybeSingle();
+			const sourceName = casterTeam?.display_name ?? '';
+
+			// Shield check FIRST — same shared branch give_a_shot uses. A shielded
+			// target absorbs the freeze/drain; the caster's powerup is still spent.
+			const { blocked } = await tryConsumeShield(supabase, targetTeamId, tpu.set_id);
+			if (blocked) {
+				return recordShieldBlock(supabase, {
+					targetTeamId,
+					setId: tpu.set_id,
+					teamPowerupId,
+					sourceTeamId: tpu.team_id,
+					sourceName,
+					blockedType: typeId
+				});
+			}
+
+			const addedSeconds = typeId === 'freeze' ? 30 : -15;
+			await supabase.from('team_effects').insert({
+				team_id: targetTeamId,
+				set_id: tpu.set_id,
+				effect_type: typeId,
+				payload: {
+					added_seconds: addedSeconds,
+					challenge_id: targetAttempt.challengeId,
+					source_team_id: tpu.team_id,
+					source_team_name: sourceName
+				},
+				consumed_at: new Date().toISOString(),
+				consumed_challenge_id: targetAttempt.challengeId,
+				source_team_powerup_id: teamPowerupId
+			} as never);
+			await supabase.from('activity_log').insert({
+				team_id: tpu.team_id,
+				event_type: typeId,
 				payload: { source_team_id: tpu.team_id, target_team_id: targetTeamId }
 			} as never);
 			await supabase

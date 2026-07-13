@@ -28,17 +28,21 @@ export const POST: RequestHandler = async ({ locals }) => {
 
 		const now = Date.now();
 
-		// time_boost (audit C1): a team that activated a time boost gets +N seconds
-		// on this challenge's timer. Those effect rows are inserted already-consumed
-		// (client-reaction markers) carrying { added_seconds, challenge_id }, so we
-		// match them by team + payload.challenge_id and extend the deadline — the
-		// backstop must not force-close mid-boost.
-		const boostMap = new Map<string, number>(); // `${team_id}|${challenge_id}` → added seconds
+		// Timer effects (audit C1): time_boost/freeze/time_drain all extend or shrink
+		// a team's deadline on a specific challenge. Every one is a payload-driven
+		// marker row carrying { added_seconds, challenge_id } (freeze = +30, drain =
+		// -15, boost = +30) inserted already-consumed (client-reaction markers), so
+		// we match them by team + payload.challenge_id and SUM added_seconds — this
+		// is the one place the server deadline moves, or these effects would be
+		// purely cosmetic (the original time_boost/auto-submit bug this reuses the
+		// exact same path to avoid reintroducing). Negative sums (drain) shorten the
+		// deadline correctly; stacked drains/boosts just sum further.
+		const boostMap = new Map<string, number>(); // `${team_id}|${challenge_id}` → net added seconds
 		if (openAttempts?.length) {
 			const { data: boostEffects } = await db
 				.from('team_effects')
 				.select('team_id, payload')
-				.eq('effect_type', 'time_boost')
+				.in('effect_type', ['time_boost', 'freeze', 'time_drain'])
 				.in('team_id', [...new Set(openAttempts.map((a) => a.team_id))]);
 			for (const e of boostEffects ?? []) {
 				const p = (e.payload ?? {}) as { added_seconds?: number; challenge_id?: string };
@@ -74,8 +78,15 @@ export const POST: RequestHandler = async ({ locals }) => {
 			// skipped them.
 			const [challengesRes, tabsRes, setChRes] = await Promise.all([
 				db.from('challenges').select('*').in('id', expiredChallengeIds),
-				db.from('challenge_tabs').select('*').in('challenge_id', expiredChallengeIds).order('position'),
-				db.from('set_challenges').select('challenge_id, set_id').in('challenge_id', expiredChallengeIds)
+				db
+					.from('challenge_tabs')
+					.select('*')
+					.in('challenge_id', expiredChallengeIds)
+					.order('position'),
+				db
+					.from('set_challenges')
+					.select('challenge_id, set_id')
+					.in('challenge_id', expiredChallengeIds)
 			]);
 			const challengeMap = new Map((challengesRes.data ?? []).map((c) => [c.id, c]));
 			const tabsByChallenge = new Map<string, typeof tabsRes.data>();
@@ -131,9 +142,7 @@ export const POST: RequestHandler = async ({ locals }) => {
 					continue;
 				}
 
-				const elapsedSeconds = Math.floor(
-					(now - new Date(attempt.started_at).getTime()) / 1000
-				);
+				const elapsedSeconds = Math.floor((now - new Date(attempt.started_at).getTime()) / 1000);
 				const outcome = await scoreAndPersistSubmission(db, {
 					challenge,
 					tabs: challengeTabs,
