@@ -1,7 +1,11 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { createPublicClient, createAdminClient } from '$lib/server/supabase';
-import { activatePowerup, loadActiveEffects } from '$lib/server/powerups';
+import {
+	activatePowerup,
+	loadActiveEffects,
+	getTeamsWithActiveTimedAttempt
+} from '$lib/server/powerups';
 import { TEAM_COLOR_ORDER, getTeamsInSet } from '$lib/server/randomize';
 
 export const load: PageServerLoad = async ({ locals, cookies }) => {
@@ -266,9 +270,21 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 	}
 
 	// Teams in this set — target list for offensive-powerup activation (stuk 1).
-	let setTeams: Array<{ id: string; color: string; display_name: string }> = [];
+	// hasActiveTimedAttempt (stuk 2) lets the picker grey teams a timer attack
+	// (freeze/time_drain) can't hit right now; give_a_shot ignores it.
+	let setTeams: Array<{
+		id: string;
+		color: string;
+		display_name: string;
+		hasActiveTimedAttempt: boolean;
+	}> = [];
 	if (playerSetId) {
-		setTeams = await getTeamsInSet(admin, playerSetId);
+		const teams = await getTeamsInSet(admin, playerSetId);
+		const timedTeamIds = await getTeamsWithActiveTimedAttempt(
+			admin,
+			teams.map((t) => t.id)
+		);
+		setTeams = teams.map((t) => ({ ...t, hasActiveTimedAttempt: timedTeamIds.has(t.id) }));
 	}
 
 	// Derive crown holder for this set (carried separately for reactivity)

@@ -19,7 +19,12 @@
 		type: PowerupType;
 	};
 
-	type TargetTeam = { id: string; color: string; display_name: string };
+	type TargetTeam = {
+		id: string;
+		color: string;
+		display_name: string;
+		hasActiveTimedAttempt?: boolean;
+	};
 
 	let {
 		teamId,

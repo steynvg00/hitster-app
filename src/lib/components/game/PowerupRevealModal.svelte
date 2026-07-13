@@ -12,7 +12,12 @@
 		immediate_use: boolean;
 	};
 
-	type TargetTeam = { id: string; color: string; display_name: string };
+	type TargetTeam = {
+		id: string;
+		color: string;
+		display_name: string;
+		hasActiveTimedAttempt?: boolean;
+	};
 
 	type Activation = { success: boolean; payload?: Record<string, unknown> };
 

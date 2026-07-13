@@ -590,6 +590,39 @@ async function resolveTargetTimedAttempt(
 }
 
 /**
+ * Batched version of the resolveTargetTimedAttempt predicate for the target
+ * picker: which of `teamIds` currently have an open attempt on a timed
+ * challenge. Two queries total for the whole set (not one per team) — the picker
+ * greys the rest for freeze/time_drain. Same rule the per-team resolver enforces
+ * server-side, so UI and activation agree.
+ */
+export async function getTeamsWithActiveTimedAttempt(
+	supabase: SupabaseClient<Database>,
+	teamIds: string[]
+): Promise<Set<string>> {
+	if (!teamIds.length) return new Set();
+	const { data: attempts } = await supabase
+		.from('challenge_attempts')
+		.select('team_id, challenge_id')
+		.in('team_id', teamIds)
+		.is('ended_at', null);
+	if (!attempts?.length) return new Set();
+
+	const challengeIds = [...new Set(attempts.map((a) => a.challenge_id))];
+	const { data: challenges } = await supabase
+		.from('challenges')
+		.select('id, timer_seconds')
+		.in('id', challengeIds);
+	const timedIds = new Set(
+		(challenges ?? []).filter((c) => (c.timer_seconds ?? 0) > 0).map((c) => c.id)
+	);
+
+	const result = new Set<string>();
+	for (const a of attempts) if (timedIds.has(a.challenge_id)) result.add(a.team_id);
+	return result;
+}
+
+/**
  * Guard against stacking freeze (a STATE, unlike time_drain's arithmetic stack):
  * true if the target already has a freeze marker on this challenge whose 30s
  * window hasn't elapsed. Freeze rows are pre-consumed (same as time_boost), so

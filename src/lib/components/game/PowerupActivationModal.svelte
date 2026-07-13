@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import type { SubmitFunction } from '@sveltejs/kit';
-	import { isTargetedPowerup } from '$lib/powerups-meta';
+	import { isTargetedPowerup, isTimerPowerup } from '$lib/powerups-meta';
+	import { supabaseBrowser } from '$lib/supabase-browser';
 
 	type PowerupType = {
 		id: string;
@@ -12,7 +13,12 @@
 		immediate_use: boolean;
 	};
 
-	type TargetTeam = { id: string; color: string; display_name: string };
+	type TargetTeam = {
+		id: string;
+		color: string;
+		display_name: string;
+		hasActiveTimedAttempt?: boolean;
+	};
 
 	let {
 		teamPowerupId,
@@ -96,6 +102,62 @@
 	const copy = $derived(EFFECT_COPY[powerupType.id] ?? { action: powerupType.description ?? '' });
 	const needsFieldPicker = $derived(powerupType.id === 'free_answer');
 	const needsTarget = $derived(isTargetedPowerup(powerupType.id));
+	// Timer attacks (freeze/time_drain) can only hit a team currently in a timed
+	// challenge — grey the rest. give_a_shot ignores this (all teams targetable).
+	const timerGated = $derived(isTimerPowerup(powerupType.id));
+
+	// Live targetability (realtime follow-up): the `hasActiveTimedAttempt` prop is
+	// a load-time snapshot — a team can start/finish a timed challenge while this
+	// picker is open. null = no live data yet, fall back to the snapshot prop.
+	// challenge_attempts realtime rows carry no timer_seconds/set_id, so we can't
+	// derive targetability from the payload alone — re-running the batched
+	// predicate server-side on every relevant event (debounced) is simplest-correct
+	// (see /api/teams-timed-status). The server rejection at activation stays as
+	// the safety net for the sub-second gap between an event and the click.
+	let liveTimedTeamIds = $state<Set<string> | null>(null);
+	function canTarget(t: TargetTeam): boolean {
+		if (!timerGated) return true;
+		if (liveTimedTeamIds) return liveTimedTeamIds.has(t.id);
+		return t.hasActiveTimedAttempt === true;
+	}
+
+	let refetchTimer: ReturnType<typeof setTimeout> | undefined;
+	async function refetchTimedStatus() {
+		const ids = targetTeams.map((t) => t.id);
+		if (!ids.length) return;
+		try {
+			const res = await fetch(`/api/teams-timed-status?team_ids=${ids.join(',')}`);
+			if (!res.ok) return;
+			const data = (await res.json()) as { timedTeamIds: string[] };
+			liveTimedTeamIds = new Set(data.timedTeamIds);
+		} catch {
+			// Network hiccup — keep the last known state (snapshot or previous live set).
+		}
+	}
+	function scheduleRefetch() {
+		clearTimeout(refetchTimer);
+		refetchTimer = setTimeout(refetchTimedStatus, 300);
+	}
+
+	// Only subscribe for timer powerups — give_a_shot never needs this and skips
+	// the channel entirely. Scoped to this modal instance's lifetime: subscribes
+	// on mount, unsubscribes on close/unmount (unique channel per teamPowerupId).
+	$effect(() => {
+		if (!timerGated) return;
+		refetchTimedStatus(); // correct any staleness from the page-load snapshot immediately
+		const channel = supabaseBrowser
+			.channel(`powerup-target-timed-${teamPowerupId}`)
+			.on(
+				'postgres_changes',
+				{ event: '*', schema: 'public', table: 'challenge_attempts' },
+				scheduleRefetch
+			)
+			.subscribe();
+		return () => {
+			clearTimeout(refetchTimer);
+			supabaseBrowser.removeChannel(channel);
+		};
+	});
 	const needsChallenge = $derived(
 		['time_boost', 'insurance', 'free_answer'].includes(powerupType.id)
 	);
@@ -189,19 +251,30 @@
 					{:else}
 						<div class="grid grid-cols-2 gap-2">
 							{#each targetTeams as t (t.id)}
+								{@const targetable = canTarget(t)}
 								<button
 									type="button"
-									onclick={() => (selectedTargetId = t.id)}
-									class="flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors {selectedTargetId ===
-									t.id
-										? 'border-amber-400 bg-amber-400/10 text-white'
-										: 'border-zinc-700 bg-zinc-800 text-zinc-300 hover:border-zinc-500'}"
+									disabled={!targetable}
+									onclick={() => targetable && (selectedTargetId = t.id)}
+									title={targetable ? '' : 'Not in a challenge right now'}
+									class="flex flex-col gap-0.5 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors {!targetable
+										? 'cursor-not-allowed border-zinc-800 bg-zinc-900 text-zinc-600'
+										: selectedTargetId === t.id
+											? 'border-amber-400 bg-amber-400/10 text-white'
+											: 'border-zinc-700 bg-zinc-800 text-zinc-300 hover:border-zinc-500'}"
 								>
-									<span
-										class="h-3.5 w-3.5 shrink-0 rounded-full"
-										style="background-color: {TEAM_HEX[t.color] ?? '#6b7280'};"
-									></span>
-									<span class="truncate">{t.display_name}</span>
+									<span class="flex items-center gap-2">
+										<span
+											class="h-3.5 w-3.5 shrink-0 rounded-full {targetable ? '' : 'opacity-40'}"
+											style="background-color: {TEAM_HEX[t.color] ?? '#6b7280'};"
+										></span>
+										<span class="truncate">{t.display_name}</span>
+									</span>
+									{#if !targetable}
+										<span class="pl-5.5 text-[10px] font-normal text-zinc-600"
+											>not in a challenge</span
+										>
+									{/if}
 								</button>
 							{/each}
 						</div>

@@ -6,6 +6,7 @@ import {
 	resolvePowerupChoice,
 	activatePowerup,
 	loadActiveEffects,
+	getTeamsWithActiveTimedAttempt,
 	type EarnedPowerup
 } from '$lib/server/powerups';
 import { scoreAndPersistSubmission } from '$lib/server/submit';
@@ -458,9 +459,21 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 	}
 
 	// Teams in this set — the target list for offensive-powerup activation (stuk 1).
-	let setTeams: Array<{ id: string; color: string; display_name: string }> = [];
+	// hasActiveTimedAttempt (stuk 2) lets the picker grey teams a timer attack
+	// (freeze/time_drain) can't hit right now; give_a_shot ignores it.
+	let setTeams: Array<{
+		id: string;
+		color: string;
+		display_name: string;
+		hasActiveTimedAttempt: boolean;
+	}> = [];
 	if (activeSetId) {
-		setTeams = await getTeamsInSet(admin, activeSetId);
+		const teams = await getTeamsInSet(admin, activeSetId);
+		const timedTeamIds = await getTeamsWithActiveTimedAttempt(
+			admin,
+			teams.map((t) => t.id)
+		);
+		setTeams = teams.map((t) => ({ ...t, hasActiveTimedAttempt: timedTeamIds.has(t.id) }));
 	}
 
 	// Active powerup effects + free-answer reveals
