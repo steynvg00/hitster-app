@@ -522,6 +522,8 @@ export type Database = {
 					position: number;
 					challenge_multiplier: number;
 					created_by: string | null;
+					battle_resolved_at: string | null;
+					battle_ranking: Json | null;
 				};
 				Insert: {
 					id?: string;
@@ -530,6 +532,8 @@ export type Database = {
 					position?: number;
 					challenge_multiplier?: number;
 					created_by?: string | null;
+					battle_resolved_at?: string | null;
+					battle_ranking?: Json | null;
 				};
 				Update: {
 					id?: string;
@@ -538,6 +542,8 @@ export type Database = {
 					position?: number;
 					challenge_multiplier?: number;
 					created_by?: string | null;
+					battle_resolved_at?: string | null;
+					battle_ranking?: Json | null;
 				};
 				Relationships: [];
 			};
@@ -582,6 +588,7 @@ export type Database = {
 					is_final: boolean;
 					submitted_at: string;
 					created_at: string;
+					battle_raw_score: number | null;
 				};
 				Insert: {
 					id?: string;
@@ -593,6 +600,7 @@ export type Database = {
 					is_final?: boolean;
 					submitted_at?: string;
 					created_at?: string;
+					battle_raw_score?: number | null;
 				};
 				Update: {
 					id?: string;
@@ -604,6 +612,7 @@ export type Database = {
 					is_final?: boolean;
 					submitted_at?: string;
 					created_at?: string;
+					battle_raw_score?: number | null;
 				};
 				Relationships: [];
 			};

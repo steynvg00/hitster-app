@@ -148,6 +148,18 @@ export async function resetGameState(
 	}
 	await run('challenge_unlocks delete', db.from('challenge_unlocks').delete().eq('set_id', setId));
 
+	// Battle Mode resolution state lives on set_challenges (rows persist — they
+	// define set membership — so unlike submissions.battle_raw_score, which is
+	// dropped with the deleted submissions above, these must be cleared explicitly
+	// or a re-run would find the challenge already resolved and skip re-awarding).
+	await run(
+		'set_challenges battle clear',
+		db
+			.from('set_challenges')
+			.update({ battle_resolved_at: null, battle_ranking: null } as never)
+			.eq('set_id', setId)
+	);
+
 	if (teamIds.length > 0) {
 		await run('activity_log delete', db.from('activity_log').delete().in('team_id', teamIds));
 		await run(

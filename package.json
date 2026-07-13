@@ -15,6 +15,8 @@
 		"bots:join": "tsx tests/bots/run-join.ts",
 		"bots:play": "tsx tests/bots/run-play.ts",
 		"bots:verify-bonus": "tsx tests/bots/verify-bonus-fields.ts",
+		"bots:verify-battle": "tsx tests/bots/verify-battle.ts",
+		"bots:verify-battle-integration": "tsx tests/bots/verify-battle-integration.ts",
 		"bots:verify-earning": "tsx tests/bots/verify-earning.ts",
 		"bots:verify-regression": "tsx tests/bots/verify-regression.ts",
 		"bots:fixtures": "tsx scripts/gen-fixtures.ts",
