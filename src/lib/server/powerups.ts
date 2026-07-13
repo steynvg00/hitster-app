@@ -646,6 +646,28 @@ async function hasActiveFreeze(
 }
 
 /**
+ * Guard against stacking tap_to_break locks: true if the target already has a
+ * non-consumed lock. Unlike freeze (time-windowed via activated_at), this row
+ * has no natural expiry — it stays active until broken — so "still active" is
+ * simply consumed_at IS NULL. A second lock while one is unbroken is rejected
+ * (same STATE reasoning as freeze): stacking two rows the target would need to
+ * clear independently serves no one.
+ */
+async function hasActiveTapLock(
+	supabase: SupabaseClient<Database>,
+	targetTeamId: string
+): Promise<boolean> {
+	const { data } = await supabase
+		.from('team_effects')
+		.select('id')
+		.eq('team_id', targetTeamId)
+		.eq('effect_type', 'tap_to_break')
+		.is('consumed_at', null)
+		.limit(1);
+	return (data?.length ?? 0) > 0;
+}
+
+/**
  * Activate a held powerup. Creates a team_effects row and transitions status.
  * Commit 1 handles: bonus_points, single_event_mult, hard_gaan, shield.
  * Commit 2 adds: free_answer, time_boost, insurance.
@@ -1081,6 +1103,76 @@ export async function activatePowerup(
 			await supabase.from('activity_log').insert({
 				team_id: tpu.team_id,
 				event_type: typeId,
+				payload: { source_team_id: tpu.team_id, target_team_id: targetTeamId }
+			} as never);
+			await supabase
+				.from('team_powerups')
+				.update({ status: 'consumed' } as never)
+				.eq('id', teamPowerupId);
+			return { success: true };
+		}
+
+		case 'tap_to_break': {
+			// Stuk 3 (FINAL): the blocking tap-lock — completes the offensive powerups
+			// feature. UNLIKE freeze/time_drain/give_a_shot's marker rows, this effect
+			// row stays ACTIVE (no consumed_at) until the target taps it out —
+			// /api/effects/consume (the ownership-gated endpoint stuk 1 built for
+			// give_a_shot's "Drunk!" ack) marks it consumed on break. Because it's
+			// non-consumed, loadActiveEffects re-surfaces it on reload for free — no
+			// separate persistence mechanism needed.
+			const targetTeamId = options?.targetTeamId;
+			if (!targetTeamId)
+				return { success: false, error: `${powerupType.name} requires a target team` };
+			if (targetTeamId === tpu.team_id)
+				return { success: false, error: 'Cannot target your own team' };
+
+			// Design B (same as freeze/time_drain): locking a team not mid-challenge
+			// is pointless — reject at activation, powerup stays held.
+			const targetAttempt = await resolveTargetTimedAttempt(supabase, targetTeamId);
+			if (!targetAttempt)
+				return { success: false, error: "That team isn't in a timed challenge right now" };
+
+			const alreadyLocked = await hasActiveTapLock(supabase, targetTeamId);
+			if (alreadyLocked) return { success: false, error: 'Target is already locked' };
+
+			const { data: casterTeam } = await supabase
+				.from('teams')
+				.select('display_name')
+				.eq('id', tpu.team_id)
+				.maybeSingle();
+			const sourceName = casterTeam?.display_name ?? '';
+
+			// Shield check FIRST — same shared branch the other three attacks use.
+			const { blocked } = await tryConsumeShield(supabase, targetTeamId, tpu.set_id);
+			if (blocked) {
+				return recordShieldBlock(supabase, {
+					targetTeamId,
+					setId: tpu.set_id,
+					teamPowerupId,
+					sourceTeamId: tpu.team_id,
+					sourceName,
+					blockedType: 'tap_to_break'
+				});
+			}
+
+			// NON-consumed on purpose (mirrors give_a_shot's non-consumed insert) — no
+			// consumed_at, no source_team_powerup_id. The caster's powerup is spent
+			// regardless of whether/when the target breaks free; nothing needs to flow
+			// back to team_powerups later.
+			await supabase.from('team_effects').insert({
+				team_id: targetTeamId,
+				set_id: tpu.set_id,
+				effect_type: 'tap_to_break',
+				payload: {
+					taps_required: 20,
+					challenge_id: targetAttempt.challengeId,
+					source_team_id: tpu.team_id,
+					source_team_name: sourceName
+				}
+			} as never);
+			await supabase.from('activity_log').insert({
+				team_id: tpu.team_id,
+				event_type: 'tap_to_break',
 				payload: { source_team_id: tpu.team_id, target_team_id: targetTeamId }
 			} as never);
 			await supabase
