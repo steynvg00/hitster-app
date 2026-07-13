@@ -16,6 +16,7 @@
 	import ActiveEffectsBanner from '$lib/components/game/ActiveEffectsBanner.svelte';
 	import IncomingEffectsListener from '$lib/components/game/IncomingEffectsListener.svelte';
 	import PowerupRevealModal from '$lib/components/game/PowerupRevealModal.svelte';
+	import TapToBreakOverlay from '$lib/components/game/TapToBreakOverlay.svelte';
 	import { getTypeIcon, getTypeColor } from '$lib/variants';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -261,6 +262,30 @@
 	let drainToast = $state<{ sourceName: string } | null>(null);
 	let drainToastTimer: ReturnType<typeof setTimeout> | undefined;
 
+	// ── Incoming lock attack (stuk 3 FINAL: tap_to_break) ──────────────────────
+	// UNLIKE freeze/time_drain's pre-consumed markers, tap_to_break's team_effects
+	// row stays ACTIVE (no consumed_at) until broken — loadActiveEffects already
+	// re-surfaces it here on every page load, so a reload restores the lock for
+	// free (the tap counter itself resets to 0, client-local, by design). Live
+	// arrival while the page is open comes from the SAME effectsBoostChannel INSERT
+	// handler below, not a separate subscription.
+	type TapLock = { effectId: string; sourceName: string; tapsRequired: number };
+	function findActiveTapLock(): TapLock | null {
+		const row = data.activeEffects?.find(
+			(e) =>
+				e.effect_type === 'tap_to_break' &&
+				(e.payload as { challenge_id?: string }).challenge_id === data.challenge.id
+		);
+		if (!row) return null;
+		const p = row.payload as { taps_required?: number; source_team_name?: string };
+		return {
+			effectId: row.id,
+			sourceName: p.source_team_name || 'Another team',
+			tapsRequired: p.taps_required ?? 20
+		};
+	}
+	let tapLock = $state<TapLock | null>(findActiveTapLock());
+
 	$effect(() => {
 		if (!freezeUntil) {
 			freezeRemainingMs = 0;
@@ -334,7 +359,11 @@
 					filter: `team_id=eq.${data.team.id}`
 				},
 				(payload) => {
-					const row = payload.new as { effect_type: string; payload: Record<string, unknown> };
+					const row = payload.new as {
+						id: string;
+						effect_type: string;
+						payload: Record<string, unknown>;
+					};
 					if (row.effect_type === 'time_boost') {
 						const p = row.payload as { added_seconds?: number; challenge_id?: string };
 						if (p.challenge_id === data.challenge.id) {
@@ -362,6 +391,21 @@
 							drainToast = { sourceName: p.source_team_name || 'Another team' };
 							if (drainToastTimer) clearTimeout(drainToastTimer);
 							drainToastTimer = setTimeout(() => (drainToast = null), 4000);
+						}
+					} else if (row.effect_type === 'tap_to_break') {
+						// Unlike freeze/time_drain this doesn't touch timerBoostMs — it mounts
+						// the lock, it doesn't move the deadline.
+						const p = row.payload as {
+							challenge_id?: string;
+							taps_required?: number;
+							source_team_name?: string;
+						};
+						if (p.challenge_id === data.challenge.id) {
+							tapLock = {
+								effectId: row.id,
+								sourceName: p.source_team_name || 'Another team',
+								tapsRequired: p.taps_required ?? 20
+							};
 						}
 					}
 				}
@@ -1022,6 +1066,18 @@
 					{Math.ceil(freezeRemainingMs / 1000)}s
 				</p>
 			</div>
+		{/if}
+
+		<!-- Tap-to-break lock (stuk 3 FINAL): blocking overlay, persists across a
+		     reload via data.activeEffects (the row stays non-consumed until broken).
+		     The overlay itself owns tap counting + the break POST. -->
+		{#if tapLock}
+			<TapToBreakOverlay
+				effectId={tapLock.effectId}
+				sourceName={tapLock.sourceName}
+				tapsRequired={tapLock.tapsRequired}
+				onbreak={() => (tapLock = null)}
+			/>
 		{/if}
 
 		<!-- Time-drain toast (stuk 2) -->

@@ -209,6 +209,9 @@
 		if (a.event_type === 'time_drain' && payload) {
 			return `⏳ ${teamLabel(a.team_id)} drained ${teamLabel(payload.target_team_id as string | null) ?? '?'}'s time`;
 		}
+		if (a.event_type === 'tap_to_break' && payload) {
+			return `🔒 ${teamLabel(a.team_id)} locked ${teamLabel(payload.target_team_id as string | null) ?? '?'}`;
+		}
 		if (a.event_type === 'challenge_closed') return 'Challenge closed';
 		if (a.event_type === 'attempt_reset') return 'Attempt reset';
 		return a.event_type.replace(/_/g, ' ');

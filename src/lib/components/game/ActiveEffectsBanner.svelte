@@ -47,7 +47,11 @@
 		shield: '🛡 Shield ready',
 		insurance: '🪙 Insurance ready',
 		free_answer: '💡 Free answer',
-		time_boost: '⏱ Time boost'
+		time_boost: '⏱ Time boost',
+		// tap_to_break (stuk 3) is the one offensive attack that ISN'T pre-consumed,
+		// so it survives to show here — useful on /team where the challenge page's
+		// full-screen lock overlay isn't mounted.
+		tap_to_break: '🔒 Locked — tap to break free'
 	};
 
 	function label(e: ActiveEffect): string {

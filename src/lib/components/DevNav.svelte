@@ -332,7 +332,8 @@
 		{ id: 'free_answer', name: 'Free Answer', icon: '💡' },
 		{ id: 'give_a_shot', name: 'Give a Shot', icon: '🥂' },
 		{ id: 'freeze', name: 'Freeze', icon: '🧊' },
-		{ id: 'time_drain', name: 'Time Drain', icon: '⏳' }
+		{ id: 'time_drain', name: 'Time Drain', icon: '⏳' },
+		{ id: 'tap_to_break', name: 'Tap to Break', icon: '🔨' }
 	];
 
 	const TEAM_COLORS = ['blue', 'yellow', 'green', 'red', 'indigo', 'black'];
