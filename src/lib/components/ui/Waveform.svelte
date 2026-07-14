@@ -6,6 +6,18 @@
 	// reactive $effect that fires when isReady becomes true).
 	const mediaElementSourceCache = new WeakMap<HTMLAudioElement, MediaElementAudioSourceNode>();
 
+	/** Tone.PitchShift grain window (seconds) for a plain pitch effect with no
+	 *  per-challenge window_size set. Tone's own nominal range is 0.03–0.1. */
+	const DEFAULT_PITCH_WINDOW = 0.1;
+
+	/** Grain window used when the PitchShift carries the varispeed tempo correction.
+	 *  RETUNE HERE — this is the single knob for the tempo artefact. Raised from 0.1
+	 *  to 0.2 because the correction lands on bass-heavy material where a 0.1 s grain
+	 *  is only ~6 cycles of a 60 Hz kick and measured dirtiest of everything tried.
+	 *  Above Tone's nominal 0.1 ceiling deliberately; the cost is transient smearing,
+	 *  so if kicks start to flam, come back down (0.15 was equally clean at 60 Hz). */
+	const VARISPEED_PITCH_WINDOW = 0.2;
+
 	function getOrCreateMediaElementSource(
 		audioEl: HTMLAudioElement,
 		ctx: AudioContext
@@ -521,9 +533,23 @@
 		const effectSemitones = fx?.pitch?.enabled ? fx.pitch.semitones : 0;
 		const netSemitones = effectSemitones + varispeedCorrection;
 		if (netSemitones !== 0) {
+			// Grain window. Only overridden when this node is carrying the varispeed
+			// correction; a pure pitch effect keeps the host's per-challenge
+			// window_size, so retuning tempo can't silently change what the editor
+			// configured. Measured (Tone.PitchShift, −3.86 st, purity = peak-lobe
+			// energy / total): at a 60 Hz kick fundamental, windowSize 0.1 is the
+			// WORST of everything tested (72%), while 0.15–0.2 sit at ~99% — a grain
+			// window has to span several periods, and 0.1 s is only ~6 cycles at 60 Hz.
+			// The counter-pressure is time smearing: a longer window flams transients,
+			// and hard-bass is all transient. Hence a named constant — this is an
+			// ear call, not a solved number.
+			const windowSize =
+				varispeedCorrection !== 0
+					? VARISPEED_PITCH_WINDOW
+					: (fx?.pitch?.enabled ? fx.pitch.window_size : DEFAULT_PITCH_WINDOW);
 			tonePitchShift = new Tone.PitchShift({
 				pitch: netSemitones,
-				windowSize: fx?.pitch?.enabled ? fx.pitch.window_size : 0.1
+				windowSize
 			});
 			chain.push(tonePitchShift);
 		}
