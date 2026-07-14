@@ -8,21 +8,49 @@
 // resolution. Teams are ranked by base+bonus (submissions.battle_raw_score),
 // and each gets ladder[rank] added to teams.score.
 
-export const DEFAULT_BATTLE_LADDER = [10, 7, 5, 3, 1, 0];
+export const DEFAULT_MAX_POINTS = 10;
 
-export type BattleConfig = { enabled: boolean; ladder: number[] };
+export type BattleConfig = { enabled: boolean; max_points: number };
 
-/** Read + normalize the battle config off a challenge's points_config JSONB. */
+/**
+ * Read + normalize the battle config off a challenge's points_config JSONB.
+ * Storage shape is { enabled, max_points } — the ladder is no longer stored;
+ * it's derived at resolution time from max_points + the set's real team_count
+ * (see deriveLadder below). A legacy { ladder } shape (pre-stuk-2) is tolerated
+ * by simply ignoring it and falling back to the default max_points — battle
+ * mode has no production challenges yet, so there's no data to migrate.
+ */
 export function parseBattleConfig(pointsConfig: unknown): BattleConfig {
 	const battle = ((pointsConfig ?? {}) as Record<string, unknown>).battle as
-		| { enabled?: unknown; ladder?: unknown }
+		| { enabled?: unknown; max_points?: unknown }
 		| undefined;
 	const enabled = battle?.enabled === true;
-	const ladder =
-		Array.isArray(battle?.ladder) && battle!.ladder.every((n) => typeof n === 'number')
-			? (battle!.ladder as number[])
-			: DEFAULT_BATTLE_LADDER;
-	return { enabled, ladder };
+	const max_points =
+		typeof battle?.max_points === 'number' &&
+		Number.isFinite(battle.max_points) &&
+		battle.max_points >= 0
+			? battle.max_points
+			: DEFAULT_MAX_POINTS;
+	return { enabled, max_points };
+}
+
+/**
+ * Derive the award ladder from a single max-points value + the real team
+ * count (computed at resolution time, never stored). Linear from max down to
+ * 0 in equal steps: rank r (0-indexed) awards round(M × (N-1-r)/(N-1)); the
+ * last rank always lands on exactly 0. N=1 is a degenerate case (a 1-team
+ * "battle" is meaningless) — that sole team gets 0, no division by zero.
+ *
+ * Examples: deriveLadder(10, 6) → [10,8,6,4,2,0]; deriveLadder(10, 4) →
+ * [10,7,3,0] (6.67→7, 3.33→3, half-up rounding via Math.round).
+ */
+export function deriveLadder(maxPoints: number, teamCount: number): number[] {
+	if (teamCount <= 1) return [0];
+	const ladder: number[] = [];
+	for (let r = 0; r < teamCount; r++) {
+		ladder.push(Math.round((maxPoints * (teamCount - 1 - r)) / (teamCount - 1)));
+	}
+	return ladder;
 }
 
 export type BattleEntry = { teamId: string; raw: number; elapsed: number };

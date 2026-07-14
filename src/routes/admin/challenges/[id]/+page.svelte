@@ -7,6 +7,7 @@
 	import FragmentsEditor from '$lib/components/admin/challenge-editors/FragmentsEditor.svelte';
 	import EffectsEditor from '$lib/components/admin/challenge-editors/EffectsEditor.svelte';
 	import FieldsEditor from '$lib/components/admin/challenge-editors/FieldsEditor.svelte';
+	import BattleEditor from '$lib/components/admin/challenge-editors/BattleEditor.svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -212,6 +213,13 @@
 				<button type="submit" class="btn-primary">Save details</button>
 			</div>
 		</form>
+
+		<!-- Battle mode is a single derived-ladder value now, so it lives here
+		     rather than as its own section; it has its own debounced save
+		     (?/saveBattle), separate from the updateMeta form above. -->
+		<div class="mt-4 border-t border-zinc-800 pt-4">
+			<BattleEditor battleConfig={data.battleConfig} />
+		</div>
 	</section>
 
 	<!-- ── Status ── -->

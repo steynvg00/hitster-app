@@ -188,6 +188,12 @@
 		}
 		if (a.event_type === 'crown_stolen' && payload) {
 			const fromId = payload.from_team_id as string | null;
+			// Battle mode's batch crown recompute (recomputeCrownAfterBattle) flags its
+			// event via:'battle' — distinct label since it's a bookkeeping recompute
+			// after simultaneous ladder adds, not a single team overtaking mid-play.
+			if (payload.via === 'battle') {
+				return `👑 crown via battle — ${teamLabel(a.team_id)} now leads`;
+			}
 			if (!fromId) return `⚔️ ${teamLabel(a.team_id)} took the crown`;
 			return `⚔️ ${teamLabel(a.team_id)} stole the crown from ${teamLabel(fromId) ?? fromId}`;
 		}
@@ -212,6 +218,11 @@
 		if (a.event_type === 'tap_to_break' && payload) {
 			return `🔒 ${teamLabel(a.team_id)} locked ${teamLabel(payload.target_team_id as string | null) ?? '?'}`;
 		}
+		if (a.event_type === 'battle_award' && payload) {
+			const rank = Number(payload.rank ?? 0);
+			const awarded = Number(payload.awarded ?? 0);
+			return `⚔️ ${teamLabel(a.team_id)} ranked ${ordinal(rank)} (+${awarded})`;
+		}
 		if (a.event_type === 'challenge_closed') return 'Challenge closed';
 		if (a.event_type === 'attempt_reset') return 'Attempt reset';
 		return a.event_type.replace(/_/g, ' ');
@@ -220,6 +231,12 @@
 	function teamLabel(teamId: string | null) {
 		if (!teamId) return '';
 		return teams.find((t) => t.id === teamId)?.display_name ?? teamId.slice(0, 8);
+	}
+
+	function ordinal(n: number): string {
+		const s = ['th', 'st', 'nd', 'rd'];
+		const v = n % 100;
+		return `${n}${s[(v - 20) % 10] ?? s[v] ?? s[0]}`;
 	}
 
 	// ── Effect: sync data + manage channels reactively on set change ──────────
@@ -650,6 +667,50 @@
 									</div>
 									{#if challenge.status !== 'active'}
 										<span class="text-[10px] text-zinc-600">{challenge.status}</span>
+									{/if}
+									{#if data.battleStatus[challenge.id]}
+										{@const bs = data.battleStatus[challenge.id]}
+										<div class="mt-1 flex items-center gap-1.5">
+											<span class="text-[10px] font-semibold text-amber-400">⚔️ Battle</span>
+											{#if bs.resolved}
+												<span class="text-[10px] text-green-500">Resolved</span>
+											{:else if !bs.hasSubmission}
+												<span class="text-[10px] text-zinc-600">No submissions yet</span>
+											{:else}
+												<form
+													method="POST"
+													action="?/resolveBattleNow"
+													use:enhance={() => {
+														return async ({ update }) => update();
+													}}
+												>
+													<input type="hidden" name="set_id" value={data.selectedSetId} />
+													<input type="hidden" name="challenge_id" value={challenge.id} />
+													<button
+														type="submit"
+														onclick={(e) => {
+															if (bs.outstandingTeamIds.length > 0) {
+																const names = bs.outstandingTeamIds
+																	.map((id) => teamLabel(id))
+																	.join(', ');
+																if (
+																	!confirm(
+																		`Resolve battle with ${bs.outstandingTeamIds.length} team(s) still outstanding (${names})? They'll rank last.`
+																	)
+																) {
+																	e.preventDefault();
+																}
+															}
+														}}
+														class="rounded bg-amber-950 px-1.5 py-0.5 text-[10px] font-semibold text-amber-400 hover:bg-amber-900"
+													>
+														Resolve now{bs.outstandingTeamIds.length > 0
+															? ` (${bs.outstandingTeamIds.length} outstanding)`
+															: ''}
+													</button>
+												</form>
+											{/if}
+										</div>
 									{/if}
 								</div>
 

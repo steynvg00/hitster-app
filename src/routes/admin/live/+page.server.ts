@@ -2,6 +2,26 @@ import { fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
 import { TEAM_COLOR_ORDER } from '$lib/server/randomize';
+import { parseBattleConfig } from '$lib/battle-ranking';
+import { resolveBattle } from '$lib/server/battle';
+
+// Battle mode (stuk 2) turnout shape — module-scoped so BOTH the early-return
+// (no active sets) and main load() branches agree on the type; otherwise
+// TypeScript infers Record<string, BattleStatus> | {} and the {} half has no
+// index signature for the .svelte template's data.battleStatus[challenge.id].
+type BattleRankEntry = {
+	team_id: string;
+	rank: number;
+	raw_score: number;
+	awarded: number;
+	elapsed_seconds: number | null;
+};
+type BattleStatus = {
+	resolved: boolean;
+	ranking: BattleRankEntry[] | null;
+	outstandingTeamIds: string[];
+	hasSubmission: boolean;
+};
 
 export const load: PageServerLoad = async ({ url }) => {
 	const db = createAdminClient();
@@ -55,7 +75,8 @@ export const load: PageServerLoad = async ({ url }) => {
 			attempts: [],
 			submissions: [],
 			activity: [],
-			teamPowerups: []
+			teamPowerups: [],
+			battleStatus: {} as Record<string, BattleStatus>
 		};
 	}
 
@@ -73,7 +94,7 @@ export const load: PageServerLoad = async ({ url }) => {
 		db.from('players').select('id, display_name, photo_url, team_id').eq('set_id', selectedSetId),
 		db
 			.from('set_challenges')
-			.select('id, challenge_id, position')
+			.select('id, challenge_id, position, battle_resolved_at, battle_ranking')
 			.eq('set_id', selectedSetId)
 			.order('position')
 	]);
@@ -92,7 +113,7 @@ export const load: PageServerLoad = async ({ url }) => {
 			challengeIds.length
 				? db
 						.from('challenges')
-						.select('id, title, variant, timer_seconds, stage_label, status')
+						.select('id, title, variant, timer_seconds, stage_label, status, points_config')
 						.in('id', challengeIds)
 				: { data: [] as never[] },
 			challengeIds.length
@@ -145,6 +166,34 @@ export const load: PageServerLoad = async ({ url }) => {
 		powerup_types: row.powerup_types
 	}));
 
+	// Battle mode (stuk 2): per-battle-challenge turnout, for the "Resolve now"
+	// host fallback (absentee teams block the auto-hook in scoreAndPersistSubmission
+	// on purpose — this is where the host steps in). Same parseBattleConfig the
+	// editor + resolveBattle read, so this can never drift from what's configured.
+	const setChallengeByChallenge = new Map(
+		(setChallengeRows ?? []).map((sc) => [sc.challenge_id, sc])
+	);
+	const teamIds = teams.map((t) => t.id);
+	const battleStatus: Record<string, BattleStatus> = {};
+	for (const ch of challenges) {
+		const { enabled } = parseBattleConfig((ch as { points_config?: unknown }).points_config);
+		if (!enabled) continue;
+		const sc = setChallengeByChallenge.get(ch.id) as
+			| { battle_resolved_at?: string | null; battle_ranking?: unknown }
+			| undefined;
+		const finishedTeamIds = new Set(
+			(attemptsResult.data ?? [])
+				.filter((a) => a.challenge_id === ch.id && a.ended_at != null)
+				.map((a) => a.team_id)
+		);
+		battleStatus[ch.id] = {
+			resolved: sc?.battle_resolved_at != null,
+			ranking: (sc?.battle_ranking as BattleRankEntry[] | null) ?? null,
+			outstandingTeamIds: teamIds.filter((id) => !finishedTeamIds.has(id)),
+			hasSubmission: (subsResult.data ?? []).some((s) => s.challenge_id === ch.id)
+		};
+	}
+
 	return {
 		activeSets: setsWithPlayers,
 		selectedSetId,
@@ -155,7 +204,8 @@ export const load: PageServerLoad = async ({ url }) => {
 		attempts: attemptsResult.data ?? [],
 		submissions: subsResult.data ?? [],
 		activity: activityResult.data ?? [],
-		teamPowerups
+		teamPowerups,
+		battleStatus
 	};
 };
 
@@ -209,5 +259,48 @@ export const actions: Actions = {
 		});
 
 		return { success: true };
+	},
+
+	// Battle mode (stuk 2): the host's absentee fallback. The auto-hook in
+	// scoreAndPersistSubmission only resolves once EVERY set-team has an ended
+	// attempt — a team that never scanned the challenge blocks it on purpose. This
+	// is the real, host-auth-gated production action (this route is under the
+	// /admin layout guard) calling the SAME resolveBattle the auto-hook and the
+	// dev-only /api/dev/battle-resolve harness endpoint both use — one engine,
+	// three callers.
+	resolveBattleNow: async ({ request }) => {
+		const db = createAdminClient();
+		const data = await request.formData();
+		const setId = data.get('set_id') as string | null;
+		const challengeId = data.get('challenge_id') as string | null;
+		if (!setId || !challengeId) return fail(400, { error: 'Missing set_id or challenge_id' });
+
+		const { data: ch } = await db
+			.from('challenges')
+			.select('points_config')
+			.eq('id', challengeId)
+			.maybeSingle();
+		const { enabled } = parseBattleConfig(ch?.points_config);
+		if (!enabled) return fail(400, { error: 'Not a battle challenge' });
+
+		const { data: sc } = await db
+			.from('set_challenges')
+			.select('battle_resolved_at')
+			.eq('set_id', setId)
+			.eq('challenge_id', challengeId)
+			.maybeSingle();
+		if ((sc as { battle_resolved_at?: string | null } | null)?.battle_resolved_at) {
+			return fail(400, { error: 'Already resolved' });
+		}
+
+		const { count } = await db
+			.from('submissions')
+			.select('*', { count: 'exact', head: true })
+			.eq('challenge_id', challengeId);
+		if (!count) return fail(400, { error: 'No submissions yet — nothing to resolve' });
+
+		const result = await resolveBattle(db, setId, challengeId);
+		if (!result.resolved) return fail(409, { error: 'Resolution was already claimed' });
+		return { success: true, action: 'resolveBattleNow' };
 	}
 };
