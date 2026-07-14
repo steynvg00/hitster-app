@@ -3,6 +3,8 @@ import type { Actions, PageServerLoad } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
 import { TEAM_COLOR_ORDER } from '$lib/server/randomize';
 import { clearCrownAndPowerups, resetGameState } from '$lib/server/reset';
+import { getRevealableBattles } from '$lib/server/battle';
+import { planBattleReveal, planTeamRevealState } from '$lib/recap-flow';
 
 export const load: PageServerLoad = async ({ params }) => {
 	const db = createAdminClient();
@@ -14,11 +16,13 @@ export const load: PageServerLoad = async ({ params }) => {
 
 	const scopedColors = TEAM_COLOR_ORDER.slice(0, gameSet.team_count);
 
-	// Load teams, set challenges, submissions, and players in parallel
-	const [{ data: teams }, { data: setChallenges }, { data: players }] = await Promise.all([
+	// Load teams, set challenges, submissions, players, and the reveal-order
+	// battle list (stuk 3b — host phase indicator) in parallel
+	const [{ data: teams }, { data: setChallenges }, { data: players }, battles] = await Promise.all([
 		db.from('teams').select('id, color, display_name, score').in('color', scopedColors),
 		db.from('set_challenges').select('challenge_id').eq('set_id', id),
-		db.from('players').select('id, display_name, photo_url, team_id').eq('set_id', id)
+		db.from('players').select('id, display_name, photo_url, team_id').eq('set_id', id),
+		getRevealableBattles(db, id)
 	]);
 
 	const challengeIds = (setChallenges ?? []).map((sc) => sc.challenge_id);
@@ -112,22 +116,57 @@ export const load: PageServerLoad = async ({ params }) => {
 		gameSet,
 		rankedTeams, // index 0 = last place, index N-1 = first place
 		playersByTeam,
-		fastestAnswers
+		fastestAnswers,
+		// Reveal-order battle list (stuk 3b). Host-side only: this pass drives the
+		// phase indicator and the reveal counter; the player/TV battle surfaces
+		// are stuk 3c.
+		battles: battles.map((b) => ({ challenge_id: b.challenge_id, title: b.title }))
 	};
 };
 
 export const actions: Actions = {
-	// Reveal the next team (lowest unranked)
+	// Reveal the next thing: a battle while in the battle_reveal phase, otherwise
+	// the next team (lowest unranked).
 	reveal: async ({ params }) => {
 		const db = createAdminClient();
 
 		const { data: gameSet } = await db
 			.from('game_sets')
-			.select('id, status, team_count, recap_ranking, recap_reveal_index, recap_state')
+			.select(
+				'id, status, team_count, recap_ranking, recap_reveal_index, recap_state, battle_reveal_index'
+			)
 			.eq('id', params.id)
 			.maybeSingle();
 
 		if (!gameSet || !gameSet.recap_state) return fail(400, { error: 'Recap not started' });
+
+		// ── Battle reveal phase (stuk 3b) ───────────────────────────────────────
+		// Handled entirely before the team cascade and always early-returns, so the
+		// team-reveal logic below (and every recap_reveal_index site that reads it)
+		// is reached only once this phase has handed over — untouched by battles.
+		if (gameSet.recap_state === 'battle_reveal') {
+			const battles = await getRevealableBattles(db, params.id);
+			const step = planBattleReveal(gameSet.battle_reveal_index ?? 0, battles.length);
+
+			if (step.kind === 'battle') {
+				// Still battles to show: advance the battle counter, hold the phase.
+				await db
+					.from('game_sets')
+					.update({ battle_reveal_index: step.battleRevealIndex })
+					.eq('id', params.id);
+				return {
+					success: true,
+					revealedBattleIndex: step.battleRevealIndex - 1,
+					battlesTotal: battles.length
+				};
+			}
+
+			// The click after the last battle: hand over to the team cascade.
+			// recap_reveal_index is deliberately NOT written here — it is already 0
+			// and the existing cascade must start from exactly where it always did.
+			await db.from('game_sets').update({ recap_state: 'revealing' }).eq('id', params.id);
+			return { success: true, phase: 'revealing' };
+		}
 
 		const scopedColors = TEAM_COLOR_ORDER.slice(0, gameSet.team_count);
 
@@ -166,16 +205,22 @@ export const actions: Actions = {
 		const newIndex = (gameSet.recap_reveal_index ?? 0) + 1;
 		if (newIndex > ranking.length) return fail(400, { error: 'All teams already revealed' });
 
+		// The last team's reveal ends the recap — planTeamRevealState makes the dead
+		// 'complete' state real (see its docstring: the player surfaces already read
+		// it, nothing ever wrote it). Takes the already-computed newIndex, so the
+		// index arithmetic above is untouched.
+		const nextState = planTeamRevealState(newIndex, ranking.length);
+
 		await db
 			.from('game_sets')
 			.update({
 				recap_ranking: ranking as never,
 				recap_reveal_index: newIndex,
-				recap_state: 'revealing'
+				recap_state: nextState
 			})
 			.eq('id', params.id);
 
-		return { success: true, revealedIndex: newIndex - 1 };
+		return { success: true, revealedIndex: newIndex - 1, complete: nextState === 'complete' };
 	},
 
 	// End the set: set inactive, clear all game state so dashboard returns to "No game running"
@@ -215,6 +260,7 @@ export const actions: Actions = {
 					recap_state: 'pending',
 					recap_ranking: [] as never,
 					recap_reveal_index: 0,
+					battle_reveal_index: 0,
 					assignment_slots: [] as never,
 					assignment_index: 0
 				})

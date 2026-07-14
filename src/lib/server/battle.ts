@@ -250,3 +250,62 @@ export async function maybeResolveBattle(
 
 	await resolveBattle(admin, setId, challengeId);
 }
+
+// ─── Reveal phase (stuk 3b) ──────────────────────────────────────────────────
+
+export type RevealableBattle = {
+	challenge_id: string;
+	position: number;
+	title: string;
+	battle_ranking: BattleEntry[];
+};
+
+/**
+ * The battles a set's recap will reveal, in reveal order (set_challenges.position).
+ *
+ * "Revealable" = battle_ranking IS NOT NULL, which is exactly the set of battles
+ * that actually resolved. Stuk 3a force-resolves every battle-with-submissions at
+ * startRecap, so by recap time this is settled and stable: a zero-submission
+ * battle (or one whose resolution failed) keeps battle_ranking NULL and is simply
+ * excluded — revealing an empty ladder would be worse than not revealing it.
+ *
+ * Deliberately NOT filtered on points_config.battle.enabled: battle_ranking is
+ * only ever written by resolveBattle, so a non-empty ranking already proves the
+ * challenge was battle-enabled when it resolved. Re-parsing the config here would
+ * mean a host toggling battle OFF after resolution silently drops a battle the
+ * teams already played and were scored on, mid-recap.
+ *
+ * Single source of truth for both the phase-entry decision (startRecap) and the
+ * per-click advance (the recap reveal action) — the count must not drift between
+ * the two, or the phase could end early and strand a battle unrevealed.
+ */
+export async function getRevealableBattles(
+	admin: AdminClient,
+	setId: string
+): Promise<RevealableBattle[]> {
+	const { data: scRows } = await admin
+		.from('set_challenges')
+		.select('challenge_id, position, battle_ranking')
+		.eq('set_id', setId)
+		.not('battle_ranking', 'is', null)
+		.order('position');
+
+	const rows = scRows ?? [];
+	if (rows.length === 0) return [];
+
+	const { data: chs } = await admin
+		.from('challenges')
+		.select('id, title')
+		.in(
+			'id',
+			rows.map((r) => r.challenge_id)
+		);
+	const titleById = new Map((chs ?? []).map((c) => [c.id, c.title]));
+
+	return rows.map((r) => ({
+		challenge_id: r.challenge_id,
+		position: r.position,
+		title: titleById.get(r.challenge_id) ?? 'Battle',
+		battle_ranking: (r.battle_ranking ?? []) as BattleEntry[]
+	}));
+}

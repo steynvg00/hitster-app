@@ -112,6 +112,7 @@ export const actions: Actions = {
 				recap_state: 'pending',
 				recap_ranking: [] as never,
 				recap_reveal_index: 0,
+				battle_reveal_index: 0,
 				assignment_slots: assignment_slots as never,
 				assignment_index: 0
 			})

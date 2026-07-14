@@ -438,6 +438,7 @@ export type Database = {
 					recap_state: string;
 					recap_ranking: string[];
 					recap_reveal_index: number;
+					battle_reveal_index: number;
 					scores_hidden: boolean;
 					nfc_lock_enabled: boolean;
 					team_selection_mode: 'random' | 'selectable';
@@ -468,6 +469,7 @@ export type Database = {
 					recap_state?: string;
 					recap_ranking?: string[];
 					recap_reveal_index?: number;
+					battle_reveal_index?: number;
 					scores_hidden?: boolean;
 					nfc_lock_enabled?: boolean;
 					team_selection_mode?: 'random' | 'selectable';
@@ -498,6 +500,7 @@ export type Database = {
 					recap_state?: string;
 					recap_ranking?: string[];
 					recap_reveal_index?: number;
+					battle_reveal_index?: number;
 					scores_hidden?: boolean;
 					nfc_lock_enabled?: boolean;
 					team_selection_mode?: 'random' | 'selectable';
