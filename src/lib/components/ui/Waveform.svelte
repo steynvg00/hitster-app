@@ -6,17 +6,9 @@
 	// reactive $effect that fires when isReady becomes true).
 	const mediaElementSourceCache = new WeakMap<HTMLAudioElement, MediaElementAudioSourceNode>();
 
-	/** Tone.PitchShift grain window (seconds) for a plain pitch effect with no
-	 *  per-challenge window_size set. Tone's own nominal range is 0.03–0.1. */
+	/** Fallback Tone.PitchShift grain window (seconds) for a pitch effect whose row
+	 *  predates window_size. Tone's own nominal range is 0.03–0.1. */
 	const DEFAULT_PITCH_WINDOW = 0.1;
-
-	/** Grain window used when the PitchShift carries the varispeed tempo correction.
-	 *  RETUNE HERE — this is the single knob for the tempo artefact. Raised from 0.1
-	 *  to 0.2 because the correction lands on bass-heavy material where a 0.1 s grain
-	 *  is only ~6 cycles of a 60 Hz kick and measured dirtiest of everything tried.
-	 *  Above Tone's nominal 0.1 ceiling deliberately; the cost is transient smearing,
-	 *  so if kicks start to flam, come back down (0.15 was equally clean at 60 Hz). */
-	const VARISPEED_PITCH_WINDOW = 0.2;
 
 	function getOrCreateMediaElementSource(
 		audioEl: HTMLAudioElement,
@@ -106,24 +98,11 @@
 	let appliedSig: string | null = null;
 	let applyInFlight: Promise<void> | null = null;
 
-	/** DEV-only A/B switch for the tempo strategy. `window.__varispeedOff = true`
-	 *  forces preservesPitch=true and (via the readback guard) a zero correction, i.e.
-	 *  the browser's WSOLA stretcher with exact pitch — what reverting fix 4 would
-	 *  ship. Default/false keeps fix 4: varispeed + granular pitch correction.
-	 *  Lets the same clip be judged both ways without recompiling. Elided in prod. */
-	function varispeedDisabled(): boolean {
-		return (
-			import.meta.env.DEV &&
-			typeof window !== 'undefined' &&
-			(window as unknown as Record<string, unknown>).__varispeedOff === true
-		);
-	}
-
-	/** The chain's identity. The A/B flag is part of it so that flipping
-	 *  __varispeedOff invalidates appliedSig and the next play rebuilds — otherwise
-	 *  ensureChain would no-op and the toggle would appear to do nothing. */
+	/** The chain's identity — one definition, used by both ensureChain() and
+	 *  applyEffects() so the two can never derive it differently and disagree about
+	 *  whether the applied chain is current. */
 	function configSig(fx: EffectsConfig | null | undefined): string {
-		return JSON.stringify(fx ?? {}) + (varispeedDisabled() ? '|novarispeed' : '');
+		return JSON.stringify(fx ?? {});
 	}
 
 	/** Idempotent, retryable chain establishment. Fast no-op when the chain is
@@ -327,25 +306,24 @@
 		mediaEl.volume = 1;
 		stopReversePlayback();
 
-		// ── Tempo (fix 4: varispeed + PitchShift correction) ──────────────────────
-		// The browser's preservesPitch time-stretcher (WSOLA) glitches on music, so
-		// when rate ≠ 1 we take it out of the pipeline: preservesPitch = false makes
-		// playbackRate plain varispeed (speed and pitch move together, glitch-free)
-		// and the chain adds a PitchShift that puts the pitch back.
+		// ── Tempo (browser time-stretcher) ────────────────────────────────────────
+		// preservesPitch = true: playbackRate time-stretches WITHOUT moving pitch, so
+		// tempo needs no correction, no PitchShift, and no Web Audio node at all.
 		//
-		// DERIVATION of the correction sign — varispeed at rate r multiplies every
-		// frequency by r, i.e. transposes by +12·log2(r) semitones (r>1 up, r<1 down).
-		// For a desired net transposition P (the pitch effect; P = 0 for tempo alone):
-		//     12·log2(r) + C = P   ⇒   C = P − 12·log2(r)
-		//   r = 1.25 → C = P − 3.86 st (correct DOWN);  r = 0.8 → C = P + 3.86 st (UP).
-		// Measured, not assumed: a 440 Hz tone through a captured media element at
-		// r = 1.25 with preservesPitch=false comes out at 550 Hz (= +3.86 st) in
-		// Chromium, Firefox and WebKit alike — so C must be negative there.
-		// Clamped at apply time, not in storage: a challenge saved before the range was
-		// narrowed (or a preset, or a hand-edited JSONB row) would otherwise demand a
-		// correction far outside what the granular shifter can deliver — a legacy 2.0×
-		// would ask for −12 st. Clamping here means playbackRate AND the correction
-		// below both derive from the same bounded rate, so they cannot disagree.
+		// This replaced fix 4's varispeed (preservesPitch=false + a −12·log2(rate)
+		// PitchShift correction), which A/B measurement rejected. On a hard-bass kick
+		// train the stretcher held the dry reference's 60 Hz sub bin exactly at both
+		// 0.9× and 1.2× and kept transients intact, while the granular correction
+		// landed ~1 st FLAT on the sub and smeared transients below even the dry
+		// signal — audibly "low and muddy", and engine-dependent to boot. Tone's
+		// PitchShift is a crude two-delay-line shifter whose down-shift (what rate > 1
+		// needs) is erratic exactly at bass fundamentals, i.e. exactly this material.
+		//
+		// Varispeed only ever existed to dodge the stretcher's WSOLA artefacts at
+		// extreme rates. Bounding the rate to 0.85–1.2 (see $lib/audio-limits) keeps
+		// WSOLA in the range it was designed for, which removed the reason for the
+		// correction rather than improving it.
+		//
 		// The `&& fx.tempo.rate` guard is deliberate: a stored 0 (or absent) rate means
 		// "no tempo", and must stay 1 rather than clamp up to the 0.85 floor.
 		const tempoRate = fx?.tempo?.enabled && fx.tempo.rate ? clampTempoRate(fx.tempo.rate) : 1;
@@ -353,33 +331,15 @@
 			mozPreservesPitch?: boolean;
 			webkitPreservesPitch?: boolean;
 		};
-		// __varispeedOff (DEV) hands tempo back to the browser stretcher: preservesPitch
-		// stays true, and the readback guard below then derives a zero correction on its
-		// own — the A/B needs no second code path, which is the point of the guard.
-		const noVarispeed = varispeedDisabled();
-		const preserve = tempoRate === 1 || noVarispeed;
-		mediaElAny.preservesPitch = preserve;
-		mediaElAny.mozPreservesPitch = preserve;
-		mediaElAny.webkitPreservesPitch = preserve;
+		mediaElAny.preservesPitch = true;
+		mediaElAny.mozPreservesPitch = true;
+		mediaElAny.webkitPreservesPitch = true;
 		mediaEl.playbackRate = tempoRate;
 
-		// Read back rather than assume. The correction above is only valid if the
-		// engine ACTUALLY dropped pitch preservation; if it silently kept the
-		// stretcher on, applying C anyway detunes by the full −12·log2(r) (≈4 st at
-		// 1.25×) — audible as "too low when faster / too high when slower". Deriving
-		// this once here and threading it into buildChain also removes the previous
-		// split-brain hazard, where applyEffects decided whether to engage varispeed
-		// and buildChain independently re-decided whether to correct for it: nothing
-		// forced those two derivations to agree.
-		const varispeedActive =
-			!noVarispeed && tempoRate !== 1 && mediaElAny.preservesPitch === false;
-		const varispeedCorrection = varispeedActive ? -12 * Math.log2(tempoRate) : 0;
-
 		// ── Decide if we need the Web Audio chain ─────────────────────────────────
-		// tempoRate ≠ 1 requires the graph for its varispeed pitch correction —
-		// tempo-alone now routes through the chain too (it stuttered natively).
+		// Tempo is absent here on purpose: it is handled entirely by the media element
+		// above, so a tempo-only clip plays natively with no graph.
 		const needsWebAudio =
-			tempoRate !== 1 ||
 			fx?.pitch?.enabled ||
 			fx?.lowpass?.enabled ||
 			fx?.highpass?.enabled ||
@@ -421,19 +381,15 @@
 		if (generation !== applyEffectsGeneration) return;
 
 		try {
-			await buildChain(Tone, ctx, mediaEl, fx, generation, varispeedCorrection);
+			await buildChain(Tone, ctx, mediaEl, fx, generation);
 			if (generation !== applyEffectsGeneration) return;
 			appliedSig = sig;
 		} catch (err) {
 			// Never leave the element captured-but-unrouted (silent): fall back to a
 			// direct source→destination connection — dry playback, but audible.
 			console.error('[Waveform] effect chain build failed — playing dry', err);
-			// The varispeed pitch correction lived in the failed chain — hand tempo
-			// back to the browser stretcher so pitch stays right (its stutter is
-			// acceptable in this failure-only path).
-			mediaElAny.preservesPitch = true;
-			mediaElAny.mozPreservesPitch = true;
-			mediaElAny.webkitPreservesPitch = true;
+			// Tempo needs no repair here: it lives on the media element, not in this
+			// chain, so it survives a failed build and stays pitch-correct.
 			disposeToneNodes();
 			try {
 				if (toneSourceNode) {
@@ -454,9 +410,7 @@
 		ctx: AudioContext,
 		mediaEl: HTMLAudioElement,
 		fx: EffectsConfig | null | undefined,
-		generation: number,
-		/** Semitones of varispeed compensation; 0 unless varispeed actually engaged. */
-		varispeedCorrection: number
+		generation: number
 	) {
 		const source = getOrCreateMediaElementSource(mediaEl, ctx);
 		toneSourceNode = source;
@@ -554,35 +508,14 @@
 			chain.push(toneReverb);
 		}
 
-		// One PitchShift serves both jobs — never two stacked instances (each adds
-		// ~100ms granular latency): the pitch EFFECT's semitones plus the varispeed
-		// correction C computed by applyEffects (see the derivation there). C arrives
-		// as a parameter and is already 0 unless varispeed actually engaged, so the
-		// correction can never be applied to audio the browser is still pitch-
-		// preserving. At net 0 the node is omitted entirely — even a 0-semitone
-		// PitchShift runs its full granular topology (two LFO-modulated delay lines +
-		// a crossfade LFO, all started at construction) and was a stutter source as
-		// an always-on "pass-through".
-		const effectSemitones = fx?.pitch?.enabled ? fx.pitch.semitones : 0;
-		const netSemitones = effectSemitones + varispeedCorrection;
-		if (netSemitones !== 0) {
-			// Grain window. Only overridden when this node is carrying the varispeed
-			// correction; a pure pitch effect keeps the host's per-challenge
-			// window_size, so retuning tempo can't silently change what the editor
-			// configured. Measured (Tone.PitchShift, −3.86 st, purity = peak-lobe
-			// energy / total): at a 60 Hz kick fundamental, windowSize 0.1 is the
-			// WORST of everything tested (72%), while 0.15–0.2 sit at ~99% — a grain
-			// window has to span several periods, and 0.1 s is only ~6 cycles at 60 Hz.
-			// The counter-pressure is time smearing: a longer window flams transients,
-			// and hard-bass is all transient. Hence a named constant — this is an
-			// ear call, not a solved number.
-			const windowSize =
-				varispeedCorrection !== 0
-					? VARISPEED_PITCH_WINDOW
-					: (fx?.pitch?.enabled ? fx.pitch.window_size : DEFAULT_PITCH_WINDOW);
+		// The pitch EFFECT only — tempo no longer contributes a correction here. Skipped
+		// at 0 semitones: even a 0-semitone PitchShift runs its full granular topology
+		// (two LFO-modulated delay lines + a crossfade LFO, all started at
+		// construction), so an always-on "pass-through" is a real artefact source.
+		if (fx?.pitch?.enabled && fx.pitch.semitones !== 0) {
 			tonePitchShift = new Tone.PitchShift({
-				pitch: netSemitones,
-				windowSize
+				pitch: fx.pitch.semitones,
+				windowSize: fx.pitch.window_size ?? DEFAULT_PITCH_WINDOW
 			});
 			chain.push(tonePitchShift);
 		}

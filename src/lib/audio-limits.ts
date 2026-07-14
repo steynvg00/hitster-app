@@ -1,28 +1,30 @@
 /**
  * Bounds for the tempo effect's playback rate.
  *
- * Why these are narrow: tempo is implemented as varispeed (playbackRate with
- * preservesPitch = false), and the pitch it displaces has to be put back by a
- * Tone.PitchShift of −12·log2(rate) semitones. That shifter is a crude two-delay-line
- * granular design whose artefact grows with |log2(rate)|, and whose down-shift (what
- * rate > 1 needs) is its dirty direction. The old 0.25–4.0 range demanded corrections
- * of up to ±24 semitones, which no realtime granular shifter does cleanly on
- * transient-heavy bass. 0.85–1.2 caps it at −3.16 / +2.81 semitones.
+ * These are load-bearing, not cosmetic. Tempo is the browser's WSOLA time-stretcher
+ * (playbackRate with preservesPitch = true). WSOLA is clean at mild rates but has to
+ * repeat or drop grains as the rate departs from 1, which is what produced the
+ * stuttering that started this whole investigation — worst when slowing down, and
+ * unusable at the old 0.25–4.0 extremes. 0.85–1.2 keeps the stretcher inside the
+ * range it was designed for, where it measured transparent: on a hard-bass kick train
+ * it held the dry reference's 60 Hz sub bin exactly at both 0.9× and 1.2×, with
+ * transients intact.
  *
- * Be honest about what this buys: the ceiling moving 1.25 → 1.2 only takes the
- * correction from −3.86 st to −3.16 st (18% less), so it does NOT on its own rescue
- * material that already sounded muddy at 1.25. Its real job is preventing the absurd
- * end of the old range. The correction only gets genuinely small further in — 1.1×
- * is −1.65 st, less than half of 1.25×. If 1.2 still sounds poor, lowering
- * TEMPO_RATE_MAX to ~1.1 is the next lever, which is why these are named constants.
+ * This range is also why tempo needs no pitch correction. The alternative — varispeed
+ * (preservesPitch = false) plus a −12·log2(rate) Tone.PitchShift — was built, measured
+ * and rejected: it detuned a 60 Hz sub by ~1 st and smeared transients, because Tone's
+ * crude delay-line shifter is erratic exactly at bass fundamentals. Narrowing the
+ * range removed the need for that machinery rather than improving it. Widening this
+ * range again would bring the stutter back and re-open that whole problem; the real
+ * fix for a wide range is offline pre-rendering, not a client-side shifter.
  *
  * A guessing game needs a nudge in tempo, not a remix — so the range is bounded by
- * what the DSP can actually deliver rather than by what playbackRate will accept.
+ * what the playback path can actually deliver cleanly, not by what playbackRate accepts.
  *
- * These bounds are the single source of truth: EffectsEditor's slider uses them, and
- * Waveform clamps with them at apply time so a legacy saved value (or a preset, or a
- * hand-edited JSONB row) can never demand a correction outside the supported range.
- * Stored data is left untouched — the clamp lives only in the apply path.
+ * Single source of truth: EffectsEditor's slider uses these, and Waveform clamps with
+ * them at apply time, so a legacy saved value (or a preset, or a hand-edited JSONB row)
+ * can never drive the stretcher outside its supported range. Stored data is left
+ * untouched — the clamp lives only in the apply path.
  */
 export const TEMPO_RATE_MIN = 0.85;
 export const TEMPO_RATE_MAX = 1.2;
