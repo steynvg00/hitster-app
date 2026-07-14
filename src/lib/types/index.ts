@@ -59,10 +59,9 @@ export interface EffectsConfig {
 		depth: number;
 		stages: number;
 		feedback: number;
-		stereo_offset_deg: number;
 	};
 	flanger?: { enabled: boolean; rate_hz: number; depth: number; feedback: number };
-	bitcrusher?: { enabled: boolean; bits: number; sample_rate_reduction: number };
+	bitcrusher?: { enabled: boolean; bits: number };
 	ring_mod?: { enabled: boolean; freq_hz: number; depth: number };
 	delay?: { enabled: boolean; time_ms: number; feedback: number; wet: number };
 	reverb?: { enabled: boolean; decay_s: number; pre_delay_ms: number; wet: number };

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { onMount, onDestroy } from 'svelte';
 	import type { EffectsConfig, EffectPreset } from '$lib/types/index.js';
 	import { BUILTIN_PRESETS } from '$lib/effects-presets.js';
 	import SearchablePicker from '$lib/components/admin/SearchablePicker.svelte';
@@ -76,8 +77,7 @@
 				rate_hz: 0.5,
 				depth: 0.5,
 				stages: 4,
-				feedback: 0.5,
-				stereo_offset_deg: 0
+				feedback: 0.5
 			}
 		);
 	}
@@ -85,7 +85,7 @@
 		return cfg.flanger ?? { enabled: false, rate_hz: 0.25, depth: 0.5, feedback: 0.3 };
 	}
 	function bitcrusherOf(cfg: EffectsConfig) {
-		return cfg.bitcrusher ?? { enabled: false, bits: 8, sample_rate_reduction: 0 };
+		return cfg.bitcrusher ?? { enabled: false, bits: 8 };
 	}
 	function ringModOf(cfg: EffectsConfig) {
 		return cfg.ring_mod ?? { enabled: false, freq_hz: 30, depth: 1 };
@@ -106,18 +106,65 @@
 	);
 
 	let saveTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+	// Per-tab save status, surfaced in the tab header. 'error' offers a retry so a
+	// failed ?/saveTabEffects can't silently drop the host's edit.
+	let saveState = $state<Record<string, 'saving' | 'saved' | 'error' | undefined>>({});
+	// Tabs whose latest edit hasn't been confirmed saved — flushed on navigation/unload
+	// so a debounce still pending at nav time isn't lost.
+	const dirtyTabs = new Set<string>();
 
 	function schedSave(tabId: string) {
+		dirtyTabs.add(tabId);
 		clearTimeout(saveTimers[tabId]);
 		saveTimers[tabId] = setTimeout(() => doSave(tabId), 600);
 	}
 
 	async function doSave(tabId: string) {
-		const fd = new FormData();
-		fd.append('tab_id', tabId);
-		fd.append('effects_json', JSON.stringify(tabEffects[tabId]));
-		await fetch('?/saveTabEffects', { method: 'POST', body: fd });
+		saveState[tabId] = 'saving';
+		try {
+			const fd = new FormData();
+			fd.append('tab_id', tabId);
+			fd.append('effects_json', JSON.stringify(tabEffects[tabId]));
+			const res = await fetch('?/saveTabEffects', { method: 'POST', body: fd });
+			if (!res.ok) throw new Error(`save failed: ${res.status}`);
+			dirtyTabs.delete(tabId);
+			saveState[tabId] = 'saved';
+		} catch {
+			// Keep the tab dirty so the unload flush still tries, and expose a retry.
+			saveState[tabId] = 'error';
+		}
 	}
+
+	// Flush any pending/failed edit immediately. sendBeacon survives page unload
+	// (a plain fetch would be cancelled); it's fire-and-forget, which is exactly
+	// what a last-ditch save needs. The 600ms debounce timer is cleared first so
+	// we don't double-send.
+	function flushPending() {
+		for (const tabId of dirtyTabs) {
+			clearTimeout(saveTimers[tabId]);
+			const fd = new FormData();
+			fd.append('tab_id', tabId);
+			fd.append('effects_json', JSON.stringify(tabEffects[tabId]));
+			navigator.sendBeacon('?/saveTabEffects', fd);
+		}
+		dirtyTabs.clear();
+	}
+
+	function handleBeforeUnload() {
+		if (dirtyTabs.size) flushPending();
+	}
+
+	onMount(() => {
+		window.addEventListener('beforeunload', handleBeforeUnload);
+	});
+
+	onDestroy(() => {
+		// Client-side navigation away: no unload event fires, so flush here too.
+		if (typeof window !== 'undefined') {
+			window.removeEventListener('beforeunload', handleBeforeUnload);
+			if (dirtyTabs.size) flushPending();
+		}
+	});
 
 	function toggleEffect(tabId: string, key: keyof EffectsConfig) {
 		const cfg = tabEffects[tabId] ?? {};
@@ -286,9 +333,25 @@
 				<div class="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
 					<!-- Tab header -->
 					<div class="mb-4 flex items-center justify-between">
-						<span class="text-xs font-bold tracking-widest text-zinc-500 uppercase"
-							>Tab {tabIdx + 1}</span
-						>
+						<div class="flex items-center gap-2">
+							<span class="text-xs font-bold tracking-widest text-zinc-500 uppercase"
+								>Tab {tabIdx + 1}</span
+							>
+							{#if saveState[tab.id] === 'saving'}
+								<span class="text-xs text-zinc-500">Saving…</span>
+							{:else if saveState[tab.id] === 'saved'}
+								<span class="text-xs text-zinc-600">Saved</span>
+							{:else if saveState[tab.id] === 'error'}
+								<span class="text-xs text-red-400">Save failed</span>
+								<button
+									type="button"
+									onclick={() => doSave(tab.id)}
+									class="text-xs font-semibold text-amber-400 hover:text-amber-300"
+								>
+									Retry
+								</button>
+							{/if}
+						</div>
 						<form method="POST" action="?/removeTab" use:enhance class="inline">
 							<input type="hidden" name="tab_id" value={tab.id} />
 							<button
@@ -999,29 +1062,6 @@
 														bitcrusher: {
 															...bitcrusherOf(cfg),
 															bits: Number((e.target as HTMLInputElement).value)
-														}
-													};
-													schedSave(tab.id);
-												}}
-											/>
-										</div>
-										<div>
-											<span class="mb-0.5 block text-xs text-zinc-600"
-												>Sample rate reduction ({bitcrusherOf(cfg).sample_rate_reduction})</span
-											>
-											<input
-												type="range"
-												min="0"
-												max="16"
-												step="1"
-												class="w-full accent-[#00e5ff]"
-												value={bitcrusherOf(cfg).sample_rate_reduction}
-												oninput={(e) => {
-													tabEffects[tab.id] = {
-														...cfg,
-														bitcrusher: {
-															...bitcrusherOf(cfg),
-															sample_rate_reduction: Number((e.target as HTMLInputElement).value)
 														}
 													};
 													schedSave(tab.id);

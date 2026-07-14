@@ -122,14 +122,13 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 	// Fetch clips first — for fragments the source tracks are derived from clip.track_id,
 	// so we need the clip rows before we can build the full trackIds list.
 	const clipsResult = await (clipIds.length
-		? supabase.from('clips').select('id, track_id, storage_path, type, effects').in('id', clipIds)
+		? supabase.from('clips').select('id, track_id, storage_path, type').in('id', clipIds)
 		: Promise.resolve({
 				data: [] as {
 					id: string;
 					track_id: string;
 					storage_path: string;
 					type: string;
-					effects: unknown;
 				}[]
 			}));
 
@@ -196,11 +195,11 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		const tabEffects = (tab as unknown as { effects?: unknown }).effects as EffectsConfig | null;
 		const clipItems = tabClipRows.map((tc) => {
 			const clip = clipMap.get(tc.clip_id);
-			const clipUrl = clip
-				? clip.storage_path.startsWith('http')
-					? clip.storage_path
-					: supabase.storage.from('clips').getPublicUrl(clip.storage_path).data.publicUrl
-				: '';
+			// storage_path is written as a full public URL by the upload endpoint, so it's
+			// used directly. (The old fallback resolved a non-http path against a 'clips'
+			// bucket that doesn't exist — canonical audio lives in the 'audio' bucket — so
+			// it never produced a working URL and is dropped.)
+			const clipUrl = clip?.storage_path ?? '';
 			return {
 				id: tc.id,
 				clipId: tc.clip_id,
