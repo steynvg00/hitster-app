@@ -181,7 +181,305 @@ export type TrackData = {
 	festival?: string | null;
 	vocal_source?: string | null;
 	accepted_titles?: string[] | null;
+	// T1 (migration 0066). Multi-artist list; `artist` remains the joined display
+	// string. Read via artistTargets() with the same array-if-present-else-scalar
+	// fallback accepted_titles uses, so a pre-T1 track scores identically.
+	artists?: string[] | null;
 };
+
+// ─── Artist shares (C1 stuk 1) ────────────────────────────────────────────────
+
+/**
+ * Cost per SURPLUS submitted artist tag — a tag beyond the number of targets the
+ * track actually has. Deliberately small: the host's ask was "extra wrong tags
+ * cost points, but minimal". Named so it's tunable in one place.
+ *
+ * Only surplus tags cost anything. A tag that fits within the target count but
+ * simply doesn't match already costs the player its share by not matching — it is
+ * NOT penalised twice.
+ */
+export const PENALTY_PER_SURPLUS_TAG = 1;
+
+/**
+ * Per-challenge marking of specific artists as BONUS, with their point value:
+ * `{ "MC Villain": 5 }`. Stored at `challenge.points_config.artist_bonus`.
+ *
+ * Keyed by artist NAME, not index: a challenge spans multiple tabs with different
+ * tracks, so an index would be ambiguous across them, and reordering a track's
+ * artists[] would silently repoint the config. A name simply doesn't match on a
+ * track that lacks that artist, which is the desired no-op. Lookup is normalized
+ * (normalizeAnswer) so "mc villain" and "MC Villain" are the same key.
+ *
+ * Written by C1 stuk 2's editor; read here.
+ */
+export type ArtistBonusConfig = Record<string, number>;
+
+/** Read `points_config.artist_bonus` into a validated name→points map. */
+export function resolveArtistBonus(pointsConfig: unknown): ArtistBonusConfig {
+	const pc = (pointsConfig ?? {}) as Record<string, unknown>;
+	const raw = pc.artist_bonus;
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+	const out: ArtistBonusConfig = {};
+	for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
+		if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) continue;
+		if (normalizeAnswer(name) === '') continue;
+		out[name] = value;
+	}
+	return out;
+}
+
+/**
+ * The artist targets for a track: artists[] when set, else the scalar `artist`.
+ * Exactly the accepted_titles fallback, so a track untouched since before T1
+ * scores byte-identically. Empty/punctuation-only names are dropped (the same
+ * unscorable-zero guard scoreField applies to every open_text target).
+ */
+export function artistTargets(track: TrackData): string[] {
+	const raw = track.artists?.length ? track.artists : [track.artist];
+	return raw.filter((a) => normalizeAnswer(a ?? '') !== '');
+}
+
+/**
+ * The tag-list wire format for a multi-artist answer: ONE TAG PER LINE.
+ *
+ * Newline is the separator precisely because no artist name contains one — a
+ * legacy single-input answer ("Sub Zero Project") has no newline, so it parses to
+ * exactly one tag and scores identically to pre-C1. Splitting on " & " or "," was
+ * rejected for that reason: it would silently shred a single artist whose NAME
+ * contains an ampersand (and T1 joins the display string with " & ", so that
+ * collision is real).
+ *
+ * C1 stuk 2's multi-select combobox joins its tags with '\n' to produce this.
+ */
+export function parseArtistTags(submitted: string): string[] {
+	return submitted
+		.split('\n')
+		.map((s) => s.trim())
+		.filter(Boolean);
+}
+
+export type ArtistScoreResult = {
+	/** Main (threshold) points, after the surplus penalty and the zero floor. */
+	mainScore: number;
+	/** Always the artist field's configured max — the mains share exactly this. */
+	mainMax: number;
+	/** Bonus points earned, on top. Never reduced by the penalty, never negative. */
+	bonusScore: number;
+	/** Σ of the bonus values for bonus artists actually present on this track. */
+	bonusMax: number;
+	/** Best per-pair similarity across all matched pairs (display only). */
+	fuzzyScore?: number;
+};
+
+/**
+ * Fraction of the points at stake for one (tag, target) pair, per input mode.
+ *
+ * Mode-aware ON PURPOSE — this is what preserves the regression identity for BOTH
+ * modes. open_text keeps the 0.80/0.65 fuzzy tiers scoreField already applies;
+ * every exact mode (combobox / multiple_choice) keeps the exact trim+lowercase
+ * equality it already applies. Scoring a combobox pick fuzzily would hand full
+ * credit to a near-miss that scores 0 today — a silent regression.
+ */
+function artistPairFraction(tag: string, target: string, mode: InputMode): number {
+	if (mode === 'open_text') {
+		const sim = strSimilarity(tag, target);
+		if (sim >= 0.8) return 1;
+		if (sim >= 0.65) return 0.5;
+		return 0;
+	}
+	return tag.trim().toLowerCase() === target.trim().toLowerCase() ? 1 : 0;
+}
+
+/** Tags beyond this and the exact assignment falls back to greedy. See assignBest. */
+const MAX_TAGS_FOR_EXACT_ASSIGNMENT = 12;
+
+type WeightedTarget = { name: string; weight: number };
+type Assignment = { score: number; usedMask: number; sims: number[] };
+
+/**
+ * Best (target → tag) assignment: each target matched at most once, each tag
+ * consumed at most once, maximising the total points earned.
+ *
+ * EXACT, not greedy-by-similarity, because greedy provably isn't optimal here: a
+ * tag that matches target A at 0.90 (full) and target B at 0.70 (half) alongside
+ * a second tag that only matches A at 0.85 (full) — greedy takes the 0.90 pair
+ * first and strands B, scoring full+nothing, where full+half was available. So the
+ * player would be docked for a *better* guess. Bitmask DP over the tag set fixes
+ * that and is trivially cheap at these sizes (targets × 2^tags × tags; realistic
+ * artist lists are 2–4 names against a handful of tags).
+ *
+ * Weighted so mains (weight = share) and bonus artists (weight = their own points)
+ * both route through one implementation.
+ *
+ * Pairs worth nothing are never assigned — a tag must stay free for a target it
+ * can actually score.
+ */
+function assignBest(
+	targets: WeightedTarget[],
+	tags: string[],
+	availableMask: number,
+	mode: InputMode
+): Assignment {
+	if (targets.length === 0 || tags.length === 0) return { score: 0, usedMask: 0, sims: [] };
+	if (tags.length > MAX_TAGS_FOR_EXACT_ASSIGNMENT) {
+		return assignGreedyFallback(targets, tags, availableMask, mode);
+	}
+
+	let dp = new Map<number, Assignment>();
+	dp.set(0, { score: 0, usedMask: 0, sims: [] });
+
+	for (const t of targets) {
+		const next = new Map<number, Assignment>();
+		const put = (mask: number, cand: Assignment) => {
+			const cur = next.get(mask);
+			if (!cur || cand.score > cur.score) next.set(mask, cand);
+		};
+		for (const [mask, st] of dp) {
+			put(mask, st); // leave this target unmatched
+			for (let gi = 0; gi < tags.length; gi++) {
+				const bit = 1 << gi;
+				if (mask & bit) continue; // tag already used in this branch
+				if (!(availableMask & bit)) continue; // tag consumed by an earlier pass
+				const f = artistPairFraction(tags[gi], t.name, mode);
+				if (f <= 0) continue;
+				put(mask | bit, {
+					score: st.score + f * t.weight,
+					usedMask: st.usedMask | bit,
+					sims: [...st.sims, strSimilarity(tags[gi], t.name)]
+				});
+			}
+		}
+		dp = next;
+	}
+
+	let best: Assignment = { score: 0, usedMask: 0, sims: [] };
+	for (const [, st] of dp) if (st.score > best.score) best = st;
+	return best;
+}
+
+/** Safety valve for absurd tag counts — see MAX_TAGS_FOR_EXACT_ASSIGNMENT. */
+function assignGreedyFallback(
+	targets: WeightedTarget[],
+	tags: string[],
+	availableMask: number,
+	mode: InputMode
+): Assignment {
+	const pairs: { ti: number; gi: number; sim: number; value: number }[] = [];
+	for (let ti = 0; ti < targets.length; ti++) {
+		for (let gi = 0; gi < tags.length; gi++) {
+			if (!(availableMask & (1 << gi))) continue;
+			const f = artistPairFraction(tags[gi], targets[ti].name, mode);
+			if (f > 0) {
+				pairs.push({ ti, gi, sim: strSimilarity(tags[gi], targets[ti].name), value: f * targets[ti].weight });
+			}
+		}
+	}
+	pairs.sort((a, b) => b.value - a.value || b.sim - a.sim);
+	const takenTargets = new Set<number>();
+	const out: Assignment = { score: 0, usedMask: 0, sims: [] };
+	for (const p of pairs) {
+		if (takenTargets.has(p.ti) || out.usedMask & (1 << p.gi)) continue;
+		takenTargets.add(p.ti);
+		out.usedMask |= 1 << p.gi;
+		out.score += p.value;
+		out.sims.push(p.sim);
+	}
+	return out;
+}
+
+/**
+ * The artist field's scorer (C1 stuk 1). Pure — targets, tags and config are all
+ * parameters; the combobox that collects the tags is stuk 2.
+ *
+ * MAIN artists share the field's points (share = max / mainCount) and are matched
+ * greedily against the tags. BONUS artists are worth their configured value ON TOP
+ * and are matched against whatever tags the mains didn't consume — so a missing
+ * bonus artist costs nothing, exactly like a blank bonus field.
+ *
+ * mainMax is ALWAYS the configured max, even when every artist is marked bonus
+ * (mainCount 0 → nothing can score it → 0/max). That's the migration-0038 model
+ * (a) already used for a null/empty target: unscorable scores 0 for everyone and
+ * the max is left alone so the misconfiguration surfaces on the results screen.
+ * It also keeps this consistent with nonBonusFieldMax(), which computes the
+ * threshold max from fieldPoints WITHOUT a track and so must always agree.
+ */
+export function scoreArtistField(
+	submittedTags: string[],
+	targets: string[],
+	artistMaxPoints: number,
+	artistBonus: ArtistBonusConfig = {},
+	mode: InputMode = 'open_text'
+): ArtistScoreResult {
+	const bonusLookup = new Map<string, number>();
+	for (const [name, pts] of Object.entries(artistBonus)) {
+		bonusLookup.set(normalizeAnswer(name), pts);
+	}
+
+	const mainTargets: string[] = [];
+	const bonusTargets: { name: string; points: number }[] = [];
+	for (const t of targets) {
+		const pts = bonusLookup.get(normalizeAnswer(t));
+		if (pts !== undefined) bonusTargets.push({ name: t, points: pts });
+		else mainTargets.push(t);
+	}
+
+	const bonusMax = bonusTargets.reduce((s, b) => s + b.points, 0);
+	const tags = submittedTags.map((t) => t.trim()).filter(Boolean);
+
+	// Unscorable: no targets at all (a track with a blank artist). Main scores 0;
+	// the max is untouched (model (a), see docstring).
+	if (mainTargets.length === 0 && bonusTargets.length === 0) {
+		return { mainScore: 0, mainMax: artistMaxPoints, bonusScore: 0, bonusMax: 0, fuzzyScore: 0 };
+	}
+
+	const allMask = tags.length > 0 ? (1 << tags.length) - 1 : 0;
+	const sims: number[] = [];
+
+	// ── Mains: share the field's points, assigned across all tags ────────────
+	let mainScore = 0;
+	let usedMask = 0;
+	if (mainTargets.length > 0) {
+		const share = artistMaxPoints / mainTargets.length;
+		const a = assignBest(
+			mainTargets.map((name) => ({ name, weight: share })),
+			tags,
+			allMask,
+			mode
+		);
+		mainScore = a.score;
+		usedMask = a.usedMask;
+		sims.push(...a.sims);
+	}
+
+	// ── Bonus: worth their own points, on only the tags the mains didn't take ──
+	let bonusScore = 0;
+	if (bonusTargets.length > 0) {
+		const b = assignBest(
+			bonusTargets.map((t) => ({ name: t.name, weight: t.points })),
+			tags,
+			allMask & ~usedMask,
+			mode
+		);
+		bonusScore = b.score;
+		sims.push(...b.sims);
+	}
+
+	// ── Over-guess penalty ───────────────────────────────────────────────────
+	// Only when the player typed MORE names than the track has targets. Applies to
+	// the main score only; bonus is on top and is never reduced (and never goes
+	// negative). Main floors at 0 — the artist field can't drag a tab below zero.
+	const totalTargets = mainTargets.length + bonusTargets.length;
+	const surplus = Math.max(0, tags.length - totalTargets);
+	const penalty = surplus * PENALTY_PER_SURPLUS_TAG;
+
+	return {
+		mainScore: Math.max(0, Math.round(mainScore) - penalty),
+		mainMax: artistMaxPoints,
+		bonusScore: Math.round(bonusScore),
+		bonusMax,
+		fuzzyScore: sims.length > 0 ? Math.max(...sims) : 0
+	};
+}
 
 // ─── String similarity (Levenshtein) ─────────────────────────────────────────
 
@@ -229,8 +527,9 @@ export function scoreField(
 	submitted: string,
 	track: TrackData,
 	mode: InputMode,
-	maxPoints: number
-): { score: number; fuzzyScore?: number } {
+	maxPoints: number,
+	artistBonus: ArtistBonusConfig = {}
+): { score: number; fuzzyScore?: number; bonusScore?: number; bonusMax?: number } {
 	if (field === 'year') {
 		const diff = Math.abs(parseInt(submitted, 10) - track.year);
 		if (diff === 0) return { score: maxPoints };
@@ -241,6 +540,26 @@ export function scoreField(
 
 	// grouping is scored separately by scoreTabGrouping — return 0 here
 	if (field === 'grouping') return { score: 0 };
+
+	// ── Artist: multi-target shares + per-challenge bonus artists (C1 stuk 1) ──
+	// `score` is main+bonus (what the team is awarded); bonusScore/bonusMax carry
+	// the split so scoreTab can keep the bonus portion out of the threshold math.
+	// A single-artist track with a single tag reduces exactly to the old path.
+	if (field === 'artist') {
+		const r = scoreArtistField(
+			parseArtistTags(submitted),
+			artistTargets(track),
+			maxPoints,
+			artistBonus,
+			mode
+		);
+		return {
+			score: r.mainScore + r.bonusScore,
+			fuzzyScore: r.fuzzyScore,
+			bonusScore: r.bonusScore,
+			bonusMax: r.bonusMax
+		};
+	}
 
 	const trackValue = String(
 		track[field === 'label' ? 'record_label' : (field as keyof TrackData)] ?? ''
@@ -284,20 +603,44 @@ export function buildFieldResults(
 	track: TrackData,
 	fieldModes: Record<string, InputMode>,
 	pointsConfig: Record<string, number>,
-	bonusFields: Set<string> = new Set()
+	bonusFields: Set<string> = new Set(),
+	artistBonus: ArtistBonusConfig = {}
 ): FieldResult[] {
 	return variantFields
 		.filter((f) => f !== 'grouping')
 		.map((field) => {
 			const submitted = answers[field] ?? '';
 			const mode = fieldModes[field] ?? 'open_text';
-			const maxScore = pointsConfig[field] ?? DEFAULT_FIELD_MAX[field] ?? 10;
-			const { score, fuzzyScore } = scoreField(field, submitted, track, mode, maxScore);
+			const fieldMax = pointsConfig[field] ?? DEFAULT_FIELD_MAX[field] ?? 10;
+			const { score, fuzzyScore, bonusScore, bonusMax } = scoreField(
+				field,
+				submitted,
+				track,
+				mode,
+				fieldMax,
+				artistBonus
+			);
+			// The artist field's max is the share pool PLUS any bonus artists this
+			// track actually has — bonus points are extra on top, not carved out of
+			// the field's configured points. Every other field: max is unchanged.
+			const maxScore = fieldMax + (bonusMax ?? 0);
 			const correct =
 				field === 'year'
 					? String(track.year)
-					: String(track[field === 'label' ? 'record_label' : (field as keyof TrackData)] ?? '');
-			return { field, submitted, correct, score, maxScore, fuzzyScore, isBonus: bonusFields.has(field) };
+					: field === 'artist'
+						? artistTargets(track).join(' & ')
+						: String(track[field === 'label' ? 'record_label' : (field as keyof TrackData)] ?? '');
+			return {
+				field,
+				submitted,
+				correct,
+				score,
+				maxScore,
+				fuzzyScore,
+				isBonus: bonusFields.has(field),
+				...(bonusScore !== undefined && bonusScore > 0 ? { bonusScore } : {}),
+				...(bonusMax !== undefined && bonusMax > 0 ? { bonusMax } : {})
+			};
 		});
 }
 
@@ -352,7 +695,8 @@ export function scoreTab(
 	tabSourceTracks: TabSourceTrackData[], // ordered by sort_order
 	tabClips: TabClipData[], // clips for this tab (with fragment_number)
 	playerSlotDrafts: SlotDraft[], // player's answers indexed by slot
-	bonusFields: Set<string> = new Set()
+	bonusFields: Set<string> = new Set(),
+	artistBonus: ArtistBonusConfig = {}
 ): {
 	slotResults: SlotFieldResult[];
 	tabTotal: number;
@@ -368,13 +712,23 @@ export function scoreTab(
 
 	// Threshold (bonus-excluded) sums from a scored FieldResult[]; the results
 	// already carry isBonus (buildFieldResults tags them from bonusFields).
+	//
+	// Two kinds of bonus are subtracted here:
+	//   1. WHOLE-field bonus (isBonus) — skipped entirely, as before.
+	//   2. PARTIAL bonus inside a threshold field (bonusScore/bonusMax) — the
+	//      bonus-artist points inside the artist field (C1 stuk 1). Subtracting
+	//      them is what keeps a bonus artist out of thresholdMax, so it lands in
+	//      the "+N bonus" path: it still counts toward the team's points (base
+	//      includes it) but can't demote a perfect main answer from auto_correct
+	//      and doesn't move the powerup-earning %.
+	// Both default to 0, so every pre-C1 field sums exactly as it did.
 	const thresholdOf = (frs: FieldResult[]): { total: number; max: number } => {
 		let total = 0;
 		let max = 0;
 		for (const fr of frs) {
 			if (fr.isBonus) continue;
-			total += fr.score;
-			max += fr.maxScore;
+			total += fr.score - (fr.bonusScore ?? 0);
+			max += fr.maxScore - (fr.bonusMax ?? 0);
 		}
 		return { total, max };
 	};
@@ -395,7 +749,8 @@ export function scoreTab(
 			src.track,
 			fieldModes,
 			fieldPoints,
-			bonusFields
+			bonusFields,
+			artistBonus
 		);
 		const slotTotal = fieldResultsList.reduce((s, fr) => s + fr.score, 0);
 		const slotMax = fieldResultsList.reduce((s, fr) => s + fr.maxScore, 0);
@@ -453,7 +808,8 @@ export function scoreTab(
 				src.track,
 				fieldModes,
 				fieldPoints,
-				bonusFields
+				bonusFields,
+				artistBonus
 			);
 			const total = fieldResultsList.reduce((s, fr) => s + fr.score, 0);
 			if (total > bestScore) {
@@ -722,7 +1078,8 @@ export function scoreSubmission(
 	fieldModes: Record<string, InputMode>,
 	fieldPoints: Record<string, number>,
 	bonus?: BonusParams,
-	bonusFields: Set<string> = new Set()
+	bonusFields: Set<string> = new Set(),
+	artistBonus: ArtistBonusConfig = {}
 ): {
 	answersArray: TabAnswer[];
 	result: Omit<ChallengeResult, 'submissionId' | 'isFinal'> & { status: SubmissionStatus };
@@ -747,7 +1104,8 @@ export function scoreSubmission(
 				tab.sourceTracks,
 				tab.clips,
 				tab.playerDraft,
-				bonusFields
+				bonusFields,
+				artistBonus
 			);
 		thresholdTotal += tabThresholdTotal;
 		thresholdMax += tabThresholdMax;

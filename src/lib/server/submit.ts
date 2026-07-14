@@ -4,6 +4,7 @@ import type { ChallengeResult, SubmissionStatus } from '$lib/types/index.js';
 import {
 	resolveChallengeFields,
 	fieldMapsFromResolved,
+	resolveArtistBonus,
 	scoreSubmission,
 	getSourceTracksForTab,
 	type TrackData,
@@ -172,6 +173,9 @@ export async function scoreAndPersistSubmission(
 	const resolvedFields = resolveChallengeFields(variant, pcRaw, variantDefaultPoints);
 	const { fields: variantFields, fieldModes, fieldPoints, bonusFields } =
 		fieldMapsFromResolved(resolvedFields);
+	// Per-challenge bonus-artist marking (C1 stuk 1). {} for every challenge that
+	// hasn't set one, which is all of them until C1 stuk 2's editor ships.
+	const artistBonus = resolveArtistBonus(pcRaw);
 
 	// ── Bonus params ──────────────────────────────────────────────────────
 	const [teamRes, allTeamsRes] = await Promise.all([
@@ -235,7 +239,8 @@ export async function scoreAndPersistSubmission(
 		fieldModes,
 		fieldPoints,
 		bonusParams,
-		bonusFields
+		bonusFields,
+		artistBonus
 	);
 
 	const finalScore = scoredResult.breakdown?.final ?? scoredResult.total;
