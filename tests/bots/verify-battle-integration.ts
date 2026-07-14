@@ -195,6 +195,17 @@ async function callResolve(mode: 'resolve' | 'maybe'): Promise<Record<string, un
 	return (await res.json().catch(() => ({}))) as Record<string, unknown>;
 }
 
+/** Runs the REAL resolveBattlesForRecap — the same set-wide barrier startRecap and
+ *  the auto-submit recap flip call. Set-scoped: no challengeId. */
+async function callRecapBarrier(): Promise<Record<string, unknown>> {
+	const res = await fetch(`${BOT_BASE_URL}/api/dev/battle-resolve`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ setId: SET_ID, mode: 'recap-barrier' })
+	});
+	return (await res.json().catch(() => ({}))) as Record<string, unknown>;
+}
+
 const awardFor = (ranking: Array<Record<string, unknown>>, teamId: string) =>
 	ranking.find((r) => r.team_id === teamId)?.awarded ?? null;
 const rankFor = (ranking: Array<Record<string, unknown>>, teamId: string) =>
@@ -363,6 +374,90 @@ async function s7AutoHook(db: SupabaseClient, t: Team[], L: number[]) {
 	assert('S7b partial turnout → no ladder added (blue still 40)', await teamScore(db, t[0].id), 40);
 }
 
+// ─── stuk 3a: the recap resolution barrier ────────────────────────────────────
+// The reveal (3b/3c) is a pure display of stored outcomes, which is only true if
+// nothing can reach recap unresolved. These three scenarios cover the barrier's
+// whole contract: resolve what's playable, skip what isn't, never double-award.
+
+async function s8aBarrierResolvesAbsentee(db: SupabaseClient, t: Team[], L: number[]) {
+	await resetBattle(db, t);
+	// The exact case the auto-hook refuses (S7b proves it stays unresolved): red
+	// never started, so not every set-team has an ended attempt. Pre-3a this set
+	// would reach recap with battle_ranking NULL and the battle would vanish from
+	// the reveal. The barrier must resolve it anyway.
+	await seedSubmission(db, t[0].id, { raw: 20, full: 40, elapsedSec: 30 });
+	await seedSubmission(db, t[1].id, { raw: 15, full: 20, elapsedSec: 30 });
+	await seedSubmission(db, t[2].id, { raw: 10, full: 12, elapsedSec: 30 });
+	// t[3] (red): absentee — no attempt, no submission
+	await setCrown(db, t[0].id); // blue already top → crown no-op, deltas are pure ladder
+
+	// Precondition: the auto-hook genuinely won't touch this.
+	await callResolve('maybe');
+	assert('S8a precondition: auto-hook leaves it unresolved', await resolvedAt(db), null);
+
+	const before = [await teamScore(db, t[0].id), await teamScore(db, t[3].id)];
+	const res = await callRecapBarrier();
+	const after = [await teamScore(db, t[0].id), await teamScore(db, t[3].id)];
+
+	assert('S8a barrier reports it resolved', (res.resolved as string[])?.length, 1);
+	assert('S8a battle_resolved_at now set', (await resolvedAt(db)) != null, true);
+	const r = await battleRanking(db);
+	assert('S8a battle_ranking populated (all 4 teams)', r.length, 4);
+	assert('S8a blue rank1/award L[0]', [rankFor(r, t[0].id), awardFor(r, t[0].id)], [1, L[0]]);
+	assert('S8a ladder awarded to blue', after[0] - before[0], L[0]);
+	// Absentee still ranks last at the always-0 final slot — no free points.
+	assert('S8a absentee red rank4/award 0', [rankFor(r, t[3].id), awardFor(r, t[3].id)], [4, L[L.length - 1]]);
+	assert('S8a absentee red Δ 0', after[1] - before[1], L[L.length - 1]);
+	assert('S8a crown recomputed (stays blue)', await crownHolder(db), t[0].id);
+}
+
+async function s8bBarrierSkipsZeroSubmissions(db: SupabaseClient, t: Team[]) {
+	await resetBattle(db, t);
+	// Nobody played this battle at all. Resolving would hand the whole ladder to
+	// teams that never touched it, so the barrier must skip and leave it NULL —
+	// the reveal then excludes it (it reads battles WHERE battle_ranking IS NOT NULL).
+	const before = await Promise.all(t.map((x) => teamScore(db, x.id)));
+	const res = await callRecapBarrier();
+	const after = await Promise.all(t.map((x) => teamScore(db, x.id)));
+
+	assert('S8b barrier skipped it (no submissions)', (res.skippedNoSubmissions as string[])?.length, 1);
+	assert('S8b barrier resolved nothing', (res.resolved as string[])?.length, 0);
+	assert('S8b battle_resolved_at stays null', await resolvedAt(db), null);
+	assert('S8b battle_ranking stays empty → excluded from reveal', (await battleRanking(db)).length, 0);
+	assert('S8b no scores moved', after, before);
+}
+
+async function s8cBarrierNoDoubleAward(db: SupabaseClient, t: Team[], L: number[]) {
+	await resetBattle(db, t);
+	// THE concurrency check: a battle the auto-hook already resolved (all four
+	// teams finished), then startRecap's barrier runs over it too. resolveBattle
+	// CAS-claims battle_resolved_at first, so the barrier's call must lose the
+	// claim and change nothing — no second ladder add, no second crown recompute.
+	await seedSubmission(db, t[0].id, { raw: 20, full: 40, elapsedSec: 30 });
+	await seedSubmission(db, t[1].id, { raw: 15, full: 20, elapsedSec: 30 });
+	await seedSubmission(db, t[2].id, { raw: 10, full: 12, elapsedSec: 30 });
+	await seedSubmission(db, t[3].id, { raw: 5, full: 6, elapsedSec: 30 });
+	await setCrown(db, t[0].id);
+
+	await callResolve('maybe'); // auto-hook resolves it first (all teams done)
+	const afterHook = await Promise.all(t.map((x) => teamScore(db, x.id)));
+	const resolvedAtHook = await resolvedAt(db);
+	const rankingHook = await battleRanking(db);
+	assert('S8c precondition: auto-hook resolved it', resolvedAtHook != null, true);
+
+	const res = await callRecapBarrier(); // now the barrier runs over the same battle
+	const afterBarrier = await Promise.all(t.map((x) => teamScore(db, x.id)));
+
+	// The barrier's pre-filter (battle_resolved_at IS NULL) means it shouldn't even
+	// consider it — belt and braces with the CAS underneath.
+	assert('S8c barrier resolved nothing (already resolved)', (res.resolved as string[])?.length, 0);
+	assert('S8c scores IDENTICAL — no double ladder add', afterBarrier, afterHook);
+	assert('S8c battle_resolved_at unchanged (claimed once)', await resolvedAt(db), resolvedAtHook);
+	assert('S8c battle_ranking unchanged', await battleRanking(db), rankingHook);
+	assert('S8c blue = 40 + L[0] exactly once', afterBarrier[0], 40 + L[0]);
+	assert('S8c exactly ONE battle crown log', await battleCrownLogCount(db, t.map((x) => x.id)), 0);
+}
+
 // ─── main ─────────────────────────────────────────────────────────────────────
 async function main() {
 	loadEnv();
@@ -406,6 +501,9 @@ async function main() {
 		await s5Idempotency(db, teams, LADDER);
 		await s6CrownChange(db, teams, LADDER);
 		await s7AutoHook(db, teams, LADDER);
+		await s8aBarrierResolvesAbsentee(db, teams, LADDER);
+		await s8bBarrierSkipsZeroSubmissions(db, teams);
+		await s8cBarrierNoDoubleAward(db, teams, LADDER);
 	} finally {
 		// Restore ch20's exact original config + wipe all battle/game state we touched.
 		await resetBattle(db, teams);

@@ -7,6 +7,7 @@ import {
 	getTeamsWithActiveTimedAttempt
 } from '$lib/server/powerups';
 import { TEAM_COLOR_ORDER, getTeamsInSet } from '$lib/server/randomize';
+import { parseBattleConfig } from '$lib/battle-ranking';
 
 export const load: PageServerLoad = async ({ locals, cookies }) => {
 	if (!locals.teamId) redirect(302, '/join');
@@ -39,12 +40,15 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 	}
 
 	// Challenges: scoped to player's set when in one, otherwise all active
+	// points_config is selected only to derive the ⚔️ battle flag below — it is
+	// destructured back OUT before the payload reaches the client (see challengeList).
 	let challenges: Array<{
 		id: string;
 		title: string;
 		variant: string;
 		timer_seconds: number | null;
 		nfc_lock_override: boolean | null;
+		points_config: unknown;
 	}> = [];
 	if (playerSetId) {
 		const { data: scRows } = await admin
@@ -56,7 +60,7 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		if (setChallengeIds.length > 0) {
 			const { data: chs } = await supabase
 				.from('challenges')
-				.select('id, title, variant, timer_seconds, nfc_lock_override')
+				.select('id, title, variant, timer_seconds, nfc_lock_override, points_config')
 				.in('id', setChallengeIds);
 			// Preserve set order
 			const posMap = new Map((scRows ?? []).map((sc) => [sc.challenge_id, sc.position]));
@@ -65,7 +69,7 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 	} else {
 		const { data: chs } = await supabase
 			.from('challenges')
-			.select('id, title, variant, timer_seconds, nfc_lock_override')
+			.select('id, title, variant, timer_seconds, nfc_lock_override, points_config')
 			.eq('is_active', true);
 		challenges = chs ?? [];
 	}
@@ -77,8 +81,13 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 
 	const submittedMap = new Map((submissions ?? []).map((s) => [s.challenge_id, s.score]));
 
-	const challengeList = challenges.map((c) => ({
+	// points_config is destructured OUT here: the list only needs the derived ⚔️
+	// flag, so the raw config (max_points, field_modes, field_points…) never ships
+	// to the client. Derived with parseBattleConfig — the same parser the resolver
+	// and the admin editor use — so the badge can't drift from what actually resolves.
+	const challengeList = challenges.map(({ points_config, ...c }) => ({
 		...c,
+		isBattle: parseBattleConfig(points_config).enabled,
 		status: submittedMap.has(c.id) ? ('completed' as const) : ('available' as const),
 		earnedScore: submittedMap.get(c.id) ?? null
 	}));

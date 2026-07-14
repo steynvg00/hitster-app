@@ -363,7 +363,14 @@
 								<div class="font-semibold {locked ? 'text-zinc-500' : 'text-zinc-100'}">
 									{ch.title}
 								</div>
-								<div class="text-xs text-zinc-500 capitalize">{ch.variant}</div>
+								<div class="flex items-center gap-1.5 text-xs text-zinc-500 capitalize">
+									<span>{ch.variant}</span>
+									{#if ch.isBattle}
+										<span title="Battle challenge — every team is ranked against each other"
+											>⚔️</span
+										>
+									{/if}
+								</div>
 							</div>
 							{#if locked}
 								<div class="text-right">

@@ -4,6 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createAdminClient } from '$lib/server/supabase';
 import { generateAssignmentSlots, TEAM_COLOR_ORDER } from '$lib/server/randomize';
 import { awardCrownPayout } from '$lib/server/crown';
+import { resolveBattlesForRecap } from '$lib/server/battle';
 import { resetGameState } from '$lib/server/reset';
 import { parseConfig, mergePowerupConfig } from '$lib/server/powerups';
 import type {
@@ -350,6 +351,18 @@ export const actions: Actions = {
 		if (!gameSet || gameSet.status !== 'active')
 			return fail(400, { error: 'Set must be active to start recap' });
 		if (gameSet.play_state === 'recap') return fail(400, { error: 'Recap already started' });
+
+		// Resolution barrier (stuk 3a) — BEFORE the play_state flip, so no surface can
+		// ever observe recap with a battle still unresolved. Best-effort: recap is the
+		// finale and must start regardless; a battle that fails to resolve keeps
+		// battle_ranking NULL and is simply excluded from the reveal, which is a better
+		// outcome than a host stuck on an error they can't clear. Same non-fatal
+		// treatment the submit hook gives maybeResolveBattle.
+		try {
+			await resolveBattlesForRecap(db, params.id);
+		} catch (err) {
+			console.error('[startRecap] battle resolution barrier failed — continuing', err);
+		}
 
 		const { error } = await db
 			.from('game_sets')
