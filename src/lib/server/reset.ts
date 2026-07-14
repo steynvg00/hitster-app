@@ -195,6 +195,7 @@ export async function resetGameState(
 				scores_hidden: false,
 				recap_ranking: [] as never,
 				recap_reveal_index: 0,
+				battle_reveal_index: 0,
 				recap_state: 'pending',
 				assignment_slots: [] as never,
 				assignment_index: 0,

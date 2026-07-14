@@ -12,6 +12,9 @@
 	let revealIndex = $state(untrack(() => gs.recap_reveal_index ?? 0));
 	let ranking = $state<string[]>(untrack(() => (gs.recap_ranking as string[]) ?? []));
 	let recapState = $state(untrack(() => gs.recap_state));
+	// Battle reveal counter (stuk 3b) — SEPARATE from revealIndex on purpose:
+	// revealIndex is "teams revealed" and indexes straight into `ranking`.
+	let battleRevealIndex = $state(untrack(() => gs.battle_reveal_index ?? 0));
 
 	// Which team was just revealed (for brief highlight)
 	let justRevealedId = $state<string | null>(null);
@@ -21,6 +24,22 @@
 	const allRevealed = $derived(revealIndex >= totalTeams);
 	const _isPodiumPhase = $derived(
 		revealIndex >= totalTeams - Math.min(3, totalTeams) && revealIndex < totalTeams
+	);
+
+	// ── Phase (stuk 3b) ────────────────────────────────────────────────────────
+	const battlesTotal = $derived(data.battles.length);
+	const inBattlePhase = $derived(recapState === 'battle_reveal');
+	const battlesDone = $derived(battleRevealIndex >= battlesTotal);
+	// While in the battle phase there is always a next click: either the next
+	// battle, or the hand-over click that starts the team cascade.
+	const canReveal = $derived(inBattlePhase || !allRevealed);
+
+	const nextRevealLabel = $derived(
+		inBattlePhase
+			? battlesDone
+				? 'Start team reveal ›'
+				: `Reveal battle ${battleRevealIndex + 1}/${battlesTotal} ›`
+			: 'Reveal next ›'
 	);
 
 	function isRevealed(teamId: string): boolean {
@@ -67,6 +86,7 @@
 						recap_reveal_index: number;
 						recap_ranking: string[];
 						recap_state: string;
+						battle_reveal_index: number;
 					};
 					const newIndex = updated.recap_reveal_index ?? revealIndex;
 					const newRanking = (updated.recap_ranking as string[]) ?? ranking;
@@ -80,6 +100,9 @@
 					ranking = newRanking;
 					revealIndex = newIndex;
 					recapState = updated.recap_state ?? recapState;
+					if (updated.battle_reveal_index !== undefined) {
+						battleRevealIndex = updated.battle_reveal_index;
+					}
 				}
 			)
 			.subscribe();
@@ -104,46 +127,62 @@
 				class="text-xs text-zinc-500 transition-colors hover:text-zinc-300">← {gs.name}</a
 			>
 			<h1 class="mt-1 text-2xl font-black text-white">Recap</h1>
-			<p class="text-sm text-zinc-500">{revealIndex}/{totalTeams} revealed</p>
-		</div>
-		<div class="flex shrink-0 gap-2">
-			{#if recapState !== 'complete'}
-				{#if !allRevealed}
-					<form
-						method="POST"
-						action="?/reveal"
-						use:enhance={({ cancel: _cancel }) => {
-							return async ({ update }) => {
-								await update({ reset: false });
-							};
-						}}
-					>
-						<button
-							type="submit"
-							class="rounded-lg bg-amber-400 px-4 py-2 text-sm font-bold text-zinc-950 transition-colors hover:bg-amber-300"
-						>
-							Reveal next ›
-						</button>
-					</form>
-				{:else}
-					<form
-						method="POST"
-						action="?/endAndReset"
-						use:enhance
-						onsubmit={(e) => {
-							if (!confirm('End set and clear all player assignments?')) e.preventDefault();
-						}}
-					>
-						<button
-							type="submit"
-							class="rounded-lg bg-green-700 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-green-600"
-						>
-							End & Reset
-						</button>
-					</form>
-				{/if}
+			<!-- Phase indicator (stuk 3b): battles reveal before the team cascade. -->
+			{#if inBattlePhase}
+				<p class="text-sm text-zinc-500">
+					<span class="font-semibold text-amber-400">Battles</span>
+					— {battleRevealIndex}/{battlesTotal} revealed · teams next
+				</p>
 			{:else}
-				<span class="rounded-full bg-zinc-800 px-3 py-1.5 text-sm text-zinc-400">Set complete</span>
+				<p class="text-sm text-zinc-500">
+					{#if battlesTotal > 0}
+						<span class="text-zinc-600">Battles done ·</span>
+					{/if}
+					{revealIndex}/{totalTeams} teams revealed
+				</p>
+			{/if}
+		</div>
+		<div class="flex shrink-0 items-center gap-2">
+			<!-- Reveal drives BOTH phases; the same action decides which advances.
+			     End & Reset must stay reachable once recap_state is 'complete'
+			     (which the final team reveal now actually writes), so it is gated
+			     on the cascade being done — not on the state string. -->
+			{#if canReveal}
+				<form
+					method="POST"
+					action="?/reveal"
+					use:enhance={({ cancel: _cancel }) => {
+						return async ({ update }) => {
+							await update({ reset: false });
+						};
+					}}
+				>
+					<button
+						type="submit"
+						class="rounded-lg bg-amber-400 px-4 py-2 text-sm font-bold text-zinc-950 transition-colors hover:bg-amber-300"
+					>
+						{nextRevealLabel}
+					</button>
+				</form>
+			{:else}
+				{#if recapState === 'complete'}
+					<span class="rounded-full bg-zinc-800 px-3 py-1.5 text-xs text-zinc-400">Set complete</span>
+				{/if}
+				<form
+					method="POST"
+					action="?/endAndReset"
+					use:enhance
+					onsubmit={(e) => {
+						if (!confirm('End set and clear all player assignments?')) e.preventDefault();
+					}}
+				>
+					<button
+						type="submit"
+						class="rounded-lg bg-green-700 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-green-600"
+					>
+						End & Reset
+					</button>
+				</form>
 			{/if}
 
 			<!-- TV podium link -->
@@ -182,6 +221,37 @@
 	{#if form?.error}
 		<div class="mb-4 rounded-lg border border-red-800 bg-red-950/40 px-4 py-3 text-sm text-red-400">
 			{form.error}
+		</div>
+	{/if}
+
+	<!-- Battle reveal strip (stuk 3b, host-only). The player waiting card and the
+	     TV podium battle panel are stuk 3c — this pass is the machinery. -->
+	{#if battlesTotal > 0}
+		<div class="mb-8">
+			<h2 class="mb-3 text-xs font-semibold tracking-widest text-zinc-400 uppercase">
+				Battles — revealed before the team podium
+			</h2>
+			<div class="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+				{#each data.battles as battle, i}
+					{@const revealed = i < battleRevealIndex}
+					{@const isNext = inBattlePhase && i === battleRevealIndex}
+					<div
+						class="rounded-xl border px-3 py-2.5 transition-all duration-500
+						{revealed ? 'border-amber-400/40 bg-amber-950/20' : 'border-zinc-800 bg-zinc-900'}
+						{isNext ? 'ring-1 ring-amber-400/60' : ''}"
+					>
+						<div class="flex items-center gap-1.5">
+							<span class="text-xs">⚔️</span>
+							<span class="truncate text-xs font-semibold {revealed ? 'text-amber-300' : 'text-zinc-500'}">
+								{battle.title}
+							</span>
+						</div>
+						<div class="mt-1 text-xs {revealed ? 'text-amber-400/70' : 'text-zinc-600'}">
+							{revealed ? 'Revealed' : isNext ? 'Next up' : `Battle ${i + 1}`}
+						</div>
+					</div>
+				{/each}
+			</div>
 		</div>
 	{/if}
 
@@ -322,11 +392,14 @@
 		</div>
 	{/if}
 
-	{#if allRevealed && recapState !== 'complete'}
+	<!-- Gated on the cascade, not on recap_state: the final reveal now writes
+	     'complete', which would otherwise hide this banner exactly when it is
+	     most relevant. -->
+	{#if allRevealed && !inBattlePhase}
 		<div class="mt-8 rounded-xl border border-green-800 bg-green-950/30 p-6 text-center">
 			<p class="mb-1 text-lg font-bold text-green-400">All teams revealed!</p>
 			<p class="text-sm text-zinc-400">
-				Click "End & Reset" to finish the set and send players to their thanks screen.
+				Players have been sent to their thanks screen. Click "End & Reset" to finish the set.
 			</p>
 		</div>
 	{/if}

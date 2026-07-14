@@ -4,7 +4,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createAdminClient } from '$lib/server/supabase';
 import { generateAssignmentSlots, TEAM_COLOR_ORDER } from '$lib/server/randomize';
 import { awardCrownPayout } from '$lib/server/crown';
-import { resolveBattlesForRecap } from '$lib/server/battle';
+import { getRevealableBattles, resolveBattlesForRecap } from '$lib/server/battle';
+import { planRecapEntry } from '$lib/recap-flow';
 import { resetGameState } from '$lib/server/reset';
 import { parseConfig, mergePowerupConfig } from '$lib/server/powerups';
 import type {
@@ -284,6 +285,7 @@ export const actions: Actions = {
 					recap_state: 'pending',
 					recap_ranking: [] as never,
 					recap_reveal_index: 0,
+					battle_reveal_index: 0,
 					assignment_slots: assignment_slots as never,
 					assignment_index: 0
 				})
@@ -364,9 +366,29 @@ export const actions: Actions = {
 			console.error('[startRecap] battle resolution barrier failed — continuing', err);
 		}
 
+		// Phase entry (stuk 3b): a set with ≥1 resolved battle opens on the battle
+		// reveal; every other set keeps the existing 'pending' entry byte-for-byte,
+		// so non-battle recaps behave exactly as they did before this stuk. Read
+		// AFTER the barrier above, so it sees the battles that just resolved.
+		// Best-effort for the same reason the barrier is: recap is the finale and
+		// must start regardless — a failed count falls back to the classic flow
+		// (teams reveal, no battle phase) rather than blocking the host.
+		let firstPhase: 'pending' | 'battle_reveal' = 'pending';
+		try {
+			const battles = await getRevealableBattles(db, params.id);
+			firstPhase = planRecapEntry(battles.length);
+		} catch (err) {
+			console.error('[startRecap] revealable-battle count failed — classic recap', err);
+		}
+
 		const { error } = await db
 			.from('game_sets')
-			.update({ play_state: 'recap', recap_state: 'pending', ended_at: new Date().toISOString() })
+			.update({
+				play_state: 'recap',
+				recap_state: firstPhase,
+				battle_reveal_index: 0,
+				ended_at: new Date().toISOString()
+			})
 			.eq('id', params.id);
 
 		if (error) return fail(500, { error: 'Could not start recap' });
@@ -669,6 +691,7 @@ export const actions: Actions = {
 				recap_state: 'pending',
 				recap_ranking: [] as never,
 				recap_reveal_index: 0,
+				battle_reveal_index: 0,
 				scores_hidden: false,
 				assignment_slots: [] as never,
 				assignment_index: 0,
