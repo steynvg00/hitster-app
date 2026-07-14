@@ -36,7 +36,9 @@ export type Intent = 'correct' | 'wrong' | 'garbage';
 
 export interface FieldPlay {
 	field: string;
-	mode: InputMode | null;
+	// ControlKind, not InputMode: the artist field renders as a tag input (see
+	// ControlKind below), which is a rendering choice, not a field input_mode.
+	mode: ControlKind | null;
 	intended: Intent;
 	filled: boolean; // false when the control couldn't confirm the value (e.g. combobox miss)
 }
@@ -122,12 +124,27 @@ function valueFor(
 	return { value: TEXT_DECOY, intended: 'wrong' };
 }
 
-/** Detect the input mode of a control by its `name`, reading the live DOM. */
-async function detectMode(page: Page, name: string): Promise<InputMode | null> {
+/**
+ * A control KIND as the harness sees it. Superset of the app's InputMode: `tags`
+ * isn't a field input_mode, it's how the artist field RENDERS (ArtistTagInput) in
+ * both open_text and combobox mode since C1 stuk 2.
+ */
+type ControlKind = InputMode | 'tags';
+
+/** Detect the control kind by its `name`, reading the live DOM. */
+async function detectMode(page: Page, name: string): Promise<ControlKind | null> {
 	if (await page.locator(`input[type="range"][name="${name}"]`).count()) return 'slider';
 	if (await page.locator(`input[type="number"][name="${name}"]`).count()) return 'typeable_number';
 	// OpenText binds the name directly onto a visible text input.
 	if (await page.locator(`input[type="text"][name="${name}"]`).count()) return 'open_text';
+
+	// Tag input FIRST: it also pairs a hidden input with a visible text box, so the
+	// combobox branch below would otherwise claim it — and then "fill + click the
+	// exact option" would silently leave it empty in open_text mode, where the tag
+	// input deliberately offers no suggestions to click.
+	if (await page.locator(`input[type="hidden"][data-tag-input][name="${name}"]`).count()) {
+		return 'tags';
+	}
 
 	// Combobox + MultipleChoice both expose a hidden input carrying the name.
 	// Combobox additionally has a sibling visible text input; MultipleChoice
@@ -160,8 +177,12 @@ async function resolveField(
 	page: Page,
 	field: string,
 	timeoutMs = 4000
-): Promise<{ name: string; mode: InputMode } | null> {
-	const candidates = field === 'artist' ? ['artist', 'artist_slot_0_0'] : [field];
+): Promise<{ name: string; mode: ControlKind } | null> {
+	// artist renders as ArtistTagInput (C1 stuk 2): `artist` in the single-slot
+	// layout, `artist_0` in the multi-slot one. `artist_slot_0_0` was the old
+	// collab-combobox name, gone with that UI — kept only so a bot run against an
+	// older build still resolves.
+	const candidates = field === 'artist' ? ['artist', 'artist_0', 'artist_slot_0_0'] : [field];
 	const deadline = Date.now() + timeoutMs;
 	for (;;) {
 		for (const name of candidates) {
@@ -176,10 +197,34 @@ async function resolveField(
 async function fillControl(
 	page: Page,
 	name: string,
-	mode: InputMode,
+	mode: ControlKind,
 	value: string
 ): Promise<{ filled: boolean; note?: string }> {
 	switch (mode) {
+		// ArtistTagInput (C1 stuk 2). Type each name and press Enter to commit it as
+		// a tag — a plain fill() would leave the text sitting in the query box and
+		// the hidden wire value empty. Multi-artist values arrive '\n'-separated
+		// (the scorer's wire format), so split on that and add one tag per name.
+		case 'tags': {
+			let confirmed = '';
+			await withRemountRetry(async () => {
+				const hidden = page.locator(`input[type="hidden"][name="${name}"]`);
+				const container = hidden.locator('xpath=..');
+				const text = container.locator('input[type="text"]');
+				await text.waitFor({ state: 'visible' });
+				for (const tag of value.split('\n').map((t) => t.trim()).filter(Boolean)) {
+					await text.fill(tag);
+					await text.press('Enter');
+				}
+				// Read the hidden input, not the chips: it's the exact value that
+				// reaches the scorer, so this asserts the wire format end to end.
+				confirmed = await hidden.inputValue();
+			});
+			return confirmed.trim()
+				? { filled: true }
+				: { filled: false, note: 'tag input stayed empty' };
+		}
+
 		case 'open_text': {
 			let confirmed = '';
 			await withRemountRetry(async () => {

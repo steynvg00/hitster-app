@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { invalidateAll, goto } from '$app/navigation';
-	import Fuse from 'fuse.js';
 	import type { PageData, ActionData } from './$types';
 	import Waveform from '$lib/components/ui/Waveform.svelte';
 	import TrimModal from '$lib/components/ui/TrimModal.svelte';
 	import { Music } from 'lucide-svelte';
 	import HelpTooltip from '$lib/components/ui/HelpTooltip.svelte';
 	import SearchablePicker from '$lib/components/admin/SearchablePicker.svelte';
+	import ArtistTagInput from '$lib/components/ui/ArtistTagInput.svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -53,22 +53,10 @@
 	let addingTrack = $state(false);
 
 	// ── artists tag editor (T1) ──────────────────────────────────────────────────
+	// The tag input itself is now the shared ArtistTagInput component (C1 stuk 2) —
+	// the player's artist field renders the same one, so the two can't drift.
 	let editingArtists = $state<string | null>(null);
 	let artistDraft = $state<string[]>([]);
-	let artistQuery = $state('');
-
-	const artistFuse = $derived(
-		new Fuse(data.artistPool, { threshold: 0.4, minMatchCharLength: 1 })
-	);
-	const artistSuggestions = $derived(
-		artistQuery.trim().length > 0
-			? artistFuse
-					.search(artistQuery)
-					.map((r) => r.item)
-					.filter((n) => !artistDraft.includes(n))
-					.slice(0, 6)
-			: []
-	);
 
 	function startEditArtists(track: { id: string; artist: string; artists: string[] }) {
 		editingArtists = track.id;
@@ -76,27 +64,6 @@
 		// single tag from the scalar `artist` so old (never-edited) tracks edit
 		// cleanly — the host can split it into separate tags manually.
 		artistDraft = track.artists?.length ? [...track.artists] : [track.artist];
-		artistQuery = '';
-	}
-
-	function addArtistTag(name: string) {
-		const trimmed = name.trim();
-		if (!trimmed || artistDraft.includes(trimmed)) return;
-		artistDraft = [...artistDraft, trimmed];
-		artistQuery = '';
-	}
-
-	function removeArtistTag(name: string) {
-		artistDraft = artistDraft.filter((a) => a !== name);
-	}
-
-	function handleArtistKeydown(e: KeyboardEvent) {
-		if (e.key === 'Enter' || e.key === ',') {
-			e.preventDefault();
-			addArtistTag(artistQuery);
-		} else if (e.key === 'Backspace' && artistQuery === '' && artistDraft.length > 0) {
-			artistDraft = artistDraft.slice(0, -1);
-		}
 	}
 
 	// ── clip selection (bulk delete) ─────────────────────────────────────────────
@@ -920,51 +887,7 @@
 								<form method="POST" action="?/saveArtists" use:enhance>
 									<input type="hidden" name="id" value={track.id} />
 									<input type="hidden" name="artists_json" value={JSON.stringify(artistDraft)} />
-									<div
-										class="flex flex-wrap items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 p-2"
-									>
-										{#each artistDraft as a (a)}
-											<span
-												class="flex items-center gap-1 rounded bg-zinc-800 px-2 py-1 text-xs text-zinc-200"
-											>
-												{a}
-												<button
-													type="button"
-													onclick={() => removeArtistTag(a)}
-													class="text-zinc-500 hover:text-red-400"
-													aria-label={`Remove ${a}`}
-												>
-													✕
-												</button>
-											</span>
-										{/each}
-										<div class="relative min-w-[8rem] flex-1">
-											<input
-												type="text"
-												bind:value={artistQuery}
-												onkeydown={handleArtistKeydown}
-												placeholder="Type a name, Enter to add…"
-												autocomplete="off"
-												class="w-full bg-transparent px-1 py-1 text-sm text-zinc-100 focus:outline-none"
-											/>
-											{#if artistSuggestions.length > 0}
-												<div
-													class="absolute left-0 z-20 mt-1 w-56 overflow-hidden rounded-lg border border-zinc-700 bg-zinc-800 shadow-xl"
-												>
-													{#each artistSuggestions as s (s)}
-														<button
-															type="button"
-															onmousedown={(e) => e.preventDefault()}
-															onclick={() => addArtistTag(s)}
-															class="block w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-700"
-														>
-															{s}
-														</button>
-													{/each}
-												</div>
-											{/if}
-										</div>
-									</div>
+									<ArtistTagInput bind:tags={artistDraft} pool={data.artistPool} />
 									<div class="mt-2 flex justify-end">
 										<button
 											type="submit"

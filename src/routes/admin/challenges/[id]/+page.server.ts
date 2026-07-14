@@ -2,7 +2,7 @@ import { error, fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
 import { CHALLENGE_TYPES } from '$lib/variants';
-import { resolveChallengeFields, FIELD_POOL_TABLE } from '$lib/server/scoring.js';
+import { resolveChallengeFields, resolveArtistBonus, FIELD_POOL_TABLE } from '$lib/server/scoring.js';
 import { parseBattleConfig } from '$lib/battle-ranking';
 
 export const load: PageServerLoad = async ({ params, locals }) => {
@@ -110,11 +110,21 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 	// resolution, so the editor can never drift from what actually resolves.
 	const battleConfig = parseBattleConfig(challenge.points_config);
 
+	// Artist bonus (C1 stuk 2) — read through resolveArtistBonus, the SAME resolver
+	// the scorer uses, so the editor can't show a marking that won't actually score.
+	const artistBonus = resolveArtistBonus(challenge.points_config);
+	// Suggestions for the bonus name field. Nice-to-have: the host can type any
+	// name (a challenge spans tabs with different tracks, and a name that matches
+	// no track simply no-ops — that's stuk 1's model).
+	const { data: artistPoolRows } = await db.from('answer_pool_artists').select('name').order('name');
+
 	return {
 		challenge,
 		resolvedFields,
 		poolBackedFields,
 		battleConfig,
+		artistBonus,
+		artistPool: (artistPoolRows ?? []).map((r) => r.name),
 		tabs: tabs ?? [],
 		sourceTracksByTab: sourceTracksResult.data ?? [],
 		clipsByTab: tabClipsResult.data ?? [],
@@ -499,6 +509,57 @@ export const actions: Actions = {
 			.eq('id', params.id);
 		if (e) return fail(500, { error: e.message });
 		return { success: true, action: 'saveFields' };
+	},
+
+	// Artist bonus (C1 stuk 2): merge-save points_config.artist_bonus = { name: pts }.
+	// Name-keyed, matching what the scorer's resolveArtistBonus reads — a challenge
+	// spans tabs with DIFFERENT tracks, so an index would be ambiguous across them,
+	// and a name that matches no track on a given tab simply no-ops there.
+	// Same read-modify-write discipline as saveFields — points_config also carries
+	// fields[]/field_modes/field_points/battle, which must survive untouched.
+	saveArtistBonus: async ({ request, params }) => {
+		const db = createAdminClient();
+		const data = await request.formData();
+		const raw = data.get('artist_bonus_json') as string | null;
+		if (raw == null) return fail(400, { error: 'Missing artist_bonus_json' });
+
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(raw);
+		} catch {
+			return fail(400, { error: 'Invalid artist bonus JSON' });
+		}
+		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+			return fail(400, { error: 'artist_bonus must be an object' });
+		}
+
+		// Server-side validation mirrors resolveArtistBonus's constraints — never
+		// trust the wire, even though the client already enforces these. Anything it
+		// would silently drop is rejected here rather than stored as dead config.
+		const cleaned: Record<string, number> = {};
+		for (const [name, value] of Object.entries(parsed as Record<string, unknown>)) {
+			const trimmed = typeof name === 'string' ? name.trim() : '';
+			if (!trimmed) continue;
+			const pts = typeof value === 'number' ? value : Number(value);
+			if (!Number.isFinite(pts) || pts <= 0) continue;
+			cleaned[trimmed] = Math.round(pts);
+		}
+
+		const { data: existing } = await db
+			.from('challenges')
+			.select('points_config')
+			.eq('id', params.id)
+			.single();
+		const existingPc = (existing?.points_config ?? {}) as Record<string, unknown>;
+
+		const points_config = { ...existingPc, artist_bonus: cleaned };
+
+		const { error: e } = await db
+			.from('challenges')
+			.update({ points_config: points_config as never })
+			.eq('id', params.id);
+		if (e) return fail(500, { error: e.message });
+		return { success: true, action: 'saveArtistBonus' };
 	},
 
 	// Battle mode (stuk 2): merge-save points_config.battle = { enabled, max_points }.

@@ -8,8 +8,12 @@
 	import EffectsEditor from '$lib/components/admin/challenge-editors/EffectsEditor.svelte';
 	import FieldsEditor from '$lib/components/admin/challenge-editors/FieldsEditor.svelte';
 	import BattleEditor from '$lib/components/admin/challenge-editors/BattleEditor.svelte';
+	import ArtistBonusEditor from '$lib/components/admin/challenge-editors/ArtistBonusEditor.svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
+
+	// Bonus artists are only scored when artist is a field on this challenge.
+	const artistIsScored = $derived(data.resolvedFields.some((f) => f.name === 'artist'));
 
 	const STATUS_OPTIONS = ['draft', 'active', 'completed'] as const;
 
@@ -285,6 +289,15 @@
 			poolBackedFields={data.poolBackedFields}
 			answerOptions={data.answerOptions}
 		/>
+
+		<!-- Bonus artists — only meaningful when artist is actually scored here.
+		     Gated on the RESOLVED fields rather than the variant: every variant
+		     includes artist by default, but configurable-fields lets a host remove
+		     it, and a bonus marking on a challenge with no artist field would be
+		     dead config the scorer never reads. -->
+		{#if artistIsScored}
+			<ArtistBonusEditor artistBonus={data.artistBonus} artistPool={data.artistPool} />
+		{/if}
 	</div>
 </div>
 

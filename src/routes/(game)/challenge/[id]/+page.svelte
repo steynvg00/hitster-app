@@ -8,6 +8,8 @@
 	import MultipleChoice from '$lib/components/ui/MultipleChoice.svelte';
 	import OpenText from '$lib/components/ui/OpenText.svelte';
 	import YearInput from '$lib/components/ui/YearInput.svelte';
+	import ArtistTagInput from '$lib/components/ui/ArtistTagInput.svelte';
+	import { parseArtistTags, joinArtistTags } from '$lib/artist-tags';
 	import { supabaseBrowser } from '$lib/supabase-browser';
 	import Waveform from '$lib/components/ui/Waveform.svelte';
 	import BonusTracker from '$lib/components/game/BonusTracker.svelte';
@@ -116,35 +118,39 @@
 		})
 	);
 
-	// Multi-artist collab: per-tab, per-slot
-	const hasArtistCombobox = $derived(
-		variantFields.includes('artist' as AnswerField) && data.fieldModes['artist'] === 'combobox'
+	// ── Multi-artist tags: per-tab, per-slot (C1 stuk 2) ──────────────────────
+	// Replaces the old collab UI, which joined its inputs with ' & '. That format
+	// silently stopped scoring the moment C1 stuk 1 landed: the scorer splits on
+	// '\n' (parseArtistTags), so "Ran-D & Adaro" arrived as ONE tag and matched
+	// neither artist of a T1 track whose artists[] is ['Ran-D','Adaro'].
+	//
+	// Rendered for open_text AND combobox, because BOTH need it: an artist field in
+	// open_text mode is a single-line input, so a player literally cannot type a
+	// '\n'-separated list — a multi-artist track would be unanswerable there. Only
+	// the SUGGESTIONS are mode-gated (see artistPool below).
+	const artistIsTagged = $derived(
+		variantFields.includes('artist' as AnswerField) &&
+			(data.fieldModes['artist'] === 'combobox' || data.fieldModes['artist'] === 'open_text')
 	);
-	let collabArtists = $state<string[][][]>(
+	// Suggestions only in combobox mode. open_text means "answer from memory" — the
+	// answer pool is the artist list, so suggesting from it there would hand the
+	// answer over and erase the difficulty difference between the two modes.
+	const artistPool = $derived(
+		data.fieldModes['artist'] === 'combobox' ? (data.pools['artist'] ?? []) : []
+	);
+
+	let artistTags = $state<string[][][]>(
 		data.tabs.map((tab) => {
 			const tabDraft = savedDraft[String(tab.position)] ?? [];
 			const slotCount = Math.max(tab.sourceTracks.length, 1);
-			return Array.from({ length: slotCount }, (_, si) => {
-				const saved = tabDraft[si]?.fieldValues?.['artist'] ?? '';
-				return saved ? saved.split(' & ') : [''];
-			});
+			return Array.from({ length: slotCount }, (_, si) =>
+				// parseArtistTags is the scorer's own splitter — a legacy ' & ' draft
+				// therefore restores as ONE tag ("Ran-D & Adaro"), visible and fixable,
+				// rather than being re-split by a rule the scorer doesn't share.
+				parseArtistTags(tabDraft[si]?.fieldValues?.['artist'] ?? '')
+			);
 		})
 	);
-
-	function addArtistSlot(tabIdx: number, slotIdx: number) {
-		if (collabArtists[tabIdx][slotIdx].length < 3) {
-			collabArtists[tabIdx][slotIdx] = [...collabArtists[tabIdx][slotIdx], ''];
-		}
-	}
-	function removeArtistSlot(tabIdx: number, slotIdx: number, artistIdx: number) {
-		collabArtists[tabIdx][slotIdx] = collabArtists[tabIdx][slotIdx].filter(
-			(_, i) => i !== artistIdx
-		);
-		if (collabArtists[tabIdx][slotIdx].length === 0) collabArtists[tabIdx][slotIdx] = [''];
-		allDrafts[tabIdx][slotIdx].fieldValues['artist'] = collabArtists[tabIdx][slotIdx]
-			.filter(Boolean)
-			.join(' & ');
-	}
 
 	// Fragment chip toggle
 	function toggleFragment(tabIdx: number, slotIdx: number, fragNum: number) {
@@ -170,13 +176,16 @@
 			const tab = data.tabs[ti];
 			const slotCount = Math.max(tab.sourceTracks.length, 1);
 			d[String(tab.position)] = Array.from({ length: slotCount }, (_, si) => {
-				const artistVal = hasArtistCombobox
-					? (collabArtists[ti]?.[si]?.filter((a) => a.trim()).join(' & ') ?? '')
+				// joinArtistTags is the exact inverse of the scorer's parseArtistTags —
+				// one tag joins to a plain string with no newline, which is what keeps a
+				// single-artist answer byte-identical to pre-C1.
+				const artistVal = artistIsTagged
+					? joinArtistTags(artistTags[ti]?.[si] ?? [])
 					: (allDrafts[ti]?.[si]?.fieldValues['artist'] ?? '');
 				return {
 					fieldValues: {
 						...allDrafts[ti]?.[si]?.fieldValues,
-						...(hasArtistCombobox ? { artist: artistVal } : {}),
+						...(artistIsTagged ? { artist: artistVal } : {}),
 						...(hasYear && yearIsNumericMode
 							? { year: String(allYearValues[ti]?.[si] ?? 1990) }
 							: {})
@@ -196,13 +205,16 @@
 			const tab = data.tabs[ti];
 			const slotCount = Math.max(tab.sourceTracks.length, 1);
 			d[String(tab.position)] = Array.from({ length: slotCount }, (_, si) => {
-				const artistVal = hasArtistCombobox
-					? (collabArtists[ti]?.[si]?.filter((a) => a.trim()).join(' & ') ?? '')
+				// joinArtistTags is the exact inverse of the scorer's parseArtistTags —
+				// one tag joins to a plain string with no newline, which is what keeps a
+				// single-artist answer byte-identical to pre-C1.
+				const artistVal = artistIsTagged
+					? joinArtistTags(artistTags[ti]?.[si] ?? [])
 					: (allDrafts[ti]?.[si]?.fieldValues['artist'] ?? '');
 				return {
 					fieldValues: {
 						...allDrafts[ti]?.[si]?.fieldValues,
-						...(hasArtistCombobox ? { artist: artistVal } : {}),
+						...(artistIsTagged ? { artist: artistVal } : {}),
 						...(hasYear && yearIsNumericMode
 							? { year: String(allYearValues[ti]?.[si] ?? 1990) }
 							: {})
@@ -1342,35 +1354,19 @@
 									</div>
 								{/if}
 
-								{#if field === 'artist' && hasArtistCombobox}
-									{#each collabArtists[activeTabIndex]?.[slotIdx] ?? [''] as _, artistIdx}
-										<div class="mb-2 flex items-start gap-2">
-											<div class="min-w-0 flex-1">
-												<Combobox
-													name="artist_slot_{slotIdx}_{artistIdx}"
-													pool={data.pools['artist'] ?? []}
-													{teamHex}
-													bind:value={collabArtists[activeTabIndex][slotIdx][artistIdx]}
-												/>
-											</div>
-											{#if (collabArtists[activeTabIndex]?.[slotIdx]?.length ?? 0) > 1}
-												<button
-													type="button"
-													onclick={() => removeArtistSlot(activeTabIndex, slotIdx, artistIdx)}
-													class="mt-2 shrink-0 text-lg leading-none text-zinc-600 hover:text-red-400"
-													aria-label="Remove artist">−</button
-												>
-											{/if}
-										</div>
-									{/each}
-									{#if (collabArtists[activeTabIndex]?.[slotIdx]?.length ?? 0) < 3}
-										<button
-											type="button"
-											onclick={() => addArtistSlot(activeTabIndex, slotIdx)}
-											class="mt-1 text-xs font-semibold underline underline-offset-2"
-											style="color: {teamHex};">+ Add collab artist</button
-										>
-									{/if}
+								{#if field === 'artist' && artistIsTagged}
+									<ArtistTagInput
+										name="artist_{slotIdx}"
+										bind:tags={artistTags[activeTabIndex][slotIdx]}
+										pool={artistPool}
+										accentHex={teamHex}
+										placeholder={artistPool.length > 0
+											? 'Search artists, Enter to add…'
+											: 'Type a name, Enter to add…'}
+									/>
+									<p class="mt-1 text-xs text-zinc-600">
+										Add every artist on the track — each one is worth part of the points.
+									</p>
 								{:else if mode === 'combobox'}
 									<Combobox
 										name="{field}_{slotIdx}"
@@ -1457,35 +1453,19 @@
 								</div>
 							{/if}
 
-							{#if field === 'artist' && hasArtistCombobox}
-								{#each collabArtists[activeTabIndex]?.[0] ?? [''] as _, artistIdx}
-									<div class="mb-2 flex items-start gap-2">
-										<div class="min-w-0 flex-1">
-											<Combobox
-												name="artist_slot_0_{artistIdx}"
-												pool={data.pools['artist'] ?? []}
-												{teamHex}
-												bind:value={collabArtists[activeTabIndex][0][artistIdx]}
-											/>
-										</div>
-										{#if (collabArtists[activeTabIndex]?.[0]?.length ?? 0) > 1}
-											<button
-												type="button"
-												onclick={() => removeArtistSlot(activeTabIndex, 0, artistIdx)}
-												class="mt-2 shrink-0 text-lg leading-none text-zinc-600 hover:text-red-400"
-												aria-label="Remove artist">−</button
-											>
-										{/if}
-									</div>
-								{/each}
-								{#if (collabArtists[activeTabIndex]?.[0]?.length ?? 0) < 3}
-									<button
-										type="button"
-										onclick={() => addArtistSlot(activeTabIndex, 0)}
-										class="mt-1 text-xs font-semibold underline underline-offset-2"
-										style="color: {teamHex};">+ Add collab artist</button
-									>
-								{/if}
+							{#if field === 'artist' && artistIsTagged}
+								<ArtistTagInput
+									name="artist"
+									bind:tags={artistTags[activeTabIndex][0]}
+									pool={artistPool}
+									accentHex={teamHex}
+									placeholder={artistPool.length > 0
+										? 'Search artists, Enter to add…'
+										: 'Type a name, Enter to add…'}
+								/>
+								<p class="mt-1 text-xs text-zinc-600">
+									Add every artist on the track — each one is worth part of the points.
+								</p>
 							{:else if mode === 'combobox'}
 								<Combobox
 									name={field}

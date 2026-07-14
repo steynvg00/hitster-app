@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/types/database.js';
+import { parseArtistTags } from '$lib/artist-tags';
 import type {
 	AnswerField,
 	InputMode,
@@ -239,24 +240,12 @@ export function artistTargets(track: TrackData): string[] {
 	return raw.filter((a) => normalizeAnswer(a ?? '') !== '');
 }
 
-/**
- * The tag-list wire format for a multi-artist answer: ONE TAG PER LINE.
- *
- * Newline is the separator precisely because no artist name contains one — a
- * legacy single-input answer ("Sub Zero Project") has no newline, so it parses to
- * exactly one tag and scores identically to pre-C1. Splitting on " & " or "," was
- * rejected for that reason: it would silently shred a single artist whose NAME
- * contains an ampersand (and T1 joins the display string with " & ", so that
- * collision is real).
- *
- * C1 stuk 2's multi-select combobox joins its tags with '\n' to produce this.
- */
-export function parseArtistTags(submitted: string): string[] {
-	return submitted
-		.split('\n')
-		.map((s) => s.trim())
-		.filter(Boolean);
-}
+// The tag wire format lives in $lib/artist-tags (client-safe, pure) so the
+// player's multi-select input (C1 stuk 2) and this scorer share ONE definition —
+// this module is server-only and a .svelte component cannot import it, so a
+// second copy on the client would be free to drift and silently mis-score every
+// multi-artist answer. Re-exported here so existing importers are unaffected.
+export { parseArtistTags, joinArtistTags, ARTIST_TAG_SEPARATOR } from '$lib/artist-tags';
 
 export type ArtistScoreResult = {
 	/** Main (threshold) points, after the surplus penalty and the zero floor. */
