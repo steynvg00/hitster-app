@@ -129,6 +129,95 @@ export async function resolveBattle(
 }
 
 /**
+ * Recap resolution barrier (stuk 3a). Resolves every still-unresolved battle in
+ * a set, so that once a set reaches recap the reveal is a pure DISPLAY of stored
+ * outcomes and never has to trigger or wait on resolution.
+ *
+ * Why this is needed: maybeResolveBattle only fires when EVERY set-team has an
+ * ended attempt, and several paths reach recap without that ever being true —
+ * a team that never started the challenge blocks it by design; an untimed battle
+ * (challenges.timer_seconds is nullable) never auto-ends an open attempt; the
+ * set-level total-timer expiry in /api/auto-submit flips play_state to recap
+ * unconditionally; and a few direct ended_at closes in auto-submit bypass the
+ * submit hook entirely. So "resolved by recap" has to be enforced here rather
+ * than assumed.
+ *
+ * Deliberately bypasses maybeResolveBattle's all-teams-ended gate and calls
+ * resolveBattle directly — the same thing the host's "Resolve now" fallback
+ * does. Safe to call on an already-resolved battle: resolveBattle CAS-claims
+ * battle_resolved_at first and returns { resolved: false } if the claim is lost,
+ * so a battle already resolved by the auto-hook is never awarded twice and the
+ * crown is not recomputed twice.
+ *
+ * A battle with ZERO submissions from this set's teams is skipped, not resolved:
+ * there is nothing to rank, so battle_resolved_at/battle_ranking stay NULL and
+ * the reveal excludes it (the reveal reads battles WHERE battle_ranking IS NOT
+ * NULL). Resolving it would award the whole ladder to teams that never played.
+ *
+ * Per-battle independent, so order doesn't matter here; reveal ordering (by
+ * set_challenges.position) is stuk 3b's concern.
+ */
+export async function resolveBattlesForRecap(
+	admin: AdminClient,
+	setId: string
+): Promise<{ resolved: string[]; skippedNoSubmissions: string[]; alreadyResolved: string[] }> {
+	const resolved: string[] = [];
+	const skippedNoSubmissions: string[] = [];
+	const alreadyResolved: string[] = [];
+
+	// Unresolved rows only — an already-resolved battle needs no work (and
+	// resolveBattle's CAS would no-op on it anyway).
+	const { data: scRows } = await admin
+		.from('set_challenges')
+		.select('challenge_id')
+		.eq('set_id', setId)
+		.is('battle_resolved_at', null);
+	const candidateIds = (scRows ?? []).map((sc) => sc.challenge_id);
+	if (candidateIds.length === 0) return { resolved, skippedNoSubmissions, alreadyResolved };
+
+	// Keep only the battle-enabled ones, via the same parser the resolver, the
+	// editor and the badge all use — the badge can never disagree with what
+	// actually resolves.
+	const { data: chs } = await admin
+		.from('challenges')
+		.select('id, points_config')
+		.in('id', candidateIds);
+	const battleIds = (chs ?? [])
+		.filter((c) => parseBattleConfig(c.points_config).enabled)
+		.map((c) => c.id);
+	if (battleIds.length === 0) return { resolved, skippedNoSubmissions, alreadyResolved };
+
+	const teams = await getTeamsInSet(admin, setId);
+	const teamIds = teams.map((t) => t.id);
+	if (teamIds.length === 0) {
+		// No teams in the set — nothing could have been played or ranked.
+		return { resolved, skippedNoSubmissions: battleIds, alreadyResolved };
+	}
+
+	for (const challengeId of battleIds) {
+		// Set-scoped on purpose: count only submissions from THIS set's teams, so a
+		// challenge reused by another set can't make an unplayed battle look played.
+		const { count } = await admin
+			.from('submissions')
+			.select('*', { count: 'exact', head: true })
+			.eq('challenge_id', challengeId)
+			.in('team_id', teamIds);
+
+		if (!count) {
+			skippedNoSubmissions.push(challengeId);
+			continue;
+		}
+
+		const result = await resolveBattle(admin, setId, challengeId);
+		// Claim lost => something resolved it between our read and this call.
+		if (result.resolved) resolved.push(challengeId);
+		else alreadyResolved.push(challengeId);
+	}
+
+	return { resolved, skippedNoSubmissions, alreadyResolved };
+}
+
+/**
  * Auto-resolution hook, called at the end of scoreAndPersistSubmission for a
  * battle challenge once the submitting team's attempt has been ended. Resolves
  * only when EVERY set-team has an ended attempt on this challenge — the natural

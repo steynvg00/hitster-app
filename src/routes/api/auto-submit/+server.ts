@@ -2,6 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
 import { scoreAndPersistSubmission } from '$lib/server/submit';
+import { resolveBattlesForRecap } from '$lib/server/battle';
 
 export const POST: RequestHandler = async ({ locals }) => {
 	if (!locals.isAdmin) error(403, 'Forbidden');
@@ -178,6 +179,15 @@ export const POST: RequestHandler = async ({ locals }) => {
 		if (!set.total_timer_seconds || !set.started_at) continue;
 		const endsAt = new Date(set.started_at).getTime() + set.total_timer_seconds * 1000;
 		if (nowMs >= endsAt) {
+			// Resolution barrier (stuk 3a) — the OTHER path into recap. This flip is
+			// unconditional and skips startRecap entirely, so without this a
+			// timer-expired set would reach recap with battles unresolved. Runs before
+			// the flip; best-effort so a failure can't wedge the set in 'playing'.
+			try {
+				await resolveBattlesForRecap(db, set.id);
+			} catch (err) {
+				console.error('[auto-submit] battle resolution barrier failed — continuing', err);
+			}
 			await db
 				.from('game_sets')
 				.update({ play_state: 'recap', ended_at: new Date().toISOString() })
