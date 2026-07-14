@@ -2,7 +2,12 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/types/database';
 import { getTeamsInSet } from '$lib/server/randomize';
 import { recomputeCrownAfterBattle } from '$lib/server/crown';
-import { computeBattleRanking, parseBattleConfig, type BattleEntry } from '$lib/battle-ranking';
+import {
+	computeBattleRanking,
+	deriveLadder,
+	parseBattleConfig,
+	type BattleEntry
+} from '$lib/battle-ranking';
 
 type AdminClient = SupabaseClient<Database>;
 
@@ -43,18 +48,22 @@ export async function resolveBattle(
 		.select('id');
 	if (!claimed || claimed.length === 0) return { resolved: false };
 
-	// 2. Ladder from the challenge config.
+	// 2. Max-points from the challenge config.
 	const { data: ch } = await admin
 		.from('challenges')
 		.select('points_config')
 		.eq('id', challengeId)
 		.maybeSingle();
-	const { ladder } = parseBattleConfig(ch?.points_config);
+	const { max_points } = parseBattleConfig(ch?.points_config);
 
 	// 3. Teams in the set (TEAM_COLOR_ORDER-ordered — the crown tiebreak relies on it).
 	const teams = await getTeamsInSet(admin, setId);
 	const teamIds = teams.map((t) => t.id);
 	if (teamIds.length === 0) return { resolved: true };
+
+	// The ladder is derived from max_points + the set's REAL team_count at
+	// resolution time — never stored, so it always matches actual turnout.
+	const ladder = deriveLadder(max_points, teamIds.length);
 
 	// 4. Ranking inputs: raw (base+bonus) from the submission, elapsed from the attempt.
 	const [subsRes, attemptsRes] = await Promise.all([

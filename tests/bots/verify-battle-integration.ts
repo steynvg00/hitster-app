@@ -25,12 +25,19 @@
 // before the run and restored in a finally; battle state is reset before AND after.
 // Run twice — the second run must be identical, no drift.
 //
+// Ladder model (stuk 2): the seeded battle config is now { enabled, max_points } —
+// no stored ladder. The expected awards below are computed via deriveLadder(
+// MAX_POINTS, teams.length), the SAME derivation resolveBattle itself calls, so
+// this proves the DB wiring (CAS, crown, idempotency) against the real derived
+// ladder for the set's actual team_count rather than a stale hand-written array.
+//
 // Requires: app running (BOT_BASE_URL) with migration 0061 applied.
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { TEAM_COLOR_ORDER } from '../../src/lib/server/randomize';
+import { deriveLadder } from '../../src/lib/battle-ranking';
 import { BOT_BASE_URL } from './config';
 
 function loadEnv() {
@@ -52,7 +59,7 @@ function loadEnv() {
 
 const SET_ID = 'e5100000-0000-4000-8000-000000000001';
 const BATTLE_CH = 'e5100000-0000-4000-8000-000000000020'; // ch20 — the dedicated battle challenge for this run
-const LADDER = [10, 7, 5, 3, 1, 0];
+const MAX_POINTS = 10;
 const ATTEMPT_BASE = new Date('2024-01-01T00:00:00.000Z').getTime(); // absolute time is irrelevant; only ended−started matters
 
 // ─── report plumbing ──────────────────────────────────────────────────────────
@@ -196,7 +203,7 @@ const rankFor = (ranking: Array<Record<string, unknown>>, teamId: string) =>
 // ─── scenarios ────────────────────────────────────────────────────────────────
 // t[0]=blue t[1]=yellow t[2]=green t[3]=red (TEAM_COLOR_ORDER for team_count 4)
 
-async function s1CleanAdditive(db: SupabaseClient, t: Team[]) {
+async function s1CleanAdditive(db: SupabaseClient, t: Team[], L: number[]) {
 	await resetBattle(db, t);
 	// Distinct raws → distinct ranks. Pre-seat the crown on blue (already the
 	// pre-battle leader by full score) so the recompute is a no-op → deltas are
@@ -211,39 +218,40 @@ async function s1CleanAdditive(db: SupabaseClient, t: Team[]) {
 	await callResolve('resolve');
 	const after = [await teamScore(db, t[0].id), await teamScore(db, t[1].id), await teamScore(db, t[2].id), await teamScore(db, t[3].id)];
 
-	// Oracle: raws 20>15>10>0 → ranks 1..4 → ladder [10,7,5,3].
-	assert('S1 additive Δ blue == ladder[0] (10)', after[0] - before[0], 10);
-	assert('S1 additive Δ yellow == ladder[1] (7)', after[1] - before[1], 7);
-	assert('S1 additive Δ green == ladder[2] (5)', after[2] - before[2], 5);
-	assert('S1 additive Δ red == ladder[3] (3)', after[3] - before[3], 3);
+	// Oracle: raws 20>15>10>0 → ranks 1..4 → derived ladder L (e.g. [10,7,3,0] for M=10,N=4).
+	assert('S1 additive Δ blue == L[0]', after[0] - before[0], L[0]);
+	assert('S1 additive Δ yellow == L[1]', after[1] - before[1], L[1]);
+	assert('S1 additive Δ green == L[2]', after[2] - before[2], L[2]);
+	assert('S1 additive Δ red == L[3]', after[3] - before[3], L[3]);
 	const r = await battleRanking(db);
-	assert('S1 ranking blue rank1/award10', [rankFor(r, t[0].id), awardFor(r, t[0].id)], [1, 10]);
-	assert('S1 ranking red rank4/award3', [rankFor(r, t[3].id), awardFor(r, t[3].id)], [4, 3]);
+	assert('S1 ranking blue rank1/award L[0]', [rankFor(r, t[0].id), awardFor(r, t[0].id)], [1, L[0]]);
+	assert('S1 ranking red rank4/award L[3]', [rankFor(r, t[3].id), awardFor(r, t[3].id)], [4, L[3]]);
 	assert('S1 battle_resolved_at set', (await resolvedAt(db)) != null, true);
 	// Crown was already blue and blue stays top → no transfer, no battle +1.
 	assert('S1 crown stays blue', await crownHolder(db), t[0].id);
 	assert('S1 no battle crown log (holder unchanged)', await battleCrownLogCount(db, t.map((x) => x.id)), 0);
 }
 
-async function s2SpeedTiebreak(db: SupabaseClient, t: Team[]) {
+async function s2SpeedTiebreak(db: SupabaseClient, t: Team[], L: number[]) {
 	await resetBattle(db, t);
 	// blue & yellow tie on raw 15; blue faster (20s) than yellow (40s) → distinct.
 	await seedSubmission(db, t[0].id, { raw: 15, full: 30, elapsedSec: 20 });
 	await seedSubmission(db, t[1].id, { raw: 15, full: 20, elapsedSec: 40 });
 	await seedSubmission(db, t[2].id, { raw: 10, full: 12, elapsedSec: 30 });
 	await seedSubmission(db, t[3].id, { raw: 5, full: 6, elapsedSec: 30 });
-	await setCrown(db, t[0].id); // blue stays top (30+10) → no +1
+	await setCrown(db, t[0].id); // blue stays top (30+L[0]) → no +1
 
 	await callResolve('resolve');
 	const r = await battleRanking(db);
-	assert('S2 faster blue rank1/award10', [rankFor(r, t[0].id), awardFor(r, t[0].id)], [1, 10]);
-	assert('S2 slower yellow rank2/award7 (distinct, not split)', [rankFor(r, t[1].id), awardFor(r, t[1].id)], [2, 7]);
-	assert('S2 green rank3/award5', [rankFor(r, t[2].id), awardFor(r, t[2].id)], [3, 5]);
+	assert('S2 faster blue rank1/award L[0]', [rankFor(r, t[0].id), awardFor(r, t[0].id)], [1, L[0]]);
+	assert('S2 slower yellow rank2/award L[1] (distinct, not split)', [rankFor(r, t[1].id), awardFor(r, t[1].id)], [2, L[1]]);
+	assert('S2 green rank3/award L[2]', [rankFor(r, t[2].id), awardFor(r, t[2].id)], [3, L[2]]);
 }
 
-async function s3AverageSplit(db: SupabaseClient, t: Team[]) {
+async function s3AverageSplit(db: SupabaseClient, t: Team[], L: number[]) {
 	await resetBattle(db, t);
-	// blue & yellow identical raw 15 AND identical elapsed 30 → share avg((10+7)/2)=9.
+	// blue & yellow identical raw 15 AND identical elapsed 30 → share avg round((L[0]+L[1])/2).
+	const split = Math.round((L[0] + L[1]) / 2);
 	await seedSubmission(db, t[0].id, { raw: 15, full: 30, elapsedSec: 30 });
 	await seedSubmission(db, t[1].id, { raw: 15, full: 28, elapsedSec: 30 });
 	await seedSubmission(db, t[2].id, { raw: 10, full: 12, elapsedSec: 30 });
@@ -252,13 +260,13 @@ async function s3AverageSplit(db: SupabaseClient, t: Team[]) {
 
 	await callResolve('resolve');
 	const r = await battleRanking(db);
-	assert('S3 blue split award 9', awardFor(r, t[0].id), 9);
-	assert('S3 yellow split award 9', awardFor(r, t[1].id), 9);
+	assert('S3 blue split award', awardFor(r, t[0].id), split);
+	assert('S3 yellow split award', awardFor(r, t[1].id), split);
 	assert('S3 blue+yellow share rank 1', [rankFor(r, t[0].id), rankFor(r, t[1].id)], [1, 1]);
-	assert('S3 green rank3/award5', [rankFor(r, t[2].id), awardFor(r, t[2].id)], [3, 5]);
+	assert('S3 green rank3/award L[2]', [rankFor(r, t[2].id), awardFor(r, t[2].id)], [3, L[2]]);
 }
 
-async function s4NonParticipant(db: SupabaseClient, t: Team[]) {
+async function s4NonParticipant(db: SupabaseClient, t: Team[], L: number[]) {
 	await resetBattle(db, t);
 	// red has NO attempt/submission → the auto-hook wouldn't fire; resolve directly
 	// (the host-resolve path). red ranks last at raw 0 with elapsed ∞.
@@ -271,14 +279,16 @@ async function s4NonParticipant(db: SupabaseClient, t: Team[]) {
 	const redBefore = await teamScore(db, t[3].id);
 	await callResolve('resolve');
 	const r = await battleRanking(db);
-	// Oracle: 4 teams → last position is index 3 → ladder[3]=3 (NOT 0; 0 is index 5).
-	assert('S4 non-participant red rank4/award3 (last ladder slot)', [rankFor(r, t[3].id), awardFor(r, t[3].id)], [4, 3]);
+	// Oracle: the derived ladder's LAST rank always lands on 0 (deriveLadder's
+	// invariant), so a non-participant (always last) is awarded L[L.length-1] === 0.
+	const last = L[L.length - 1];
+	assert('S4 non-participant red rank4/award = last derived slot (0)', [rankFor(r, t[3].id), awardFor(r, t[3].id)], [4, last]);
 	assert('S4 non-participant raw_score 0', r.find((x) => x.team_id === t[3].id)?.raw_score, 0);
 	assert('S4 non-participant elapsed null', r.find((x) => x.team_id === t[3].id)?.elapsed_seconds, null);
-	assert('S4 non-participant Δ == 3', (await teamScore(db, t[3].id)) - redBefore, 3);
+	assert('S4 non-participant Δ == last derived slot', (await teamScore(db, t[3].id)) - redBefore, last);
 }
 
-async function s5Idempotency(db: SupabaseClient, t: Team[]) {
+async function s5Idempotency(db: SupabaseClient, t: Team[], L: number[]) {
 	await resetBattle(db, t);
 	await seedSubmission(db, t[0].id, { raw: 20, full: 40, elapsedSec: 30 });
 	await seedSubmission(db, t[1].id, { raw: 10, full: 12, elapsedSec: 30 });
@@ -297,18 +307,20 @@ async function s5Idempotency(db: SupabaseClient, t: Team[]) {
 	assert('S5 second resolve reports resolved:false', res2.resolved, false);
 	assert('S5 scores unchanged after 2nd call', after2, after1);
 	assert('S5 battle_resolved_at unchanged (claimed once)', resolvedAt2, resolvedAt1);
-	// Sanity: the ONE award happened (blue got its +10 on the first call).
-	assert('S5 blue = full 40 + ladder 10 (added exactly once)', after1[0], 50);
+	// Sanity: the ONE award happened (blue got its +L[0] on the first call).
+	assert('S5 blue = full 40 + L[0] (added exactly once)', after1[0], 40 + L[0]);
 }
 
-async function s6CrownChange(db: SupabaseClient, t: Team[]) {
+async function s6CrownChange(db: SupabaseClient, t: Team[], L: number[]) {
 	await resetBattle(db, t);
 	// Pre-battle crown holder = yellow (t[1]). After ladder adds blue overtakes by 1.
-	//   blue:   full 30 + ladder[0] 10  = 40
-	//   yellow: full 32 + ladder[1] 7   = 39   (was crown holder)
-	//   green:  full 10 + ladder[2] 5   = 15
-	//   red:    full 0  + ladder[3] 3   = 3
-	// blue 40 > holder yellow 39 → crown → blue, +1 steal → blue 41. Exactly one log.
+	//   blue:   full 30 + L[0]
+	//   yellow: full 32 + L[1]   (was crown holder)
+	//   green:  full 10 + L[2]
+	//   red:    full 0  + L[3]
+	// blue's post-ladder score > holder yellow's → crown → blue, +1 steal. Exactly one log.
+	const blueAfter = 30 + L[0];
+	const yellowAfter = 32 + L[1];
 	await seedSubmission(db, t[0].id, { raw: 20, full: 30, elapsedSec: 30 });
 	await seedSubmission(db, t[1].id, { raw: 10, full: 32, elapsedSec: 30 });
 	await seedSubmission(db, t[2].id, { raw: 5, full: 10, elapsedSec: 30 });
@@ -316,13 +328,19 @@ async function s6CrownChange(db: SupabaseClient, t: Team[]) {
 	await setCrown(db, t[1].id); // yellow holds pre-battle
 
 	await callResolve('resolve');
-	assert('S6 crown moved to blue', await crownHolder(db), t[0].id);
-	assert('S6 blue = 30 + 10 + 1 steal = 41', await teamScore(db, t[0].id), 41);
-	assert('S6 yellow unchanged at 39 (no steal)', await teamScore(db, t[1].id), 39);
-	assert('S6 exactly ONE battle crown log', await battleCrownLogCount(db, t.map((x) => x.id)), 1);
+	if (blueAfter > yellowAfter) {
+		assert('S6 crown moved to blue', await crownHolder(db), t[0].id);
+		assert('S6 blue = full+L[0]+1 steal', await teamScore(db, t[0].id), blueAfter + 1);
+		assert('S6 yellow unchanged (no steal)', await teamScore(db, t[1].id), yellowAfter);
+		assert('S6 exactly ONE battle crown log', await battleCrownLogCount(db, t.map((x) => x.id)), 1);
+	} else {
+		// Degenerate case only if a future max_points/team_count choice flips the
+		// comparison — kept so the scenario still asserts SOMETHING meaningful.
+		assert('S6 crown stays yellow (blue did not overtake)', await crownHolder(db), t[1].id);
+	}
 }
 
-async function s7AutoHook(db: SupabaseClient, t: Team[]) {
+async function s7AutoHook(db: SupabaseClient, t: Team[], L: number[]) {
 	// (a) All four teams finished → maybeResolveBattle must resolve automatically.
 	await resetBattle(db, t);
 	await seedSubmission(db, t[0].id, { raw: 20, full: 40, elapsedSec: 30 });
@@ -332,7 +350,7 @@ async function s7AutoHook(db: SupabaseClient, t: Team[]) {
 	await setCrown(db, t[0].id);
 	await callResolve('maybe');
 	assert('S7a all-done → auto-resolved (battle_resolved_at set)', (await resolvedAt(db)) != null, true);
-	assert('S7a auto-resolve applied ladder (blue 40+10=50)', await teamScore(db, t[0].id), 50);
+	assert('S7a auto-resolve applied ladder (blue 40+L[0])', await teamScore(db, t[0].id), 40 + L[0]);
 
 	// (b) One team never started → maybeResolveBattle must NOT resolve.
 	await resetBattle(db, t);
@@ -359,6 +377,12 @@ async function main() {
 	const teams = await scopedTeams(db);
 	if (teams.length < 4) throw new Error(`Expected 4 scoped teams, got ${teams.length}`);
 
+	// The ladder is derived from max_points + the set's REAL team_count — the
+	// same call resolveBattle itself makes — so every scenario's oracle stays
+	// correct however many teams this set actually has.
+	const LADDER = deriveLadder(MAX_POINTS, teams.length);
+	console.log(`  derived ladder for team_count=${teams.length}, max_points=${MAX_POINTS}: [${LADDER.join(',')}]\n`);
+
 	// Snapshot ch20's points_config — RESTORED in finally (fixture hygiene).
 	const { data: chBefore } = await db
 		.from('challenges')
@@ -368,19 +392,20 @@ async function main() {
 	const originalConfig = chBefore?.points_config ?? null;
 
 	try {
-		// Make ch20 a battle challenge for the run.
+		// Make ch20 a battle challenge for the run. Storage is now { enabled,
+		// max_points } — no ladder stored; resolveBattle derives it at resolution.
 		await db
 			.from('challenges')
-			.update({ points_config: { battle: { enabled: true, ladder: LADDER } } })
+			.update({ points_config: { battle: { enabled: true, max_points: MAX_POINTS } } })
 			.eq('id', BATTLE_CH);
 
-		await s1CleanAdditive(db, teams);
-		await s2SpeedTiebreak(db, teams);
-		await s3AverageSplit(db, teams);
-		await s4NonParticipant(db, teams);
-		await s5Idempotency(db, teams);
-		await s6CrownChange(db, teams);
-		await s7AutoHook(db, teams);
+		await s1CleanAdditive(db, teams, LADDER);
+		await s2SpeedTiebreak(db, teams, LADDER);
+		await s3AverageSplit(db, teams, LADDER);
+		await s4NonParticipant(db, teams, LADDER);
+		await s5Idempotency(db, teams, LADDER);
+		await s6CrownChange(db, teams, LADDER);
+		await s7AutoHook(db, teams, LADDER);
 	} finally {
 		// Restore ch20's exact original config + wipe all battle/game state we touched.
 		await resetBattle(db, teams);
