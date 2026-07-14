@@ -49,7 +49,7 @@ export interface Challenge {
 
 export interface EffectsConfig {
 	pitch?: { enabled: boolean; semitones: number; window_size: number }; // semitones: -24 to +24
-	tempo?: { enabled: boolean; rate: number }; // 0.25 to 4.0
+	tempo?: { enabled: boolean; rate: number }; // see TEMPO_RATE_MIN/MAX in $lib/audio-limits (0.85–1.2); older rows may hold wider values and are clamped at apply time
 	lowpass?: { enabled: boolean; cutoff_hz: number; q: number }; // 20 to 20000
 	highpass?: { enabled: boolean; cutoff_hz: number; q: number }; // 20 to 20000
 	bandpass?: { enabled: boolean; freq_hz: number; q: number; mod_rate_hz: number };

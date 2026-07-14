@@ -3,6 +3,13 @@
 	import { onMount, onDestroy } from 'svelte';
 	import type { EffectsConfig, EffectPreset } from '$lib/types/index.js';
 	import { BUILTIN_PRESETS } from '$lib/effects-presets.js';
+	import {
+		TEMPO_RATE_MIN,
+		TEMPO_RATE_MAX,
+		TEMPO_RATE_STEP,
+		TEMPO_RATE_DEFAULT,
+		clampTempoRate
+	} from '$lib/audio-limits.js';
 	import SearchablePicker from '$lib/components/admin/SearchablePicker.svelte';
 	import Waveform from '$lib/components/ui/Waveform.svelte';
 
@@ -59,7 +66,7 @@
 		return cfg.pitch ?? { enabled: false, semitones: 0, window_size: 0.1 };
 	}
 	function tempoOf(cfg: EffectsConfig) {
-		return cfg.tempo ?? { enabled: false, rate: 1.0 };
+		return cfg.tempo ?? { enabled: false, rate: TEMPO_RATE_DEFAULT };
 	}
 	function lowpassOf(cfg: EffectsConfig) {
 		return cfg.lowpass ?? { enabled: false, cutoff_hz: 2000, q: 1.0 };
@@ -637,16 +644,20 @@
 									<div class="mb-2 flex items-center justify-between">
 										<span class="text-xs font-semibold text-zinc-300">Tempo</span>
 										<span class="font-mono text-xs text-zinc-500"
-											>{tempoOf(cfg).rate.toFixed(2)}×</span
+											>{clampTempoRate(tempoOf(cfg).rate).toFixed(2)}×</span
 										>
 									</div>
+									<!-- Range bounded by what the pitch correction can deliver cleanly, not by
+									     what playbackRate accepts — see $lib/audio-limits. The displayed value is
+									     clamped too, so a legacy out-of-range rate reads as what will actually
+									     play rather than as its (unchanged) stored value. -->
 									<input
 										type="range"
-										min="0.25"
-										max="4.0"
-										step="0.05"
+										min={TEMPO_RATE_MIN}
+										max={TEMPO_RATE_MAX}
+										step={TEMPO_RATE_STEP}
 										class="w-full accent-[#00e5ff]"
-										value={tempoOf(cfg).rate}
+										value={clampTempoRate(tempoOf(cfg).rate)}
 										oninput={(e) => {
 											tabEffects[tab.id] = {
 												...cfg,

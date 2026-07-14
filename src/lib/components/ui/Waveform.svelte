@@ -6,6 +6,10 @@
 	// reactive $effect that fires when isReady becomes true).
 	const mediaElementSourceCache = new WeakMap<HTMLAudioElement, MediaElementAudioSourceNode>();
 
+	/** Fallback Tone.PitchShift grain window (seconds) for a pitch effect whose row
+	 *  predates window_size. Tone's own nominal range is 0.03–0.1. */
+	const DEFAULT_PITCH_WINDOW = 0.1;
+
 	function getOrCreateMediaElementSource(
 		audioEl: HTMLAudioElement,
 		ctx: AudioContext
@@ -22,6 +26,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import type { EffectsConfig } from '$lib/types/index.js';
+	import { clampTempoRate } from '$lib/audio-limits.js';
 
 	interface Props {
 		src: string;
@@ -76,6 +81,48 @@
 	// Async awaits yield control; if a newer call has taken over, the stale
 	// call bails instead of connecting half-disposed nodes.
 	let applyEffectsGeneration = 0;
+
+	// Lazy Tone.js module — warmed in onMount so the play-gesture path awaits
+	// milliseconds, not a cold chunk fetch.
+	let tonePromise: Promise<typeof import('tone')> | null = null;
+	function loadTone() {
+		tonePromise ??= import('tone');
+		return tonePromise;
+	}
+
+	// Signature of the effects config the chain last SUCCESSFULLY finished
+	// applying. null until then — ensureChain() keeps retrying while it's stale,
+	// which is what makes the pre-gesture deadlock recoverable from the play
+	// click (the old one-shot $effect build got exactly one pre-gesture attempt
+	// and could never be retried).
+	let appliedSig: string | null = null;
+	let applyInFlight: Promise<void> | null = null;
+
+	/** The chain's identity — one definition, used by both ensureChain() and
+	 *  applyEffects() so the two can never derive it differently and disagree about
+	 *  whether the applied chain is current. */
+	function configSig(fx: EffectsConfig | null | undefined): string {
+		return JSON.stringify(fx ?? {});
+	}
+
+	/** Idempotent, retryable chain establishment. Fast no-op when the chain is
+	 *  already connected for the current config. Bounded loop: a config change
+	 *  can land while a build is in flight, and a not-yet-ready component makes
+	 *  no progress — never spin forever. */
+	async function ensureChain(): Promise<void> {
+		for (let attempt = 0; attempt < 3; attempt++) {
+			const sig = configSig(effects);
+			if (appliedSig === sig) return;
+			if (!applyInFlight) {
+				applyInFlight = applyEffects(effects).finally(() => (applyInFlight = null));
+			}
+			try {
+				await applyInFlight;
+			} catch {
+				/* applyEffects already fell back to direct routing where possible */
+			}
+		}
+	}
 
 	function disposeToneNodes() {
 		tonePitchShift?.dispose();
@@ -145,7 +192,22 @@
 		onPlayStateChange?.(true);
 	}
 
-	export function playPause() {
+	export async function playPause() {
+		// Resume the AudioContext synchronously INSIDE the user gesture. This is
+		// the deadlock-breaker: a chain build started pre-gesture parks on
+		// Tone.start(), and since audioCtx is now assigned BEFORE that await (see
+		// applyEffects + the onMount preload), this resume un-pends it. Callers
+		// invoke playPause() directly from a click handler, so this line runs
+		// within the gesture even though the function is async.
+		if (audioCtx && audioCtx.state !== 'running') {
+			audioCtx.resume();
+		}
+		// Establish the chain (or the reverse buffer) before playback starts —
+		// idempotent and milliseconds when already built. The timeout race means a
+		// pathologically stuck build degrades to dry playback instead of a dead
+		// play button.
+		await Promise.race([ensureChain(), new Promise((r) => setTimeout(r, 1500))]);
+
 		// Route to reverse path if enabled — bypasses WaveSurfer entirely
 		if (effects?.reverse?.enabled) {
 			if (reverseIsPlaying) {
@@ -154,12 +216,6 @@
 				startReversePlayback();
 			}
 			return;
-		}
-		// Resume AudioContext synchronously from user gesture.
-		// iOS/Safari keeps AudioContext suspended until audioContext.resume() is called
-		// from within a user-gesture event handler. The play button click is that gesture.
-		if (audioCtx && audioCtx.state !== 'running') {
-			audioCtx.resume();
 		}
 		ws?.playPause();
 	}
@@ -177,16 +233,31 @@
 		return ws?.isPlaying() ?? false;
 	}
 
-	// Run applyEffects whenever the component is ready and effects change.
-	// Only the $effect drives this — NOT the 'ready' callback — to avoid
-	// a double-call race between the async applyEffects and the sync isReady setter.
+	// Reconfiguration driver — routes through the SAME retryable ensureChain path
+	// as playPause() (no separate one-shot build). The first application runs
+	// immediately on ready; later re-runs are debounced ~200ms because the editor
+	// reassigns `effects` per slider INPUT EVENT, and rebuilding the full chain on
+	// each one machine-gunned teardown/reconnect glitches into live playback (the
+	// editor stutter). Separate concern from EffectsEditor's 600ms SAVE debounce.
+	let rebuildTimer: ReturnType<typeof setTimeout> | undefined;
+	let firstApply = true;
 	$effect(() => {
 		if (!isReady || !ws) return;
-		applyEffects(effects);
+		void effects; // track the prop — the editor swaps in a new object per edit
+		clearTimeout(rebuildTimer);
+		if (firstApply) {
+			firstApply = false;
+			ensureChain();
+		} else {
+			rebuildTimer = setTimeout(() => ensureChain(), 200);
+		}
 	});
 
 	async function applyEffects(fx: EffectsConfig | null | undefined) {
 		const generation = ++applyEffectsGeneration;
+		// Marked applied ONLY at a success point — stale-generation bails and
+		// not-ready returns leave it unset so ensureChain() retries.
+		const sig = configSig(fx);
 
 		const mediaEl = ws?.getMediaElement() as HTMLAudioElement | null;
 		if (!mediaEl) return;
@@ -196,12 +267,14 @@
 			mediaEl.volume = 0;
 			stopReversePlayback();
 
-			const Tone = await import('tone');
+			const Tone = await loadTone();
 			if (generation !== applyEffectsGeneration) return;
-			await Tone.start();
-			if (generation !== applyEffectsGeneration) return;
+			// Expose the context BEFORE awaiting Tone.start() so playPause()'s
+			// in-gesture resume guard can un-pend it (the round-2 deadlock).
 			const ctx = Tone.context.rawContext as AudioContext;
 			audioCtx = ctx;
+			await Tone.start();
+			if (generation !== applyEffectsGeneration) return;
 
 			// Bypass Tone chain on the media element source
 			if (toneSourceNode) {
@@ -225,6 +298,7 @@
 				reverseBuffer = decoded;
 				reverseSrcCache = src;
 			}
+			appliedSig = sig;
 			return;
 		}
 
@@ -232,11 +306,27 @@
 		mediaEl.volume = 1;
 		stopReversePlayback();
 
-		// ── Tempo (playbackRate only — no Web Audio node needed) ──────────────────
-		// preservesPitch defaults to true in modern browsers: playbackRate time-stretches
-		// WITHOUT shifting pitch. Set it explicitly (+ vendor prefixes for older engines)
-		// so tempo changes speed only. This is why the Tone chain must NOT add a pitch
-		// "correction" for tempo — there's no pitch side-effect to cancel.
+		// ── Tempo (browser time-stretcher) ────────────────────────────────────────
+		// preservesPitch = true: playbackRate time-stretches WITHOUT moving pitch, so
+		// tempo needs no correction, no PitchShift, and no Web Audio node at all.
+		//
+		// This replaced fix 4's varispeed (preservesPitch=false + a −12·log2(rate)
+		// PitchShift correction), which A/B measurement rejected. On a hard-bass kick
+		// train the stretcher held the dry reference's 60 Hz sub bin exactly at both
+		// 0.9× and 1.2× and kept transients intact, while the granular correction
+		// landed ~1 st FLAT on the sub and smeared transients below even the dry
+		// signal — audibly "low and muddy", and engine-dependent to boot. Tone's
+		// PitchShift is a crude two-delay-line shifter whose down-shift (what rate > 1
+		// needs) is erratic exactly at bass fundamentals, i.e. exactly this material.
+		//
+		// Varispeed only ever existed to dodge the stretcher's WSOLA artefacts at
+		// extreme rates. Bounding the rate to 0.85–1.2 (see $lib/audio-limits) keeps
+		// WSOLA in the range it was designed for, which removed the reason for the
+		// correction rather than improving it.
+		//
+		// The `&& fx.tempo.rate` guard is deliberate: a stored 0 (or absent) rate means
+		// "no tempo", and must stay 1 rather than clamp up to the 0.85 floor.
+		const tempoRate = fx?.tempo?.enabled && fx.tempo.rate ? clampTempoRate(fx.tempo.rate) : 1;
 		const mediaElAny = mediaEl as HTMLAudioElement & {
 			mozPreservesPitch?: boolean;
 			webkitPreservesPitch?: boolean;
@@ -244,9 +334,11 @@
 		mediaElAny.preservesPitch = true;
 		mediaElAny.mozPreservesPitch = true;
 		mediaElAny.webkitPreservesPitch = true;
-		mediaEl.playbackRate = fx?.tempo?.enabled && fx.tempo.rate ? fx.tempo.rate : 1;
+		mediaEl.playbackRate = tempoRate;
 
 		// ── Decide if we need the Web Audio chain ─────────────────────────────────
+		// Tempo is absent here on purpose: it is handled entirely by the media element
+		// above, so a tempo-only clip plays natively with no graph.
 		const needsWebAudio =
 			fx?.pitch?.enabled ||
 			fx?.lowpass?.enabled ||
@@ -266,35 +358,66 @@
 				toneSourceNode.connect(audioCtx.destination);
 			}
 			disposeToneNodes();
+			appliedSig = sig;
 			return;
 		}
 
 		// ── Build Web Audio chain ─────────────────────────────────────────────────
-		const Tone = await import('tone');
+		const Tone = await loadTone();
 		// Bail if a newer invocation has superseded this one while we awaited the import.
 		if (generation !== applyEffectsGeneration) return;
 
-		// Tone.start() will resolve immediately if the context is already running,
-		// or queue a resume for the next user gesture. We also call audioCtx.resume()
-		// in playPause() (synchronously on the click) to handle iOS/Safari strictly.
-		await Tone.start();
-		if (generation !== applyEffectsGeneration) return;
-
+		// Expose the context BEFORE awaiting Tone.start(): playPause()'s in-gesture
+		// resume guard needs it to un-pend a pre-gesture start. Assigning it only
+		// after the await was the round-2 circular deadlock — the guard that exists
+		// to resume the context could never see the context until it had resumed.
 		const ctx = Tone.context.rawContext as AudioContext;
 		audioCtx = ctx;
 
+		// Tone.start() resolves immediately if the context is already running, or
+		// stays pending until a resume lands inside a user gesture — playPause()
+		// provides that synchronously on the click.
+		await Tone.start();
+		if (generation !== applyEffectsGeneration) return;
+
+		try {
+			await buildChain(Tone, ctx, mediaEl, fx, generation);
+			if (generation !== applyEffectsGeneration) return;
+			appliedSig = sig;
+		} catch (err) {
+			// Never leave the element captured-but-unrouted (silent): fall back to a
+			// direct source→destination connection — dry playback, but audible.
+			console.error('[Waveform] effect chain build failed — playing dry', err);
+			// Tempo needs no repair here: it lives on the media element, not in this
+			// chain, so it survives a failed build and stays pitch-correct.
+			disposeToneNodes();
+			try {
+				if (toneSourceNode) {
+					toneSourceNode.disconnect();
+					toneSourceNode.connect(ctx.destination);
+				}
+			} catch {
+				/* element never captured — native playback is already audible */
+			}
+			// Mark applied so ensureChain doesn't retry a deterministically failing
+			// config forever; any config change resets the signature.
+			appliedSig = sig;
+		}
+	}
+
+	async function buildChain(
+		Tone: Awaited<ReturnType<typeof loadTone>>,
+		ctx: AudioContext,
+		mediaEl: HTMLAudioElement,
+		fx: EffectsConfig | null | undefined,
+		generation: number
+	) {
 		const source = getOrCreateMediaElementSource(mediaEl, ctx);
 		toneSourceNode = source;
 
 		// Teardown previous chain before rebuilding
 		source.disconnect();
 		disposeToneNodes();
-
-		// No tempo-derived pitch correction: preservesPitch (set above) means playbackRate
-		// no longer shifts pitch, so there's nothing to cancel. Only the intentional pitch
-		// EFFECT feeds the PitchShift below.
-		const pitchSemitones = fx?.pitch?.enabled ? fx.pitch.semitones : 0;
-		const windowSize = fx?.pitch?.enabled ? fx.pitch.window_size : 0.1;
 
 		// Build ordered chain of Tone nodes
 		// Order: lowpass → highpass → bandpass → bitcrusher → ring_mod
@@ -385,10 +508,24 @@
 			chain.push(toneReverb);
 		}
 
-		// PitchShift always terminates the chain — handles the intentional pitch shift.
-		// With pitch=0 it is effectively a pass-through.
-		tonePitchShift = new Tone.PitchShift({ pitch: pitchSemitones, windowSize });
-		chain.push(tonePitchShift);
+		// The pitch EFFECT only — tempo no longer contributes a correction here. Skipped
+		// at 0 semitones: even a 0-semitone PitchShift runs its full granular topology
+		// (two LFO-modulated delay lines + a crossfade LFO, all started at
+		// construction), so an always-on "pass-through" is a real artefact source.
+		if (fx?.pitch?.enabled && fx.pitch.semitones !== 0) {
+			tonePitchShift = new Tone.PitchShift({
+				pitch: fx.pitch.semitones,
+				windowSize: fx.pitch.window_size ?? DEFAULT_PITCH_WINDOW
+			});
+			chain.push(tonePitchShift);
+		}
+
+		if (chain.length === 0) {
+			// Nothing to insert (e.g. pitch enabled at 0 semitones) — route the
+			// captured source straight through so playback stays audible.
+			source.connect(ctx.destination);
+			return;
+		}
 
 		// Connect source (native MediaElementAudioSourceNode) → chain[0] (Tone.js node).
 		//
@@ -407,9 +544,27 @@
 	}
 
 	onMount(() => {
+		// Warm the tone chunk and grab the shared AudioContext immediately, so the
+		// play gesture's resume guard has a context to act on even before the first
+		// chain build reaches its own assignment (a cold chunk fetch used to leave
+		// audioCtx null through the whole first-play window).
+		loadTone().then((Tone) => {
+			audioCtx = Tone.context.rawContext as AudioContext;
+		});
 		import('wavesurfer.js').then(({ default: WaveSurfer }) => {
 			const mediaEl = document.createElement('audio');
 			mediaEl.crossOrigin = 'anonymous';
+			// Dev-only handle on the element the graph actually captures. This element
+			// is deliberately never appended to the DOM (WaveSurfer only needs the
+			// object), so document.querySelectorAll('audio') CANNOT find it — it finds
+			// the unrelated <audio controls> preview players instead, which nothing ever
+			// sets tempo on and which therefore report their untouched defaults
+			// (playbackRate=1, preservesPitch=true). Reading those and concluding "the
+			// app reset preservesPitch" cost us a full debugging round. Inspect
+			// window.__waveformEl instead.
+			if (import.meta.env.DEV) {
+				(window as unknown as Record<string, unknown>).__waveformEl = mediaEl;
+			}
 			ws = WaveSurfer.create({
 				container,
 				media: mediaEl,
@@ -434,6 +589,7 @@
 	});
 
 	onDestroy(() => {
+		clearTimeout(rebuildTimer);
 		disposeToneNodes();
 		stopReversePlayback();
 		if (toneSourceNode) {
