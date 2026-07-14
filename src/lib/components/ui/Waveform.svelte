@@ -294,22 +294,32 @@
 		mediaEl.volume = 1;
 		stopReversePlayback();
 
-		// ── Tempo (playbackRate only — no Web Audio node needed) ──────────────────
-		// preservesPitch defaults to true in modern browsers: playbackRate time-stretches
-		// WITHOUT shifting pitch. Set it explicitly (+ vendor prefixes for older engines)
-		// so tempo changes speed only. This is why the Tone chain must NOT add a pitch
-		// "correction" for tempo — there's no pitch side-effect to cancel.
+		// ── Tempo (fix 4: varispeed + PitchShift correction) ──────────────────────
+		// The browser's preservesPitch time-stretcher stutters audibly on music —
+		// on plain native output (the tempo-alone stutter) and when its output is
+		// captured into the Web Audio graph (tempo+effect). When rate ≠ 1 we take
+		// the stretcher out of the pipeline entirely: preservesPitch = false makes
+		// playbackRate plain varispeed (speed and pitch move together, glitch-free)
+		// and buildChain adds a PitchShift of −12·log2(rate) semitones to bring the
+		// pitch back. Net result: speed-changed, pitch-preserved, no stretcher.
+		// Trade-off: PitchShift graininess vs stretcher stutter — judged by ear;
+		// if graininess is worse, revert fix 4.
+		const tempoRate = fx?.tempo?.enabled && fx.tempo.rate ? fx.tempo.rate : 1;
 		const mediaElAny = mediaEl as HTMLAudioElement & {
 			mozPreservesPitch?: boolean;
 			webkitPreservesPitch?: boolean;
 		};
-		mediaElAny.preservesPitch = true;
-		mediaElAny.mozPreservesPitch = true;
-		mediaElAny.webkitPreservesPitch = true;
-		mediaEl.playbackRate = fx?.tempo?.enabled && fx.tempo.rate ? fx.tempo.rate : 1;
+		const preserve = tempoRate === 1;
+		mediaElAny.preservesPitch = preserve;
+		mediaElAny.mozPreservesPitch = preserve;
+		mediaElAny.webkitPreservesPitch = preserve;
+		mediaEl.playbackRate = tempoRate;
 
 		// ── Decide if we need the Web Audio chain ─────────────────────────────────
+		// tempoRate ≠ 1 requires the graph for its varispeed pitch correction —
+		// tempo-alone now routes through the chain too (it stuttered natively).
 		const needsWebAudio =
+			tempoRate !== 1 ||
 			fx?.pitch?.enabled ||
 			fx?.lowpass?.enabled ||
 			fx?.highpass?.enabled ||
@@ -358,6 +368,12 @@
 			// Never leave the element captured-but-unrouted (silent): fall back to a
 			// direct source→destination connection — dry playback, but audible.
 			console.error('[Waveform] effect chain build failed — playing dry', err);
+			// The varispeed pitch correction lived in the failed chain — hand tempo
+			// back to the browser stretcher so pitch stays right (its stutter is
+			// acceptable in this failure-only path).
+			mediaElAny.preservesPitch = true;
+			mediaElAny.mozPreservesPitch = true;
+			mediaElAny.webkitPreservesPitch = true;
 			disposeToneNodes();
 			try {
 				if (toneSourceNode) {
@@ -476,17 +492,21 @@
 			chain.push(toneReverb);
 		}
 
-		// PitchShift only when an actual shift is requested. Even at pitch 0 the
-		// node runs its full granular topology (two LFO-modulated delay lines + a
-		// crossfade LFO, all started at construction — ~100ms latency and audible
-		// artifacts on time-stretched input), which is why it used to contribute to
-		// the tempo+effect stutter as an always-on "pass-through". No tempo-derived
-		// correction is needed here: preservesPitch (set above) means playbackRate
-		// doesn't shift pitch.
-		if (fx?.pitch?.enabled && fx.pitch.semitones !== 0) {
+		// One PitchShift serves both jobs — never two stacked instances (each adds
+		// ~100ms granular latency): the pitch EFFECT's semitones plus the fix-4
+		// varispeed correction (−12·log2(rate) cancels the pitch shift that
+		// preservesPitch=false playbackRate introduces). At net 0 the node is
+		// omitted entirely — even a 0-semitone PitchShift runs its full granular
+		// topology (two LFO-modulated delay lines + a crossfade LFO, all started at
+		// construction) and was a stutter source as an always-on "pass-through".
+		const tempoRate = fx?.tempo?.enabled && fx.tempo.rate ? fx.tempo.rate : 1;
+		const effectSemitones = fx?.pitch?.enabled ? fx.pitch.semitones : 0;
+		const varispeedCorrection = tempoRate !== 1 ? -12 * Math.log2(tempoRate) : 0;
+		const netSemitones = effectSemitones + varispeedCorrection;
+		if (netSemitones !== 0) {
 			tonePitchShift = new Tone.PitchShift({
-				pitch: fx.pitch.semitones,
-				windowSize: fx.pitch.window_size
+				pitch: netSemitones,
+				windowSize: fx?.pitch?.enabled ? fx.pitch.window_size : 0.1
 			});
 			chain.push(tonePitchShift);
 		}
