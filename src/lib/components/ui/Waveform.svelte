@@ -562,6 +562,17 @@
 		import('wavesurfer.js').then(({ default: WaveSurfer }) => {
 			const mediaEl = document.createElement('audio');
 			mediaEl.crossOrigin = 'anonymous';
+			// Dev-only handle on the element the graph actually captures. This element
+			// is deliberately never appended to the DOM (WaveSurfer only needs the
+			// object), so document.querySelectorAll('audio') CANNOT find it — it finds
+			// the unrelated <audio controls> preview players instead, which nothing ever
+			// sets tempo on and which therefore report their untouched defaults
+			// (playbackRate=1, preservesPitch=true). Reading those and concluding "the
+			// app reset preservesPitch" cost us a full debugging round. Inspect
+			// window.__waveformEl instead.
+			if (import.meta.env.DEV) {
+				(window as unknown as Record<string, unknown>).__waveformEl = mediaEl;
+			}
 			ws = WaveSurfer.create({
 				container,
 				media: mediaEl,
