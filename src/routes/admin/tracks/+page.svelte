@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { invalidateAll, goto } from '$app/navigation';
+	import Fuse from 'fuse.js';
 	import type { PageData, ActionData } from './$types';
 	import Waveform from '$lib/components/ui/Waveform.svelte';
 	import TrimModal from '$lib/components/ui/TrimModal.svelte';
@@ -50,6 +51,53 @@
 	let editingTitles = $state<string | null>(null);
 	let showAddForm = $state(false);
 	let addingTrack = $state(false);
+
+	// ── artists tag editor (T1) ──────────────────────────────────────────────────
+	let editingArtists = $state<string | null>(null);
+	let artistDraft = $state<string[]>([]);
+	let artistQuery = $state('');
+
+	const artistFuse = $derived(
+		new Fuse(data.artistPool, { threshold: 0.4, minMatchCharLength: 1 })
+	);
+	const artistSuggestions = $derived(
+		artistQuery.trim().length > 0
+			? artistFuse
+					.search(artistQuery)
+					.map((r) => r.item)
+					.filter((n) => !artistDraft.includes(n))
+					.slice(0, 6)
+			: []
+	);
+
+	function startEditArtists(track: { id: string; artist: string; artists: string[] }) {
+		editingArtists = track.id;
+		// Seed from artists[] if the track already has one; otherwise seed a
+		// single tag from the scalar `artist` so old (never-edited) tracks edit
+		// cleanly — the host can split it into separate tags manually.
+		artistDraft = track.artists?.length ? [...track.artists] : [track.artist];
+		artistQuery = '';
+	}
+
+	function addArtistTag(name: string) {
+		const trimmed = name.trim();
+		if (!trimmed || artistDraft.includes(trimmed)) return;
+		artistDraft = [...artistDraft, trimmed];
+		artistQuery = '';
+	}
+
+	function removeArtistTag(name: string) {
+		artistDraft = artistDraft.filter((a) => a !== name);
+	}
+
+	function handleArtistKeydown(e: KeyboardEvent) {
+		if (e.key === 'Enter' || e.key === ',') {
+			e.preventDefault();
+			addArtistTag(artistQuery);
+		} else if (e.key === 'Backspace' && artistQuery === '' && artistDraft.length > 0) {
+			artistDraft = artistDraft.slice(0, -1);
+		}
+	}
 
 	// ── clip selection (bulk delete) ─────────────────────────────────────────────
 	let selectedClips = $state(new Set<string>());
@@ -697,7 +745,8 @@
 							class="grid flex-1 grid-cols-4 items-center gap-2"
 						>
 							<input type="hidden" name="id" value={track.id} />
-							<input name="artist" value={track.artist} required class="input-field text-sm" />
+							<!-- Artist is edited via the Artists tag section in the open track view
+							     (above Clips) — not here. Quick-edit covers title/year/label/etc. -->
 							<input name="title" value={track.title} required class="input-field text-sm" />
 							<input
 								name="year"
@@ -845,6 +894,99 @@
 				<!-- Clips panel -->
 				{#if expandedTrack === track.id}
 					<div class="border-t border-zinc-800 bg-zinc-950 px-4 py-3">
+						<!-- ── Artists (T1) ─────────────────────────────────────────────────── -->
+						<!-- One list: main artists AND vocalists/MCs are just names here. Which
+						     names score as a main share vs. a bonus is decided per-challenge in
+						     the editor (C1), not on the track. -->
+						<div class="mb-4">
+							<div class="mb-2 flex items-center justify-between">
+								<div class="flex items-center text-xs tracking-widest text-zinc-500 uppercase">
+									Artists
+									<HelpTooltip
+										text="Everyone credited on this track — main artists and vocalists/MCs alike. Whether a name counts as a main share or a bonus is set per challenge, not here."
+									/>
+								</div>
+								<button
+									onclick={() =>
+										editingArtists === track.id
+											? (editingArtists = null)
+											: startEditArtists(track)}
+									class="text-xs text-zinc-400 transition-colors hover:text-zinc-200"
+								>
+									{editingArtists === track.id ? 'Cancel' : 'Edit'}
+								</button>
+							</div>
+							{#if editingArtists === track.id}
+								<form method="POST" action="?/saveArtists" use:enhance>
+									<input type="hidden" name="id" value={track.id} />
+									<input type="hidden" name="artists_json" value={JSON.stringify(artistDraft)} />
+									<div
+										class="flex flex-wrap items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 p-2"
+									>
+										{#each artistDraft as a (a)}
+											<span
+												class="flex items-center gap-1 rounded bg-zinc-800 px-2 py-1 text-xs text-zinc-200"
+											>
+												{a}
+												<button
+													type="button"
+													onclick={() => removeArtistTag(a)}
+													class="text-zinc-500 hover:text-red-400"
+													aria-label={`Remove ${a}`}
+												>
+													✕
+												</button>
+											</span>
+										{/each}
+										<div class="relative min-w-[8rem] flex-1">
+											<input
+												type="text"
+												bind:value={artistQuery}
+												onkeydown={handleArtistKeydown}
+												placeholder="Type a name, Enter to add…"
+												autocomplete="off"
+												class="w-full bg-transparent px-1 py-1 text-sm text-zinc-100 focus:outline-none"
+											/>
+											{#if artistSuggestions.length > 0}
+												<div
+													class="absolute left-0 z-20 mt-1 w-56 overflow-hidden rounded-lg border border-zinc-700 bg-zinc-800 shadow-xl"
+												>
+													{#each artistSuggestions as s (s)}
+														<button
+															type="button"
+															onmousedown={(e) => e.preventDefault()}
+															onclick={() => addArtistTag(s)}
+															class="block w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-700"
+														>
+															{s}
+														</button>
+													{/each}
+												</div>
+											{/if}
+										</div>
+									</div>
+									<div class="mt-2 flex justify-end">
+										<button
+											type="submit"
+											disabled={artistDraft.length === 0}
+											class="btn-primary text-xs disabled:opacity-50"
+										>
+											Save
+										</button>
+									</div>
+								</form>
+								<p class="mt-1 text-xs text-zinc-600">
+									Enter or comma adds a tag; backspace on an empty field removes the last one.
+								</p>
+							{:else}
+								<div class="flex flex-wrap gap-1">
+									{#each track.artists?.length ? track.artists : [track.artist] as a}
+										<span class="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300">{a}</span>
+									{/each}
+								</div>
+							{/if}
+						</div>
+
 						<!-- Existing clips -->
 						<div class="mb-1 flex items-center justify-between">
 							<div class="text-xs tracking-widest text-zinc-500 uppercase">Clips</div>

@@ -58,12 +58,16 @@ export const load: PageServerLoad = async ({ url }) => {
 	const hasClips = url.searchParams.get('has_clips') ?? 'all';
 	const sort = url.searchParams.get('sort') ?? 'name_asc';
 
-	const [tracksResult, clipsResult, mashupsResult, mashupSourcesResult] = await Promise.all([
-		db.from('tracks').select('*'),
-		db.from('clips').select('*').order('track_id, created_at'),
-		db.from('mashups').select('*').order('name'),
-		db.from('mashup_sources').select('*').order('sort_order')
-	]);
+	const [tracksResult, clipsResult, mashupsResult, mashupSourcesResult, artistPoolResult] =
+		await Promise.all([
+			db.from('tracks').select('*'),
+			db.from('clips').select('*').order('track_id, created_at'),
+			db.from('mashups').select('*').order('name'),
+			db.from('mashup_sources').select('*').order('sort_order'),
+			// Pool for the artists tag editor — the same pool the artist combobox
+			// already suggests from (FIELD_POOL_TABLE.artist = answer_pool_artists).
+			db.from('answer_pool_artists').select('name').order('name')
+		]);
 
 	let tracks = tracksResult.data ?? [];
 	const clips = clipsResult.data ?? [];
@@ -115,12 +119,15 @@ export const load: PageServerLoad = async ({ url }) => {
 		}
 	});
 
+	const artistPool = (artistPoolResult.data ?? []).map((r) => r.name);
+
 	return {
 		tracks,
 		clips,
 		mashups,
 		mashupSources,
 		allGenres,
+		artistPool,
 		q,
 		genreFilter,
 		hasClips,
@@ -172,12 +179,15 @@ export const actions: Actions = {
 		return { success: true, id: inserted.id };
 	},
 
+	// Note: does NOT touch `artist`/`artists` — those are owned by saveArtists
+	// below (its own edit-toggle section, positioned above Clips in the open
+	// track view). Keeping them in one action means there's exactly one place
+	// that derives artist = artists.join(' & '), so the two can't drift.
 	updateTrack: async ({ request }) => {
 		const db = createAdminClient();
 		const data = await request.formData();
 
 		const id = data.get('id') as string;
-		const artist = (data.get('artist') as string)?.trim();
 		const title = (data.get('title') as string)?.trim();
 		const year = parseInt(data.get('year') as string, 10);
 		const record_label = (data.get('record_label') as string)?.trim() || null;
@@ -186,14 +196,13 @@ export const actions: Actions = {
 		const genre = (data.get('genre') as string)?.trim() || null;
 		const subgenre = (data.get('subgenre') as string)?.trim() || null;
 
-		if (!id || !artist || !title || isNaN(year)) {
-			return fail(400, { error: 'Artist, title, and year are required' });
+		if (!id || !title || isNaN(year)) {
+			return fail(400, { error: 'Title and year are required' });
 		}
 
 		const { error } = await db
 			.from('tracks')
 			.update({
-				artist,
 				title,
 				year,
 				record_label,
@@ -205,10 +214,44 @@ export const actions: Actions = {
 			.eq('id', id);
 		if (error) return fail(500, { error: error.message });
 		await Promise.all([
-			ensureInPool(db, 'answer_pool_artists', artist),
 			ensureInPool(db, 'answer_pool_labels', record_label),
 			ensureInPool(db, 'answer_pool_festivals', festival)
 		]);
+		return { success: true };
+	},
+
+	// T1 (tracks redesign, blocker piece 1/3): tracks.artists — the multi-artist
+	// list. artist stays the derived list-display string (artists.join(' & ')),
+	// written here so every existing read site of the scalar column keeps
+	// working with zero query change. No scoring change — C1 teaches scoreField
+	// to read artists[] as point shares; this action only stores the list.
+	saveArtists: async ({ request }) => {
+		const db = createAdminClient();
+		const data = await request.formData();
+		const id = data.get('id') as string;
+		const raw = (data.get('artists_json') as string) ?? '[]';
+
+		if (!id) return fail(400, { error: 'Missing track id' });
+
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(raw);
+		} catch {
+			return fail(400, { error: 'Invalid artists payload' });
+		}
+		if (!Array.isArray(parsed)) return fail(400, { error: 'Invalid artists payload' });
+
+		const artists = parsed
+			.filter((a): a is string => typeof a === 'string')
+			.map((a) => a.trim())
+			.filter(Boolean);
+		if (artists.length === 0) return fail(400, { error: 'At least one artist is required' });
+
+		const artist = artists.join(' & ');
+
+		const { error } = await db.from('tracks').update({ artists, artist }).eq('id', id);
+		if (error) return fail(500, { error: error.message });
+		await Promise.all(artists.map((a) => ensureInPool(db, 'answer_pool_artists', a)));
 		return { success: true };
 	},
 

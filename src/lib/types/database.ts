@@ -115,6 +115,7 @@ export type Database = {
 					genre: string | null;
 					subgenre: string | null;
 					accepted_titles: string[];
+					artists: string[];
 					created_by: string | null;
 					created_at: string;
 				};
@@ -129,6 +130,7 @@ export type Database = {
 					genre?: string | null;
 					subgenre?: string | null;
 					accepted_titles?: string[];
+					artists?: string[];
 					created_by?: string | null;
 					created_at?: string;
 				};
@@ -143,6 +145,7 @@ export type Database = {
 					genre?: string | null;
 					subgenre?: string | null;
 					accepted_titles?: string[];
+					artists?: string[];
 					created_by?: string | null;
 					created_at?: string;
 				};
