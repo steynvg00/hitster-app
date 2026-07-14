@@ -233,6 +233,17 @@
 		stopReversePlayback();
 
 		// ── Tempo (playbackRate only — no Web Audio node needed) ──────────────────
+		// preservesPitch defaults to true in modern browsers: playbackRate time-stretches
+		// WITHOUT shifting pitch. Set it explicitly (+ vendor prefixes for older engines)
+		// so tempo changes speed only. This is why the Tone chain must NOT add a pitch
+		// "correction" for tempo — there's no pitch side-effect to cancel.
+		const mediaElAny = mediaEl as HTMLAudioElement & {
+			mozPreservesPitch?: boolean;
+			webkitPreservesPitch?: boolean;
+		};
+		mediaElAny.preservesPitch = true;
+		mediaElAny.mozPreservesPitch = true;
+		mediaElAny.webkitPreservesPitch = true;
 		mediaEl.playbackRate = fx?.tempo?.enabled && fx.tempo.rate ? fx.tempo.rate : 1;
 
 		// ── Decide if we need the Web Audio chain ─────────────────────────────────
@@ -279,10 +290,9 @@
 		source.disconnect();
 		disposeToneNodes();
 
-		// Tempo correction: changing playbackRate also shifts pitch by log2(rate)*12 st.
-		// PitchShift at the end of the chain cancels this side-effect.
-		const tempoRate = fx?.tempo?.enabled && fx.tempo.rate ? fx.tempo.rate : 1;
-		const tempoCorrection = tempoRate !== 1 ? -Math.log2(tempoRate) * 12 : 0;
+		// No tempo-derived pitch correction: preservesPitch (set above) means playbackRate
+		// no longer shifts pitch, so there's nothing to cancel. Only the intentional pitch
+		// EFFECT feeds the PitchShift below.
 		const pitchSemitones = fx?.pitch?.enabled ? fx.pitch.semitones : 0;
 		const windowSize = fx?.pitch?.enabled ? fx.pitch.window_size : 0.1;
 
@@ -375,9 +385,9 @@
 			chain.push(toneReverb);
 		}
 
-		// PitchShift always terminates the chain — handles pitch shift and tempo correction.
-		// With pitch=0 and tempoCorrection=0 it is effectively a pass-through.
-		tonePitchShift = new Tone.PitchShift({ pitch: pitchSemitones + tempoCorrection, windowSize });
+		// PitchShift always terminates the chain — handles the intentional pitch shift.
+		// With pitch=0 it is effectively a pass-through.
+		tonePitchShift = new Tone.PitchShift({ pitch: pitchSemitones, windowSize });
 		chain.push(tonePitchShift);
 
 		// Connect source (native MediaElementAudioSourceNode) → chain[0] (Tone.js node).

@@ -21,7 +21,7 @@ export const BUILTIN_PRESETS: EffectPreset[] = [
 		effects: {
 			highpass: { enabled: true, cutoff_hz: 300, q: 1 },
 			lowpass: { enabled: true, cutoff_hz: 3500, q: 1 },
-			bitcrusher: { enabled: true, bits: 10, sample_rate_reduction: 0 }
+			bitcrusher: { enabled: true, bits: 10 }
 		} satisfies EffectsConfig
 	},
 	{
@@ -31,7 +31,7 @@ export const BUILTIN_PRESETS: EffectPreset[] = [
 		created_by: null,
 		created_at: '',
 		effects: {
-			bitcrusher: { enabled: true, bits: 4, sample_rate_reduction: 0 },
+			bitcrusher: { enabled: true, bits: 4 },
 			pitch: { enabled: true, semitones: 5, window_size: 0.1 }
 		} satisfies EffectsConfig
 	},
@@ -45,7 +45,7 @@ export const BUILTIN_PRESETS: EffectPreset[] = [
 			lowpass: { enabled: true, cutoff_hz: 8000, q: 0.5 },
 			highpass: { enabled: true, cutoff_hz: 80, q: 0.7 },
 			bandpass: { enabled: true, freq_hz: 1200, q: 1.4, mod_rate_hz: 0.1 },
-			bitcrusher: { enabled: true, bits: 12, sample_rate_reduction: 0 }
+			bitcrusher: { enabled: true, bits: 12 }
 		} satisfies EffectsConfig
 	},
 	{
@@ -56,7 +56,7 @@ export const BUILTIN_PRESETS: EffectPreset[] = [
 		created_at: '',
 		effects: {
 			ring_mod: { enabled: true, freq_hz: 30, depth: 1 },
-			bitcrusher: { enabled: true, bits: 4, sample_rate_reduction: 0 },
+			bitcrusher: { enabled: true, bits: 4 },
 			highpass: { enabled: true, cutoff_hz: 200, q: 1 }
 		} satisfies EffectsConfig
 	},
@@ -117,8 +117,7 @@ export const BUILTIN_PRESETS: EffectPreset[] = [
 				rate_hz: 4,
 				depth: 0.9,
 				stages: 8,
-				feedback: 0.7,
-				stereo_offset_deg: 0.02
+				feedback: 0.7
 			}
 		} satisfies EffectsConfig
 	},
@@ -142,7 +141,7 @@ export const BUILTIN_PRESETS: EffectPreset[] = [
 		effects: {
 			pitch: { enabled: true, semitones: -7, window_size: 0.25 },
 			tempo: { enabled: true, rate: 0.6 },
-			bitcrusher: { enabled: true, bits: 6, sample_rate_reduction: 0 },
+			bitcrusher: { enabled: true, bits: 6 },
 			reverb: { enabled: true, decay_s: 3, pre_delay_ms: 30, wet: 0.4 }
 		} satisfies EffectsConfig
 	}
