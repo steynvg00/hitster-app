@@ -106,13 +106,33 @@
 	let appliedSig: string | null = null;
 	let applyInFlight: Promise<void> | null = null;
 
+	/** DEV-only A/B switch for the tempo strategy. `window.__varispeedOff = true`
+	 *  forces preservesPitch=true and (via the readback guard) a zero correction, i.e.
+	 *  the browser's WSOLA stretcher with exact pitch — what reverting fix 4 would
+	 *  ship. Default/false keeps fix 4: varispeed + granular pitch correction.
+	 *  Lets the same clip be judged both ways without recompiling. Elided in prod. */
+	function varispeedDisabled(): boolean {
+		return (
+			import.meta.env.DEV &&
+			typeof window !== 'undefined' &&
+			(window as unknown as Record<string, unknown>).__varispeedOff === true
+		);
+	}
+
+	/** The chain's identity. The A/B flag is part of it so that flipping
+	 *  __varispeedOff invalidates appliedSig and the next play rebuilds — otherwise
+	 *  ensureChain would no-op and the toggle would appear to do nothing. */
+	function configSig(fx: EffectsConfig | null | undefined): string {
+		return JSON.stringify(fx ?? {}) + (varispeedDisabled() ? '|novarispeed' : '');
+	}
+
 	/** Idempotent, retryable chain establishment. Fast no-op when the chain is
 	 *  already connected for the current config. Bounded loop: a config change
 	 *  can land while a build is in flight, and a not-yet-ready component makes
 	 *  no progress — never spin forever. */
 	async function ensureChain(): Promise<void> {
 		for (let attempt = 0; attempt < 3; attempt++) {
-			const sig = JSON.stringify(effects ?? {});
+			const sig = configSig(effects);
 			if (appliedSig === sig) return;
 			if (!applyInFlight) {
 				applyInFlight = applyEffects(effects).finally(() => (applyInFlight = null));
@@ -258,7 +278,7 @@
 		const generation = ++applyEffectsGeneration;
 		// Marked applied ONLY at a success point — stale-generation bails and
 		// not-ready returns leave it unset so ensureChain() retries.
-		const sig = JSON.stringify(fx ?? {});
+		const sig = configSig(fx);
 
 		const mediaEl = ws?.getMediaElement() as HTMLAudioElement | null;
 		if (!mediaEl) return;
@@ -333,7 +353,11 @@
 			mozPreservesPitch?: boolean;
 			webkitPreservesPitch?: boolean;
 		};
-		const preserve = tempoRate === 1;
+		// __varispeedOff (DEV) hands tempo back to the browser stretcher: preservesPitch
+		// stays true, and the readback guard below then derives a zero correction on its
+		// own — the A/B needs no second code path, which is the point of the guard.
+		const noVarispeed = varispeedDisabled();
+		const preserve = tempoRate === 1 || noVarispeed;
 		mediaElAny.preservesPitch = preserve;
 		mediaElAny.mozPreservesPitch = preserve;
 		mediaElAny.webkitPreservesPitch = preserve;
@@ -347,7 +371,8 @@
 		// split-brain hazard, where applyEffects decided whether to engage varispeed
 		// and buildChain independently re-decided whether to correct for it: nothing
 		// forced those two derivations to agree.
-		const varispeedActive = tempoRate !== 1 && mediaElAny.preservesPitch === false;
+		const varispeedActive =
+			!noVarispeed && tempoRate !== 1 && mediaElAny.preservesPitch === false;
 		const varispeedCorrection = varispeedActive ? -12 * Math.log2(tempoRate) : 0;
 
 		// ── Decide if we need the Web Audio chain ─────────────────────────────────
