@@ -237,6 +237,13 @@ export interface FieldResult {
 	// Bonus fields add to the team's score but are excluded from powerup-threshold
 	// math. Optional so pre-configurable-fields results and rebuilds are unaffected.
 	isBonus?: boolean;
+	// PARTIAL bonus within an otherwise-threshold field (C1 stuk 1: bonus artists
+	// inside the artist field). `score`/`maxScore` are the totals; these carry the
+	// portion of each that is bonus, so the threshold split can subtract it.
+	// Absent on every other field, where the whole field is threshold-or-bonus via
+	// isBonus alone — so pre-C1 results are unaffected.
+	bonusScore?: number;
+	bonusMax?: number;
 }
 
 // Per-slot scoring result (one slot = one source track assignment)

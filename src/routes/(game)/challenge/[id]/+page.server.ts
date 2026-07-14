@@ -15,6 +15,7 @@ import type { AnswerField, ChallengeResult, TabAnswer, EffectsConfig } from '$li
 import {
 	resolveChallengeFields,
 	fieldMapsFromResolved,
+	resolveArtistBonus,
 	FIELD_POOL_TABLE,
 	DEFAULT_FIELD_MAX,
 	buildFieldResults,
@@ -176,6 +177,9 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		fieldPoints,
 		bonusFields
 	} = fieldMapsFromResolved(resolvedFields);
+	// Bonus-artist marking (C1 stuk 1) — needed by the results-screen rebuild below
+	// so a bonus artist's points show in the artist field's max there too.
+	const artistBonus = resolveArtistBonus(pcRaw);
 
 	// ── Build per-tab view data (audio URLs, source tracks) ──────────────────
 	const allTabClipDataLoad: TabClipData[] = tabClips.map((c) => ({
@@ -314,7 +318,8 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 							track,
 							fieldModes,
 							fieldPoints,
-							bonusFields
+							bonusFields,
+							artistBonus
 						)
 					: [];
 				const total = sa.total ?? fields.reduce((s, fr) => s + fr.score, 0);

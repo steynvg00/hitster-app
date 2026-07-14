@@ -15,6 +15,7 @@
 		"bots:join": "tsx tests/bots/run-join.ts",
 		"bots:play": "tsx tests/bots/run-play.ts",
 		"bots:verify-bonus": "tsx tests/bots/verify-bonus-fields.ts",
+		"bots:verify-artist-shares": "tsx tests/bots/verify-artist-shares.ts",
 		"bots:verify-battle": "tsx tests/bots/verify-battle.ts",
 		"bots:verify-recap-flow": "tsx tests/bots/verify-recap-flow.ts",
 		"bots:verify-battle-integration": "tsx tests/bots/verify-battle-integration.ts",
