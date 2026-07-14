@@ -295,15 +295,19 @@
 		stopReversePlayback();
 
 		// ── Tempo (fix 4: varispeed + PitchShift correction) ──────────────────────
-		// The browser's preservesPitch time-stretcher stutters audibly on music —
-		// on plain native output (the tempo-alone stutter) and when its output is
-		// captured into the Web Audio graph (tempo+effect). When rate ≠ 1 we take
-		// the stretcher out of the pipeline entirely: preservesPitch = false makes
+		// The browser's preservesPitch time-stretcher (WSOLA) glitches on music, so
+		// when rate ≠ 1 we take it out of the pipeline: preservesPitch = false makes
 		// playbackRate plain varispeed (speed and pitch move together, glitch-free)
-		// and buildChain adds a PitchShift of −12·log2(rate) semitones to bring the
-		// pitch back. Net result: speed-changed, pitch-preserved, no stretcher.
-		// Trade-off: PitchShift graininess vs stretcher stutter — judged by ear;
-		// if graininess is worse, revert fix 4.
+		// and the chain adds a PitchShift that puts the pitch back.
+		//
+		// DERIVATION of the correction sign — varispeed at rate r multiplies every
+		// frequency by r, i.e. transposes by +12·log2(r) semitones (r>1 up, r<1 down).
+		// For a desired net transposition P (the pitch effect; P = 0 for tempo alone):
+		//     12·log2(r) + C = P   ⇒   C = P − 12·log2(r)
+		//   r = 1.25 → C = P − 3.86 st (correct DOWN);  r = 0.8 → C = P + 3.86 st (UP).
+		// Measured, not assumed: a 440 Hz tone through a captured media element at
+		// r = 1.25 with preservesPitch=false comes out at 550 Hz (= +3.86 st) in
+		// Chromium, Firefox and WebKit alike — so C must be negative there.
 		const tempoRate = fx?.tempo?.enabled && fx.tempo.rate ? fx.tempo.rate : 1;
 		const mediaElAny = mediaEl as HTMLAudioElement & {
 			mozPreservesPitch?: boolean;
@@ -314,6 +318,17 @@
 		mediaElAny.mozPreservesPitch = preserve;
 		mediaElAny.webkitPreservesPitch = preserve;
 		mediaEl.playbackRate = tempoRate;
+
+		// Read back rather than assume. The correction above is only valid if the
+		// engine ACTUALLY dropped pitch preservation; if it silently kept the
+		// stretcher on, applying C anyway detunes by the full −12·log2(r) (≈4 st at
+		// 1.25×) — audible as "too low when faster / too high when slower". Deriving
+		// this once here and threading it into buildChain also removes the previous
+		// split-brain hazard, where applyEffects decided whether to engage varispeed
+		// and buildChain independently re-decided whether to correct for it: nothing
+		// forced those two derivations to agree.
+		const varispeedActive = tempoRate !== 1 && mediaElAny.preservesPitch === false;
+		const varispeedCorrection = varispeedActive ? -12 * Math.log2(tempoRate) : 0;
 
 		// ── Decide if we need the Web Audio chain ─────────────────────────────────
 		// tempoRate ≠ 1 requires the graph for its varispeed pitch correction —
@@ -361,7 +376,7 @@
 		if (generation !== applyEffectsGeneration) return;
 
 		try {
-			await buildChain(Tone, ctx, mediaEl, fx, generation);
+			await buildChain(Tone, ctx, mediaEl, fx, generation, varispeedCorrection);
 			if (generation !== applyEffectsGeneration) return;
 			appliedSig = sig;
 		} catch (err) {
@@ -394,7 +409,9 @@
 		ctx: AudioContext,
 		mediaEl: HTMLAudioElement,
 		fx: EffectsConfig | null | undefined,
-		generation: number
+		generation: number,
+		/** Semitones of varispeed compensation; 0 unless varispeed actually engaged. */
+		varispeedCorrection: number
 	) {
 		const source = getOrCreateMediaElementSource(mediaEl, ctx);
 		toneSourceNode = source;
@@ -493,15 +510,15 @@
 		}
 
 		// One PitchShift serves both jobs — never two stacked instances (each adds
-		// ~100ms granular latency): the pitch EFFECT's semitones plus the fix-4
-		// varispeed correction (−12·log2(rate) cancels the pitch shift that
-		// preservesPitch=false playbackRate introduces). At net 0 the node is
-		// omitted entirely — even a 0-semitone PitchShift runs its full granular
-		// topology (two LFO-modulated delay lines + a crossfade LFO, all started at
-		// construction) and was a stutter source as an always-on "pass-through".
-		const tempoRate = fx?.tempo?.enabled && fx.tempo.rate ? fx.tempo.rate : 1;
+		// ~100ms granular latency): the pitch EFFECT's semitones plus the varispeed
+		// correction C computed by applyEffects (see the derivation there). C arrives
+		// as a parameter and is already 0 unless varispeed actually engaged, so the
+		// correction can never be applied to audio the browser is still pitch-
+		// preserving. At net 0 the node is omitted entirely — even a 0-semitone
+		// PitchShift runs its full granular topology (two LFO-modulated delay lines +
+		// a crossfade LFO, all started at construction) and was a stutter source as
+		// an always-on "pass-through".
 		const effectSemitones = fx?.pitch?.enabled ? fx.pitch.semitones : 0;
-		const varispeedCorrection = tempoRate !== 1 ? -12 * Math.log2(tempoRate) : 0;
 		const netSemitones = effectSemitones + varispeedCorrection;
 		if (netSemitones !== 0) {
 			tonePitchShift = new Tone.PitchShift({
