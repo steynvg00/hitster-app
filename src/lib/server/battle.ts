@@ -6,7 +6,8 @@ import {
 	computeBattleRanking,
 	deriveLadder,
 	parseBattleConfig,
-	type BattleEntry
+	type BattleEntry,
+	type BattleRankEntry
 } from '$lib/battle-ranking';
 
 type AdminClient = SupabaseClient<Database>;
@@ -257,7 +258,13 @@ export type RevealableBattle = {
 	challenge_id: string;
 	position: number;
 	title: string;
-	battle_ranking: BattleEntry[];
+	/**
+	 * The stored outcome, ordered best→worst — BattleRankEntry, NOT BattleEntry.
+	 * BattleEntry ({teamId, raw, elapsed}) is resolveBattle's INPUT; what lands in
+	 * set_challenges.battle_ranking is computeBattleRanking's OUTPUT
+	 * ({team_id, rank, raw_score, awarded, elapsed_seconds}).
+	 */
+	battle_ranking: BattleRankEntry[];
 };
 
 /**
@@ -306,6 +313,38 @@ export async function getRevealableBattles(
 		challenge_id: r.challenge_id,
 		position: r.position,
 		title: titleById.get(r.challenge_id) ?? 'Battle',
-		battle_ranking: (r.battle_ranking ?? []) as BattleEntry[]
+		battle_ranking: (r.battle_ranking ?? []) as BattleRankEntry[]
 	}));
+}
+
+/**
+ * Everything the reveal SURFACES need (stuk 3c): the reveal-ordered battles plus
+ * the teams map to resolve battle_ranking's team_ids into names/colours.
+ *
+ * Read-only over already-stored data — 3c displays what resolveBattle recorded,
+ * it never re-ranks. Shared by the player waiting page and the TV podium so the
+ * two can't disagree about which battles exist or in what order.
+ *
+ * Returns empty battles for a non-battle set, which is what makes both surfaces
+ * degrade to the classic recap with no battle UI at all.
+ */
+export async function getBattleRevealData(
+	admin: AdminClient,
+	setId: string
+): Promise<{
+	battles: Array<{ challenge_id: string; title: string; ranking: BattleRankEntry[] }>;
+	teams: Array<{ id: string; color: string; display_name: string }>;
+}> {
+	const battles = await getRevealableBattles(admin, setId);
+	if (battles.length === 0) return { battles: [], teams: [] };
+
+	const teams = await getTeamsInSet(admin, setId);
+	return {
+		battles: battles.map((b) => ({
+			challenge_id: b.challenge_id,
+			title: b.title,
+			ranking: b.battle_ranking
+		})),
+		teams
+	};
 }

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
 	import { supabaseBrowser } from '$lib/supabase-browser';
+	import BattleRankingCard from '$lib/components/game/BattleRankingCard.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -20,6 +21,16 @@
 				? 'pending'
 				: 'revealing'
 	);
+
+	// ── Battle reveal (stuk 3c) ───────────────────────────────────────────────
+	// Layered IN FRONT of `phase` rather than folded into it: during battle_reveal
+	// revealIndex is still 0, so `phase` reads 'pending' — the battle panel simply
+	// takes the screen ahead of the Stand-by state, and every existing pedestal
+	// path below is left exactly as it was.
+	let battleRevealIndex = $state(untrack(() => gs.battle_reveal_index ?? 0));
+	const inBattlePhase = $derived(recapState === 'battle_reveal');
+	// data.battles is position-ordered; newest first so the just-revealed leads.
+	const revealedBattles = $derived(data.battles.slice(0, battleRevealIndex).reverse());
 
 	function isRevealed(teamId: string): boolean {
 		if (ranking.length === 0) return false;
@@ -69,6 +80,7 @@
 						recap_reveal_index: number;
 						recap_ranking: string[];
 						recap_state: string;
+						battle_reveal_index: number;
 					};
 					const newIndex = updated.recap_reveal_index ?? revealIndex;
 					const newRanking = (updated.recap_ranking as string[]) ?? ranking;
@@ -82,6 +94,10 @@
 					ranking = newRanking;
 					revealIndex = newIndex;
 					recapState = updated.recap_state ?? recapState;
+					// Battle phase (stuk 3c) — same payload, separate counter.
+					if (updated.battle_reveal_index !== undefined) {
+						battleRevealIndex = updated.battle_reveal_index;
+					}
 				}
 			)
 			.subscribe();
@@ -143,8 +159,42 @@
 		<p class="mt-2 text-xs tracking-[0.25em] text-white/30 uppercase md:text-sm">{data.setName}</p>
 	</div>
 
-	<!-- Pending state -->
-	{#if phase === 'pending'}
+	<!-- Battle reveal (stuk 3c) — takes the screen before the pedestals appear.
+	     No own-team highlight: this is the shared TV. -->
+	{#if inBattlePhase}
+		<div class="w-full max-w-6xl">
+			<p
+				class="mb-6 text-center font-black tracking-[0.2em] text-white/50 uppercase"
+				style="font-size: clamp(1.2rem, 3vw, 2rem);"
+			>
+				⚔️ Battle results
+			</p>
+
+			{#if revealedBattles.length === 0}
+				<div class="text-center">
+					<div class="mb-8 flex justify-center gap-4">
+						<span class="pulse-dot" style="background: #ff2daa; animation-delay: 0s;"></span>
+						<span class="pulse-dot" style="background: #00e5ff; animation-delay: 0.35s;"></span>
+						<span class="pulse-dot" style="background: #7c4dff; animation-delay: 0.7s;"></span>
+					</div>
+					<p class="text-sm tracking-wider text-white/20">The host is about to reveal the battles</p>
+				</div>
+			{:else}
+				<div class="flex flex-wrap items-start justify-center gap-4">
+					{#each revealedBattles as battle (battle.challenge_id)}
+						<div class="w-full max-w-md min-w-[300px] flex-1">
+							<BattleRankingCard
+								title={battle.title}
+								ranking={battle.ranking}
+								teams={data.battleTeams}
+							/>
+						</div>
+					{/each}
+				</div>
+			{/if}
+		</div>
+		<!-- Pending state -->
+	{:else if phase === 'pending'}
 		<div class="text-center">
 			<div class="mb-8 flex justify-center gap-4">
 				<span class="pulse-dot" style="background: #ff2daa; animation-delay: 0s;"></span>
