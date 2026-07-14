@@ -34,6 +34,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import type { EffectsConfig } from '$lib/types/index.js';
+	import { clampTempoRate } from '$lib/audio-limits.js';
 
 	interface Props {
 		src: string;
@@ -320,7 +321,14 @@
 		// Measured, not assumed: a 440 Hz tone through a captured media element at
 		// r = 1.25 with preservesPitch=false comes out at 550 Hz (= +3.86 st) in
 		// Chromium, Firefox and WebKit alike — so C must be negative there.
-		const tempoRate = fx?.tempo?.enabled && fx.tempo.rate ? fx.tempo.rate : 1;
+		// Clamped at apply time, not in storage: a challenge saved before the range was
+		// narrowed (or a preset, or a hand-edited JSONB row) would otherwise demand a
+		// correction far outside what the granular shifter can deliver — a legacy 2.0×
+		// would ask for −12 st. Clamping here means playbackRate AND the correction
+		// below both derive from the same bounded rate, so they cannot disagree.
+		// The `&& fx.tempo.rate` guard is deliberate: a stored 0 (or absent) rate means
+		// "no tempo", and must stay 1 rather than clamp up to the 0.85 floor.
+		const tempoRate = fx?.tempo?.enabled && fx.tempo.rate ? clampTempoRate(fx.tempo.rate) : 1;
 		const mediaElAny = mediaEl as HTMLAudioElement & {
 			mozPreservesPitch?: boolean;
 			webkitPreservesPitch?: boolean;
