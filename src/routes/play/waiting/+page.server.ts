@@ -2,6 +2,7 @@ import { redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import { createPublicClient, createAdminClient } from '$lib/server/supabase';
 import { TEAM_COLOR_ORDER } from '$lib/server/randomize';
+import { getBattleRevealData } from '$lib/server/battle';
 
 export const load: PageServerLoad = async ({ locals, cookies, url }) => {
 	if (!locals.teamId) redirect(302, '/join');
@@ -59,12 +60,15 @@ export const load: PageServerLoad = async ({ locals, cookies, url }) => {
 	const playerSetScore = teamSetScores.get(locals.teamId) ?? 0;
 
 	// Load players in the player's team for the reveal card
-	// Also load challenges for the waiting-room carousel
-	const [{ data: teammates }, { data: challengeRows }] = await Promise.all([
+	// Also load challenges for the waiting-room carousel + the battle reveal data
+	// (stuk 3c — empty arrays for a non-battle set, so the surface renders no
+	// battle UI at all and the recap looks exactly as it did pre-3c).
+	const [{ data: teammates }, { data: challengeRows }, battleData] = await Promise.all([
 		admin.from('players').select('id, display_name, photo_url').eq('set_id', setId).eq('team_id', locals.teamId),
 		challengeIds.length
 			? admin.from('challenges').select('id, title, variant').in('id', challengeIds)
-			: Promise.resolve({ data: [] as { id: string; title: string; variant: string }[] })
+			: Promise.resolve({ data: [] as { id: string; title: string; variant: string }[] }),
+		getBattleRevealData(admin, setId)
 	]);
 
 	// Sort challenges by set position
@@ -89,6 +93,12 @@ export const load: PageServerLoad = async ({ locals, cookies, url }) => {
 		playerSetScore,
 		teammates: teammates ?? [],
 		totalTeams,
-		carouselChallenges
+		carouselChallenges,
+		// Battle reveal (stuk 3c): reveal-ordered battles + the teams map to resolve
+		// battle_ranking's team_ids. battleRevealIndex says how many are revealed —
+		// it advances live over the existing game_sets realtime channel.
+		battles: battleData.battles,
+		battleTeams: battleData.teams,
+		battleRevealIndex: gs.battle_reveal_index ?? 0
 	};
 };

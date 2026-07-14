@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
 	import { supabaseBrowser } from '$lib/supabase-browser';
+	import BattleRankingCard from '$lib/components/game/BattleRankingCard.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -18,6 +19,19 @@
 	let revealCardDismissed = $state(false);
 
 	const shouldShowReveal = $derived((revealed || revealedByIndex) && !revealCardDismissed);
+
+	// ── Battle reveal (stuk 3c) ───────────────────────────────────────────────
+	// Rides the SAME game_sets channel as the team cascade below — recap_state and
+	// battle_reveal_index live on that row, so the existing subscription already
+	// delivers them; no second channel. Kept strictly separate from revealIndex /
+	// recapRanking: the team-reveal reaction above is untouched.
+	let recapState = $state(untrack(() => data.recapState));
+	let battleRevealIndex = $state(untrack(() => data.battleRevealIndex));
+
+	const inBattlePhase = $derived(recapState === 'battle_reveal');
+	// data.battles is already position-ordered; battle N is visible once
+	// battleRevealIndex passes it. Newest first so the just-revealed battle leads.
+	const revealedBattles = $derived(data.battles.slice(0, battleRevealIndex).reverse());
 
 	const teamColors: Record<string, { bg: string; border: string; text: string; glow: string }> = {
 		blue: { bg: '#3b82f6', border: '#2563eb', text: '#fff', glow: 'rgba(59,130,246,0.22)' },
@@ -80,10 +94,17 @@
 						recap_state: string;
 						recap_ranking: string[];
 						recap_reveal_index: number;
+						battle_reveal_index: number;
 					};
 
 					if (updated.recap_ranking) ranking = updated.recap_ranking as string[];
 					if (updated.recap_reveal_index !== undefined) revealIndex = updated.recap_reveal_index;
+
+					// Battle phase (stuk 3c) — same payload, separate counter.
+					if (updated.recap_state) recapState = updated.recap_state;
+					if (updated.battle_reveal_index !== undefined) {
+						battleRevealIndex = updated.battle_reveal_index;
+					}
 
 					if (updated.recap_state === 'complete') {
 						window.location.href = `/play/thanks?set_id=${data.setId}`;
@@ -226,7 +247,20 @@
 		</div>
 
 		<!-- Heading + subhead — state-dependent -->
-		{#if revealCardDismissed}
+		{#if inBattlePhase}
+			<!-- State 0 (stuk 3c): battles resolve before the team podium -->
+			<h1
+				class="font-black text-mixup-ice"
+				style="font-size: clamp(2rem, 7vw, 3rem); letter-spacing: -0.02em; line-height: 1.1;"
+			>
+				⚔️ Battle results
+			</h1>
+			<p class="mt-4 text-base leading-relaxed text-mixup-ice/40">
+				{revealedBattles.length === 0
+					? 'The host is about to reveal the battles'
+					: 'Bonus points from the head-to-heads'}
+			</p>
+		{:else if revealCardDismissed}
 			<!-- State 3: post-reveal -->
 			<h1
 				class="font-black text-white"
@@ -260,8 +294,29 @@
 			</p>
 		{/if}
 
+		<!-- ─── Battle ranking cards (stuk 3c) ─── -->
+		<!-- Own team highlighted; shared ranks repeat verbatim from the stored
+		     ranking. Only rendered during battle_reveal — once the host hands over
+		     to 'revealing', the existing team-reveal flow below takes over
+		     untouched, and a non-battle set never enters this phase at all. -->
+		{#if inBattlePhase && revealedBattles.length > 0}
+			<div class="mt-8 space-y-3 text-left">
+				{#each revealedBattles as battle (battle.challenge_id)}
+					<BattleRankingCard
+						title={battle.title}
+						ranking={battle.ranking}
+						teams={data.battleTeams}
+						highlightTeamId={data.team.id}
+						compact
+					/>
+				{/each}
+			</div>
+		{/if}
+
 		<!-- ─── Waiting carousel ─── -->
-		{#if carouselLen > 0}
+		<!-- Hidden during the battle phase: it's "while you wait" filler, and the
+		     battles are the thing to watch. -->
+		{#if carouselLen > 0 && !inBattlePhase}
 			<div class="mt-10">
 				<p class="mb-4 text-xs font-semibold tracking-[0.22em] text-white/28 uppercase">
 					While you wait…
