@@ -28,9 +28,35 @@
 		marathon: { label: 'Marathon', cls: 'bg-emerald-900/60 text-emerald-400' }
 	};
 
+	// S1: icon-badge colour per preset, for the row's icon badge — mirrors the
+	// challenges list's getTypeColor(variant) treatment (a lighter /10-/20
+	// opacity tint, distinct from the pill badge's heavier /60 background).
+	// Same colour FAMILY as PRESET_BADGE above so a preset's icon and its badge
+	// always agree; same custom/unmatched-slug fallback as presetBadge() below.
+	const PRESET_ICON_COLOR: Record<string, string> = {
+		normal: 'bg-zinc-700/40 text-zinc-300',
+		party: 'bg-pink-900/20 text-pink-400',
+		token_shop: 'bg-amber-900/20 text-amber-400',
+		quick_game: 'bg-cyan-900/20 text-cyan-400',
+		marathon: 'bg-emerald-900/20 text-emerald-400'
+	};
+
 	function presetBadge(slug: string | null) {
 		if (!slug || slug === 'custom') return { label: 'Custom', cls: 'bg-zinc-800 text-zinc-400' };
 		return PRESET_BADGE[slug] ?? { label: slug, cls: 'bg-zinc-800 text-zinc-400' };
+	}
+
+	function presetIconColor(slug: string | null): string {
+		if (!slug || slug === 'custom') return 'bg-zinc-800 text-zinc-400';
+		return PRESET_ICON_COLOR[slug] ?? 'bg-zinc-800 text-zinc-400';
+	}
+
+	// Same custom/unmatched-slug fallback as presetBadge(): setPresets' own
+	// 'custom' entry (icon: FilePlus2) always exists, so this never needs a
+	// hardcoded icon-name fallback of its own.
+	function presetIconName(slug: string | null): string {
+		const key = !slug || slug === 'custom' ? 'custom' : slug;
+		return setPresets.find((p) => p.slug === key)?.icon ?? 'FilePlus2';
 	}
 
 	function getIcon(name: string) {
@@ -51,185 +77,186 @@
 	<title>Game Sets — Admin</title>
 </svelte:head>
 
-<div class="p-8">
-	<div class="mb-6">
-		<h1 class="text-2xl font-black text-white">Game Sets</h1>
-		<p class="mt-0.5 text-sm text-zinc-400">Manage rounds and team randomization.</p>
-	</div>
-
-	{#if form?.error}
-		<p class="mb-4 rounded-lg border border-red-800 bg-red-950/50 px-4 py-2 text-sm text-red-400">
-			{form.error}
-		</p>
-	{/if}
-
-	<!-- Create button -->
-	<div class="mb-8">
+<!--
+	S1: sets-page unification. Outer padding, header shape (title+subtitle left,
+	"+ new" button right, same classes as /admin/challenges), and the filter row
+	now match the challenges list's shell. The old layout was p-8 wrapper, a
+	title-only header, a separate full-width dashed "+ Create new gameset"
+	block, and a <section><h2>Your game sets</h2> with filters pushed ml-auto>
+	wrapper around a <table>. None of that structure carries data — it's been
+	flattened to the SAME shape challenges uses. The URL-bound ?preset/?status/
+	?sort wiring, the preset badges, the create Modal, and both empty states
+	are UNCHANGED — only their container/positioning moved.
+-->
+<div class="p-6">
+	<div class="mb-6 flex items-center justify-between">
+		<div>
+			<h1 class="text-2xl font-bold text-white">Game Sets</h1>
+			<p class="mt-0.5 text-sm text-zinc-400">Manage rounds and team randomization.</p>
+		</div>
 		<button
 			onclick={() => (modalOpen = true)}
-			class="w-full rounded-xl border border-dashed border-zinc-600 bg-zinc-900 py-4 text-sm font-semibold text-zinc-300 transition-colors hover:border-amber-400/60 hover:bg-zinc-800 hover:text-amber-400"
+			class="rounded-lg bg-amber-400 px-4 py-2 text-sm font-bold text-zinc-950 transition-colors hover:bg-amber-300"
 		>
-			+ Create new gameset
+			+ New Set
 		</button>
 	</div>
 
-	<!-- Sets section -->
-	<section>
-		<div class="mb-4 flex flex-wrap items-center gap-3">
-			<h2 class="text-sm font-semibold tracking-widest text-zinc-400 uppercase">Your game sets</h2>
-
-			<div class="ml-auto flex flex-wrap items-center gap-2">
-				<!-- Preset filter -->
-				<select
-					value={data.presetFilter ?? ''}
-					onchange={(e) => setParam('preset', (e.target as HTMLSelectElement).value)}
-					class="rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-300 focus:border-amber-400 focus:outline-none"
-				>
-					<option value="">All presets</option>
-					{#each readyPresets as p (p.slug)}
-						<option value={p.slug}>{p.name}</option>
-					{/each}
-				</select>
-
-				<!-- Status filter -->
-				<select
-					value={data.statusFilter ?? ''}
-					onchange={(e) => setParam('status', (e.target as HTMLSelectElement).value)}
-					class="rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-300 focus:border-amber-400 focus:outline-none"
-				>
-					<option value="">All statuses</option>
-					<option value="active">Active</option>
-					<option value="inactive">Inactive</option>
-				</select>
-
-				<!-- Sort -->
-				<select
-					value={data.sort}
-					onchange={(e) => setParam('sort', (e.target as HTMLSelectElement).value)}
-					class="rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-300 focus:border-amber-400 focus:outline-none"
-				>
-					<option value="newest">Newest first</option>
-					<option value="oldest">Oldest first</option>
-					<option value="name_asc">Name A→Z</option>
-					<option value="name_desc">Name Z→A</option>
-				</select>
-			</div>
+	{#if form?.error}
+		<div class="mb-4 rounded-lg border border-red-800 bg-red-950 px-4 py-3 text-sm text-red-300">
+			{form.error}
 		</div>
+	{/if}
 
-		{#if data.sets.length === 0}
-			{#if hasFilters}
-				<!-- Filtered empty state -->
-				<div class="rounded-xl border border-zinc-800 bg-zinc-900 p-12 text-center">
-					<p class="text-sm font-semibold text-zinc-400">No sets match the current filters</p>
-					<a
-						href="/admin/sets"
-						class="mt-3 inline-block rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:border-zinc-500 hover:text-white"
-					>
-						Clear filters
-					</a>
-				</div>
-			{:else}
-				<!-- True empty state -->
-				<div class="rounded-xl border border-zinc-800 bg-zinc-900 p-14 text-center">
-					<PackageOpen size={64} class="mx-auto mb-4 text-zinc-700" />
-					<p class="text-base font-bold text-zinc-300">No game sets yet</p>
-					<p class="mt-1 text-sm text-zinc-500">Click "Create new gameset" above to get started</p>
-				</div>
-			{/if}
+	<!-- Filter / sort controls — same row shape as challenges. No search box:
+	     sets never had one, and this is visual alignment, not a new filter. -->
+	<div class="mb-4 flex flex-wrap items-center gap-2">
+		<select
+			value={data.presetFilter ?? ''}
+			onchange={(e) => setParam('preset', (e.target as HTMLSelectElement).value)}
+			class="rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-300 focus:border-amber-400 focus:outline-none"
+		>
+			<option value="">All presets</option>
+			{#each readyPresets as p (p.slug)}
+				<option value={p.slug}>{p.name}</option>
+			{/each}
+		</select>
+		<select
+			value={data.statusFilter ?? ''}
+			onchange={(e) => setParam('status', (e.target as HTMLSelectElement).value)}
+			class="rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-300 focus:border-amber-400 focus:outline-none"
+		>
+			<option value="">All statuses</option>
+			<option value="active">Active</option>
+			<option value="inactive">Inactive</option>
+		</select>
+		<select
+			value={data.sort}
+			onchange={(e) => setParam('sort', (e.target as HTMLSelectElement).value)}
+			class="rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-300 focus:border-amber-400 focus:outline-none"
+		>
+			<option value="newest">Newest first</option>
+			<option value="oldest">Oldest first</option>
+			<option value="name_asc">Name A→Z</option>
+			<option value="name_desc">Name Z→A</option>
+		</select>
+	</div>
+
+	{#if data.sets.length === 0}
+		{#if hasFilters}
+			<!-- Filtered empty state -->
+			<div class="rounded-xl border border-zinc-800 bg-zinc-900 p-12 text-center">
+				<p class="text-sm font-semibold text-zinc-400">No sets match the current filters</p>
+				<a
+					href="/admin/sets"
+					class="mt-3 inline-block rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:border-zinc-500 hover:text-white"
+				>
+					Clear filters
+				</a>
+			</div>
 		{:else}
-			<div class="overflow-hidden rounded-xl border border-zinc-800">
-				<table class="w-full text-sm">
-					<thead class="border-b border-zinc-800 bg-zinc-900">
-						<tr>
-							<th class="px-4 py-3 text-left font-semibold text-zinc-400">Name</th>
-							<th class="px-4 py-3 text-left font-semibold text-zinc-400">Preset</th>
-							<th class="px-4 py-3 text-left font-semibold text-zinc-400">Status</th>
-							<th class="px-4 py-3 text-right font-semibold text-zinc-400">Teams</th>
-							<th class="px-4 py-3 text-right font-semibold text-zinc-400">Challenges</th>
-							<th class="px-4 py-3 text-right font-semibold text-zinc-400">Players</th>
-							<th class="px-4 py-3 text-right font-semibold text-zinc-400">Actions</th>
-						</tr>
-					</thead>
-					<tbody class="divide-y divide-zinc-800 bg-zinc-950">
-						{#each data.sets as s (s.id)}
-							<tr
-								class="cursor-pointer hover:bg-zinc-900/50"
-								onclick={() => goto(`/admin/sets/${s.id}`)}
-							>
-								<td class="px-4 py-3">
-									<a
-										href="/admin/sets/{s.id}"
-										onclick={(e) => e.stopPropagation()}
-										class="font-semibold text-white transition-colors hover:text-amber-400"
-									>
-										{s.name}
-									</a>
-									{#if s.description}
-										<p class="text-xs text-zinc-500">{s.description}</p>
-									{/if}
-								</td>
-								<td class="px-4 py-3">
-									<span
-										class="rounded-full px-2 py-0.5 text-[11px] font-semibold {presetBadge(
-											s.preset_slug
-										).cls}"
-									>
-										{presetBadge(s.preset_slug).label}
-									</span>
-								</td>
-								<td class="px-4 py-3" onclick={(e) => e.stopPropagation()}>
-									<form
-										method="POST"
-										action="?/toggle"
-										use:enhance={() => {
-											togglingId = s.id;
-											return async ({ update }) => {
-												await update();
-												togglingId = null;
-											};
-										}}
-									>
-										<input type="hidden" name="id" value={s.id} />
-										<button
-											type="submit"
-											disabled={togglingId === s.id}
-											class="cursor-pointer rounded-full px-2 py-0.5 text-xs font-semibold transition-opacity hover:opacity-70 disabled:opacity-40 {STATUS_BADGE[
-												s.status
-											] ?? 'bg-zinc-700 text-zinc-300'}"
-											title="Click to toggle"
-										>
-											{togglingId === s.id ? '…' : s.status}
-										</button>
-									</form>
-								</td>
-								<td class="px-4 py-3 text-right text-zinc-300">{s.team_count}</td>
-								<td class="px-4 py-3 text-right text-zinc-300">{s.challenge_count}</td>
-								<td class="px-4 py-3 text-right text-zinc-300">{s.player_count}</td>
-								<td class="px-4 py-3 text-right" onclick={(e) => e.stopPropagation()}>
-									<div class="flex items-center justify-end gap-2">
-										<a
-											href="/admin/sets/{s.id}"
-											class="rounded px-2 py-1 text-xs font-medium text-zinc-400 transition-colors hover:text-white"
-										>
-											Edit
-										</a>
-										{#if s.status === 'active'}
-											<a
-												href="/admin/sets/{s.id}/lobby"
-												class="rounded px-2 py-1 text-xs font-medium text-amber-400 transition-colors hover:text-amber-300"
-											>
-												Lobby
-											</a>
-										{/if}
-									</div>
-								</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
+			<!-- True empty state -->
+			<div class="rounded-xl border border-zinc-800 bg-zinc-900 p-14 text-center">
+				<PackageOpen size={64} class="mx-auto mb-4 text-zinc-700" />
+				<p class="text-base font-bold text-zinc-300">No game sets yet</p>
+				<p class="mt-1 text-sm text-zinc-500">Click "+ New Set" above to get started</p>
 			</div>
 		{/if}
-	</section>
+	{:else}
+		<!-- S1: row style mirrors /admin/challenges' list row (icon badge, title +
+		     badges, meta line, right-aligned actions) — was a <table>. NOT
+		     extracted into a shared row component: the content differs too much
+		     to share cleanly (variant icon/type-badge/plain-status-text/single
+		     meta-line vs preset icon/preset-badge/status-TOGGLE-button/three
+		     numeric counts) — mirrored the container classes/structure instead,
+		     per the same "mirror it" call C2 made for FragmentsEditor/
+		     StandardEditor's clip row. Every existing behaviour is preserved:
+		     row-click nav, the status click-to-toggle (still a form + button,
+		     just restyled to badge sizing), the preset badge, and the
+		     conditional Lobby link. -->
+		<div class="space-y-2">
+			{#each data.sets as s (s.id)}
+				<div
+					role="button"
+					tabindex="0"
+					onclick={() => goto(`/admin/sets/${s.id}`)}
+					onkeydown={(e) => e.key === 'Enter' && goto(`/admin/sets/${s.id}`)}
+					class="flex cursor-pointer items-center gap-4 rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 transition-colors hover:border-zinc-700 hover:bg-zinc-800/50"
+				>
+					<div
+						class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg {presetIconColor(
+							s.preset_slug
+						)}"
+					>
+						<svelte:component this={getIcon(presetIconName(s.preset_slug))} size={16} />
+					</div>
+
+					<div class="min-w-0 flex-1">
+						<div class="flex items-center gap-2">
+							<span class="font-medium text-white">{s.name}</span>
+							<span
+								class="rounded px-2 py-0.5 text-xs font-medium {presetBadge(s.preset_slug).cls}"
+							>
+								{presetBadge(s.preset_slug).label}
+							</span>
+							<form
+								method="POST"
+								action="?/toggle"
+								use:enhance={() => {
+									togglingId = s.id;
+									return async ({ update }) => {
+										await update();
+										togglingId = null;
+									};
+								}}
+							>
+								<input type="hidden" name="id" value={s.id} />
+								<button
+									type="submit"
+									disabled={togglingId === s.id}
+									onclick={(e) => e.stopPropagation()}
+									class="cursor-pointer rounded px-2 py-0.5 text-xs font-medium transition-opacity hover:opacity-70 disabled:opacity-40 {STATUS_BADGE[
+										s.status
+									] ?? 'bg-zinc-700 text-zinc-300'}"
+									title="Click to toggle"
+								>
+									{togglingId === s.id ? '…' : s.status}
+								</button>
+							</form>
+						</div>
+						<div class="mt-0.5 flex items-center gap-3 text-xs text-zinc-500">
+							{#if s.description}
+								<span class="truncate">{s.description}</span>
+								<span>·</span>
+							{/if}
+							<span>{s.team_count} team{s.team_count !== 1 ? 's' : ''}</span>
+							<span>·</span>
+							<span>{s.challenge_count} challenge{s.challenge_count !== 1 ? 's' : ''}</span>
+							<span>·</span>
+							<span>{s.player_count} player{s.player_count !== 1 ? 's' : ''}</span>
+						</div>
+					</div>
+
+					<a
+						href="/admin/sets/{s.id}"
+						onclick={(e) => e.stopPropagation()}
+						class="shrink-0 rounded px-2 py-1 text-xs font-medium text-amber-400 transition-colors hover:bg-zinc-800 hover:text-amber-300"
+					>
+						Edit
+					</a>
+					{#if s.status === 'active'}
+						<a
+							href="/admin/sets/{s.id}/lobby"
+							onclick={(e) => e.stopPropagation()}
+							class="shrink-0 rounded px-2 py-1 text-xs font-medium text-cyan-400 transition-colors hover:bg-zinc-800 hover:text-cyan-300"
+						>
+							Lobby
+						</a>
+					{/if}
+				</div>
+			{/each}
+		</div>
+	{/if}
 </div>
 
 <!-- Preset picker modal -->
