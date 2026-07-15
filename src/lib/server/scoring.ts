@@ -256,6 +256,16 @@ export type ArtistScoreResult = {
 	bonusScore: number;
 	/** Σ of the bonus values for bonus artists actually present on this track. */
 	bonusMax: number;
+	/**
+	 * The bonus artists the player actually MATCHED, with the points each one
+	 * contributed (C1 stuk 2 — display only). A bonus artist the player didn't
+	 * guess produces no entry, so an empty array means "no bonus line to show".
+	 *
+	 * Points are cumulatively rounded, so Σ points === bonusScore exactly. Rounding
+	 * each entry independently would let two half-credit hits (2.5 + 2.5) render as
+	 * 3 + 3 = 6 under a bonusScore of 5 — a breakdown that visibly doesn't add up.
+	 */
+	bonusArtists: { name: string; points: number }[];
 	/** Best per-pair similarity across all matched pairs (display only). */
 	fuzzyScore?: number;
 };
@@ -283,7 +293,20 @@ function artistPairFraction(tag: string, target: string, mode: InputMode): numbe
 const MAX_TAGS_FOR_EXACT_ASSIGNMENT = 12;
 
 type WeightedTarget = { name: string; weight: number };
-type Assignment = { score: number; usedMask: number; sims: number[] };
+/**
+ * `hits` records which targets the winning assignment actually matched, and what
+ * each one earned — the aggregate `score` alone can't name them, and the results
+ * screen needs the name to render "⭐ D-Sturb +5 bonus" (C1 stuk 2). Carried
+ * alongside `sims` through the DP so it always describes the SAME branch the
+ * score came from; recomputing it afterwards from the final score would have to
+ * re-derive the assignment and could pick a different equal-scoring branch.
+ */
+type Assignment = {
+	score: number;
+	usedMask: number;
+	sims: number[];
+	hits: { name: string; points: number }[];
+};
 
 /**
  * Best (target → tag) assignment: each target matched at most once, each tag
@@ -309,13 +332,14 @@ function assignBest(
 	availableMask: number,
 	mode: InputMode
 ): Assignment {
-	if (targets.length === 0 || tags.length === 0) return { score: 0, usedMask: 0, sims: [] };
+	if (targets.length === 0 || tags.length === 0)
+		return { score: 0, usedMask: 0, sims: [], hits: [] };
 	if (tags.length > MAX_TAGS_FOR_EXACT_ASSIGNMENT) {
 		return assignGreedyFallback(targets, tags, availableMask, mode);
 	}
 
 	let dp = new Map<number, Assignment>();
-	dp.set(0, { score: 0, usedMask: 0, sims: [] });
+	dp.set(0, { score: 0, usedMask: 0, sims: [], hits: [] });
 
 	for (const t of targets) {
 		const next = new Map<number, Assignment>();
@@ -334,14 +358,15 @@ function assignBest(
 				put(mask | bit, {
 					score: st.score + f * t.weight,
 					usedMask: st.usedMask | bit,
-					sims: [...st.sims, strSimilarity(tags[gi], t.name)]
+					sims: [...st.sims, strSimilarity(tags[gi], t.name)],
+					hits: [...st.hits, { name: t.name, points: f * t.weight }]
 				});
 			}
 		}
 		dp = next;
 	}
 
-	let best: Assignment = { score: 0, usedMask: 0, sims: [] };
+	let best: Assignment = { score: 0, usedMask: 0, sims: [], hits: [] };
 	for (const [, st] of dp) if (st.score > best.score) best = st;
 	return best;
 }
@@ -365,13 +390,14 @@ function assignGreedyFallback(
 	}
 	pairs.sort((a, b) => b.value - a.value || b.sim - a.sim);
 	const takenTargets = new Set<number>();
-	const out: Assignment = { score: 0, usedMask: 0, sims: [] };
+	const out: Assignment = { score: 0, usedMask: 0, sims: [], hits: [] };
 	for (const p of pairs) {
 		if (takenTargets.has(p.ti) || out.usedMask & (1 << p.gi)) continue;
 		takenTargets.add(p.ti);
 		out.usedMask |= 1 << p.gi;
 		out.score += p.value;
 		out.sims.push(p.sim);
+		out.hits.push({ name: targets[p.ti].name, points: p.value });
 	}
 	return out;
 }
@@ -418,7 +444,14 @@ export function scoreArtistField(
 	// Unscorable: no targets at all (a track with a blank artist). Main scores 0;
 	// the max is untouched (model (a), see docstring).
 	if (mainTargets.length === 0 && bonusTargets.length === 0) {
-		return { mainScore: 0, mainMax: artistMaxPoints, bonusScore: 0, bonusMax: 0, fuzzyScore: 0 };
+		return {
+			mainScore: 0,
+			mainMax: artistMaxPoints,
+			bonusScore: 0,
+			bonusMax: 0,
+			bonusArtists: [],
+			fuzzyScore: 0
+		};
 	}
 
 	const allMask = tags.length > 0 ? (1 << tags.length) - 1 : 0;
@@ -442,6 +475,7 @@ export function scoreArtistField(
 
 	// ── Bonus: worth their own points, on only the tags the mains didn't take ──
 	let bonusScore = 0;
+	let bonusHits: { name: string; points: number }[] = [];
 	if (bonusTargets.length > 0) {
 		const b = assignBest(
 			bonusTargets.map((t) => ({ name: t.name, weight: t.points })),
@@ -450,8 +484,21 @@ export function scoreArtistField(
 			mode
 		);
 		bonusScore = b.score;
+		bonusHits = b.hits;
 		sims.push(...b.sims);
 	}
+
+	// Round each matched bonus artist against the RUNNING total, so the per-artist
+	// lines on the results screen sum to exactly the bonusScore shown in the badge.
+	// See ArtistScoreResult.bonusArtists.
+	let acc = 0;
+	let accRounded = 0;
+	const bonusArtists = bonusHits.map((h) => {
+		acc += h.points;
+		const points = Math.round(acc) - accRounded;
+		accRounded += points;
+		return { name: h.name, points };
+	});
 
 	// ── Over-guess penalty ───────────────────────────────────────────────────
 	// Only when the player typed MORE names than the track has targets. Applies to
@@ -466,6 +513,7 @@ export function scoreArtistField(
 		mainMax: artistMaxPoints,
 		bonusScore: Math.round(bonusScore),
 		bonusMax,
+		bonusArtists,
 		fuzzyScore: sims.length > 0 ? Math.max(...sims) : 0
 	};
 }
@@ -518,7 +566,13 @@ export function scoreField(
 	mode: InputMode,
 	maxPoints: number,
 	artistBonus: ArtistBonusConfig = {}
-): { score: number; fuzzyScore?: number; bonusScore?: number; bonusMax?: number } {
+): {
+	score: number;
+	fuzzyScore?: number;
+	bonusScore?: number;
+	bonusMax?: number;
+	bonusArtists?: { name: string; points: number }[];
+} {
 	if (field === 'year') {
 		const diff = Math.abs(parseInt(submitted, 10) - track.year);
 		if (diff === 0) return { score: maxPoints };
@@ -546,7 +600,8 @@ export function scoreField(
 			score: r.mainScore + r.bonusScore,
 			fuzzyScore: r.fuzzyScore,
 			bonusScore: r.bonusScore,
-			bonusMax: r.bonusMax
+			bonusMax: r.bonusMax,
+			bonusArtists: r.bonusArtists
 		};
 	}
 
@@ -601,7 +656,7 @@ export function buildFieldResults(
 			const submitted = answers[field] ?? '';
 			const mode = fieldModes[field] ?? 'open_text';
 			const fieldMax = pointsConfig[field] ?? DEFAULT_FIELD_MAX[field] ?? 10;
-			const { score, fuzzyScore, bonusScore, bonusMax } = scoreField(
+			const { score, fuzzyScore, bonusScore, bonusMax, bonusArtists } = scoreField(
 				field,
 				submitted,
 				track,
@@ -628,7 +683,10 @@ export function buildFieldResults(
 				fuzzyScore,
 				isBonus: bonusFields.has(field),
 				...(bonusScore !== undefined && bonusScore > 0 ? { bonusScore } : {}),
-				...(bonusMax !== undefined && bonusMax > 0 ? { bonusMax } : {})
+				...(bonusMax !== undefined && bonusMax > 0 ? { bonusMax } : {}),
+				// Omitted entirely when nothing matched, so a no-bonus FieldResult stays
+				// byte-identical to a pre-C1 one and the results screen renders no line.
+				...(bonusArtists && bonusArtists.length > 0 ? { bonusArtists } : {})
 			};
 		});
 }

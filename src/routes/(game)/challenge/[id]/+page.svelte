@@ -831,6 +831,20 @@
 											</div>
 										{/if}
 									{/if}
+									<!-- Which bonus artists the player caught, and what each was worth.
+									     The badge on the right is the field TOTAL (mains + bonus); these
+									     lines name the bonus part of it — additional detail, not a
+									     replacement. Only matched artists are listed, so a missed bonus
+									     artist renders nothing at all. -->
+									{#each fr.bonusArtists ?? [] as ba (ba.name)}
+										<div
+											class="mt-1 flex items-center gap-1.5 text-xs font-semibold text-amber-300"
+										>
+											<span>⭐</span>
+											<span>{ba.name}</span>
+											<span class="text-amber-400/70">+{ba.points} bonus</span>
+										</div>
+									{/each}
 								</div>
 								<div class="ml-4 shrink-0 text-right">
 									<div

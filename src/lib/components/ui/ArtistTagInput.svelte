@@ -91,9 +91,17 @@
 	}
 </script>
 
+<!--
+	The box is deliberately token-for-token the same treatment as OpenText/Combobox
+	(rounded-xl / border-zinc-700 / bg-zinc-900, solid accent border once filled,
+	min-h matching their px-4 py-3 height) — on the challenge page this sits in a
+	column of answer fields, and a shorter, thinner-bordered box next to Title read
+	as a search bar rather than an answer field. min-h keeps the height stable as
+	pills come and go instead of the box growing from a search-bar sliver.
+-->
 <div
-	class="flex flex-wrap items-center gap-1.5 rounded-xl border border-zinc-700 bg-zinc-900 p-2 transition-colors"
-	style={tags.length > 0 ? `border-color: ${accentHex}66;` : ''}
+	class="flex min-h-[3.125rem] flex-wrap items-center gap-1.5 rounded-xl border border-zinc-700 bg-zinc-900 px-2 py-2 transition-colors"
+	style={tags.length > 0 ? `border-color: ${accentHex};` : ''}
 >
 	{#if name}
 		<input type="hidden" {name} value={wireValue} data-tag-input="true" />
@@ -126,7 +134,7 @@
 				onkeydown={onKeydown}
 				{placeholder}
 				autocomplete="off"
-				class="w-full bg-transparent px-1 py-1 text-sm text-zinc-100 focus:outline-none"
+				class="w-full bg-transparent px-2 py-1 text-zinc-100 focus:outline-none"
 			/>
 			{#if suggestions.length > 0}
 				<div

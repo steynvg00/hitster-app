@@ -202,6 +202,78 @@ const r_twoMainOneBonus = scoreArtistField(
 assert('bonus does not dilute the main share: 2 mains → full 10', r_twoMainOneBonus.mainScore, 10);
 assert('bonus on top of a full main', r_twoMainOneBonus.bonusScore, 5);
 
+// ── 6b. Per-bonus-artist detail (C1 stuk 2 results screen) ────────────────────
+// bonusScore is only a TOTAL. The results screen renders "⭐ {name} +{points}
+// bonus" per matched bonus artist, which needs the name — hence bonusArtists.
+console.log('\n── Per-bonus-artist detail (names the matched bonus artists) ──');
+assert('bonus hit: names the artist and its points', r_mcHit.bonusArtists, [
+	{ name: 'MC Villain', points: 5 }
+]);
+assert('bonus MISS: no entry → results screen renders no line', r_mcMiss.bonusArtists, []);
+assert(
+	'no bonus config at all → empty, never undefined',
+	scoreArtistField(tags('Ran-D', 'Adaro'), duo, MAX).bonusArtists,
+	[]
+);
+assert(
+	'bonus artist not on the track → empty',
+	scoreArtistField(tags('Ran-D'), ['Ran-D'], MAX, { 'MC Nobody': 5 }).bonusArtists,
+	[]
+);
+// The name shown is the TRACK's spelling, not the config key's casing — the star
+// line must read "MC Villain", not the host's lowercase key.
+assert(
+	'name comes from the track, not the config key casing',
+	scoreArtistField(tags('Ran-D', 'MC Villain'), withMc, MAX, { 'mc villain': 5 }).bonusArtists,
+	[{ name: 'MC Villain', points: 5 }]
+);
+// Half-credit is reported per artist, not just in the total.
+assert(
+	'half-credit bonus reports its halved points',
+	scoreArtistField(tags('Headhunterz', 'Headhunt'), ['Headhunterz', 'Headhunterzz'], MAX, {
+		Headhunterzz: 6
+	}).bonusArtists,
+	[{ name: 'Headhunterzz', points: 3 }]
+);
+// THE INVARIANT: the star lines must sum to the bonus in the badge. Two 2.5s
+// rounded independently would render 3 + 3 = 6 against a bonusScore of 5 — a
+// breakdown the host can see doesn't add up. Cumulative rounding gives 3 + 2.
+const r_twoHalfBonus = scoreArtistField(
+	tags('Ran-D', 'Headhunt', 'Wildsty'),
+	['Ran-D', 'Headhunterz', 'Wildstylez'],
+	MAX,
+	{ Headhunterz: 5, Wildstylez: 5 }
+);
+assert('two half-credit bonuses: total', r_twoHalfBonus.bonusScore, 5);
+assert('two half-credit bonuses: per-artist lines sum to the total, not 3+3', r_twoHalfBonus.bonusArtists, [
+	{ name: 'Headhunterz', points: 3 },
+	{ name: 'Wildstylez', points: 2 }
+]);
+assert(
+	'…stated as the invariant: Σ lines === bonusScore',
+	r_twoHalfBonus.bonusArtists.reduce((s, b) => s + b.points, 0),
+	r_twoHalfBonus.bonusScore
+);
+
+// The detail must survive scoreField → FieldResult, which is what the screen reads.
+const trackWithMc: TrackData = {
+	id: 't-mc',
+	artist: 'Ran-D',
+	artists: ['Ran-D', 'MC Villain'],
+	title: 'X',
+	year: 2012
+};
+assert(
+	'scoreField surfaces the detail on the artist field',
+	scoreField('artist', 'Ran-D\nMC Villain', trackWithMc, 'open_text', MAX, mcBonus).bonusArtists,
+	[{ name: 'MC Villain', points: 5 }]
+);
+assert(
+	'scoreField: bonus artist missed → empty',
+	scoreField('artist', 'Ran-D', trackWithMc, 'open_text', MAX, mcBonus).bonusArtists,
+	[]
+);
+
 // ── 7. Over-guess penalty ─────────────────────────────────────────────────────
 console.log('\n── Over-guess penalty (only when tags > targets) ──');
 assert('PENALTY_PER_SURPLUS_TAG is 1', PENALTY_PER_SURPLUS_TAG, 1);
