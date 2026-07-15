@@ -244,6 +244,11 @@ export interface FieldResult {
 	// isBonus alone — so pre-C1 results are unaffected.
 	bonusScore?: number;
 	bonusMax?: number;
+	// The bonus artists actually MATCHED, named, with the points each contributed
+	// (C1 stuk 2) — bonusScore is only their total, which can't say who scored it.
+	// Absent when none matched, so the results screen renders no empty section.
+	// Σ points === bonusScore; see ArtistScoreResult.bonusArtists in scoring.ts.
+	bonusArtists?: { name: string; points: number }[];
 }
 
 // Per-slot scoring result (one slot = one source track assignment)
