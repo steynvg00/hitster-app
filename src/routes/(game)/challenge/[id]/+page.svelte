@@ -1289,8 +1289,21 @@
 
 		<!-- Audio player(s) -->
 		<div class="mb-6 rounded-2xl bg-zinc-900 p-5">
-			{#if isFragments && activeTab && activeTab.clips.length > 1}
-				<!-- Fragments: numbered clip strip at top -->
+			{#if activeTab && activeTab.clips.length > 1}
+				<!--
+					Numbered clip strip at top. Was fragments-only; C2 un-gates it for any
+					tab with >1 clip (standard/anthem/label tabs can now hold 2-3 ordered
+					clips — a break/mid/climax — via StandardEditor). The `.length > 1`
+					guard already makes this byte-identical to before for every
+					single-clip tab (normal, mashup, effects), so no separate variant
+					check is needed to protect that regression.
+
+					Label: fragments keeps its "Fragment N" numbering (fragmentNumber is
+					the fragments-only field, set when the host adds a fragment there).
+					Normal tabs never populate fragmentNumber (C2 deliberately leaves it
+					null — see StandardEditor), so they read "Part N" from the clip's
+					position in the already sort_order-sorted list.
+				-->
 				<div class="mb-3 flex flex-wrap gap-1.5">
 					{#each activeTab.clips as clipItem, ci}
 						<button
@@ -1305,7 +1318,7 @@
 								: 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}"
 							style={activeClipIndex === ci ? `background-color: ${teamHex};` : ''}
 						>
-							Fragment {clipItem.fragmentNumber ?? ci + 1}
+							{isFragments ? `Fragment ${clipItem.fragmentNumber ?? ci + 1}` : `Part ${ci + 1}`}
 						</button>
 					{/each}
 				</div>
