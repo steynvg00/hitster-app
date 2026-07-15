@@ -13,6 +13,27 @@ async function ensureInPool(
 		.upsert({ name } as never, { onConflict: 'name', ignoreDuplicates: true });
 }
 
+// T2: the create-track form now uses the same multi-select tag input as the
+// edit path's Artists section (ArtistTagInput), so both submit the same
+// artists_json wire shape. One parser for both actions — a second copy would
+// only need to drift once for new tracks to store artists differently from
+// edited ones. Returns null on malformed JSON / non-array payloads so the
+// caller can 400 without duplicating that check.
+function parseArtistsJson(raw: string | null): string[] | null {
+	if (raw == null) return null;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch {
+		return null;
+	}
+	if (!Array.isArray(parsed)) return null;
+	return parsed
+		.filter((a): a is string => typeof a === 'string')
+		.map((a) => a.trim())
+		.filter(Boolean);
+}
+
 // Challenges that would lose answer ground-truth if this track were deleted —
 // via challenge_tab_source_tracks (standard/anthem/label/effects) and via
 // mashup_sources → challenge_tabs.mashup_id (mashup variant). Both cascade
@@ -138,11 +159,16 @@ export const load: PageServerLoad = async ({ url }) => {
 };
 
 export const actions: Actions = {
+	// T2: the create form now writes artists[] the SAME way saveArtists does —
+	// artist is derived (artists.join(' & ')), never taken from its own form
+	// field — so a track created here is byte-identical in shape to one that
+	// was later edited via the Artists tag section. A single artist typed
+	// produces one tag and therefore the same plain artist string as before.
 	createTrack: async ({ request, locals }) => {
 		const db = createAdminClient();
 		const data = await request.formData();
 
-		const artist = (data.get('artist') as string)?.trim();
+		const artists = parseArtistsJson(data.get('artists_json') as string | null);
 		const title = (data.get('title') as string)?.trim();
 		const year = parseInt(data.get('year') as string, 10);
 		const record_label = (data.get('record_label') as string)?.trim() || null;
@@ -151,14 +177,17 @@ export const actions: Actions = {
 		const genre = (data.get('genre') as string)?.trim() || null;
 		const subgenre = (data.get('subgenre') as string)?.trim() || null;
 
-		if (!artist || !title || isNaN(year)) {
+		if (!artists || artists.length === 0 || !title || isNaN(year)) {
 			return fail(400, { error: 'Artist, title, and year are required' });
 		}
+
+		const artist = artists.join(' & ');
 
 		const { data: inserted, error } = await db
 			.from('tracks')
 			.insert({
 				artist,
+				artists,
 				title,
 				year,
 				record_label,
@@ -172,7 +201,7 @@ export const actions: Actions = {
 			.single();
 		if (error) return fail(500, { error: error.message });
 		await Promise.all([
-			ensureInPool(db, 'answer_pool_artists', artist),
+			...artists.map((a) => ensureInPool(db, 'answer_pool_artists', a)),
 			ensureInPool(db, 'answer_pool_labels', record_label),
 			ensureInPool(db, 'answer_pool_festivals', festival)
 		]);
@@ -229,22 +258,14 @@ export const actions: Actions = {
 		const db = createAdminClient();
 		const data = await request.formData();
 		const id = data.get('id') as string;
-		const raw = (data.get('artists_json') as string) ?? '[]';
 
 		if (!id) return fail(400, { error: 'Missing track id' });
 
-		let parsed: unknown;
-		try {
-			parsed = JSON.parse(raw);
-		} catch {
-			return fail(400, { error: 'Invalid artists payload' });
-		}
-		if (!Array.isArray(parsed)) return fail(400, { error: 'Invalid artists payload' });
-
-		const artists = parsed
-			.filter((a): a is string => typeof a === 'string')
-			.map((a) => a.trim())
-			.filter(Boolean);
+		// Field missing entirely -> treat as an empty list (pre-T2 behavior),
+		// not a malformed payload — the edit form's hidden input is always
+		// present in real usage, so this only guards a hand-crafted request.
+		const artists = parseArtistsJson((data.get('artists_json') as string | null) ?? '[]');
+		if (artists === null) return fail(400, { error: 'Invalid artists payload' });
 		if (artists.length === 0) return fail(400, { error: 'At least one artist is required' });
 
 		const artist = artists.join(' & ');
@@ -354,7 +375,9 @@ export const actions: Actions = {
 		if (source_track_ids.length > 0) {
 			const { error: sourcesError } = await db
 				.from('mashup_sources')
-				.insert(source_track_ids.map((track_id, i) => ({ mashup_id: id, track_id, sort_order: i })));
+				.insert(
+					source_track_ids.map((track_id, i) => ({ mashup_id: id, track_id, sort_order: i }))
+				);
 			if (sourcesError) return fail(500, { error: sourcesError.message });
 		}
 

@@ -52,6 +52,12 @@
 	let showAddForm = $state(false);
 	let addingTrack = $state(false);
 
+	// T2: mashups already have full CRUD (create/edit/delete below) — they were
+	// just always rendered as a second section below the tracks list. This is a
+	// pure list-view filter: which of the two ALREADY-EXISTING sections shows,
+	// nothing about either section's data or behavior changes.
+	let viewMode = $state<'tracks' | 'mashups'>('tracks');
+
 	// ── artists tag editor (T1) ──────────────────────────────────────────────────
 	// The tag input itself is now the shared ArtistTagInput component (C1 stuk 2) —
 	// the player's artist field renders the same one, so the two can't drift.
@@ -65,6 +71,11 @@
 		// cleanly — the host can split it into separate tags manually.
 		artistDraft = track.artists?.length ? [...track.artists] : [track.artist];
 	}
+
+	// T2: the create-track form's own artist tags, same shared ArtistTagInput as
+	// the edit path above — reset after a successful create (see the $effect
+	// below) so the form is blank for the next track.
+	let newTrackArtists = $state<string[]>([]);
 
 	// ── clip selection (bulk delete) ─────────────────────────────────────────────
 	let selectedClips = $state(new Set<string>());
@@ -80,6 +91,27 @@
 	// ── helpers ──────────────────────────────────────────────────────────────────
 	function clipsFor(trackId: string) {
 		return data.clips.filter((c) => c.track_id === trackId);
+	}
+
+	// T2 (open-to-see-more): record label / genre / subgenre / festival / vocal
+	// source had no read-only display anywhere before this — only the inline
+	// quick-edit row form touched them. This just surfaces current values in
+	// the expanded panel; the quick-edit form is untouched. Only fields with a
+	// value are shown, so an all-empty track renders no section at all.
+	function trackDetails(track: {
+		record_label: string | null;
+		genre: string | null;
+		subgenre: string | null;
+		festival: string | null;
+		vocal_source: string | null;
+	}): { label: string; value: string }[] {
+		return [
+			{ label: 'Record label', value: track.record_label },
+			{ label: 'Genre', value: track.genre },
+			{ label: 'Subgenre', value: track.subgenre },
+			{ label: 'Festival', value: track.festival },
+			{ label: 'Vocal source', value: track.vocal_source }
+		].filter((d): d is { label: string; value: string } => !!d.value);
 	}
 
 	function toggleExpand(id: string) {
@@ -401,18 +433,69 @@
 </script>
 
 <div class="p-6">
-	<!-- Header -->
+	<!-- Header — shared across both views so the Tracks/Mashups switch stays
+	     visible and clickable no matter which is currently showing (mashups
+	     already had their own full section below the tracks list; T2 just
+	     toggles which of the two shows, via viewMode). -->
 	<div class="mb-6 flex items-center justify-between">
 		<div>
-			<h1 class="text-2xl font-bold text-white">Tracks</h1>
-			<p class="mt-0.5 text-sm text-zinc-400">{data.tracks.length} tracks in library</p>
+			<h1 class="text-2xl font-bold text-white">{viewMode === 'tracks' ? 'Tracks' : 'Mashups'}</h1>
+			<p class="mt-0.5 text-sm text-zinc-400">
+				{#if viewMode === 'tracks'}
+					{data.tracks.length} tracks in library
+				{:else}
+					{data.mashups.length} mashup{data.mashups.length !== 1 ? 's' : ''} in library
+				{/if}
+			</p>
 		</div>
-		<button
-			onclick={() => (showAddForm = !showAddForm)}
-			class="rounded-lg bg-amber-400 px-4 py-2 text-sm font-bold text-zinc-950 transition-colors hover:bg-amber-300"
-		>
-			+ Add Track
-		</button>
+		<div class="flex items-center gap-3">
+			<div class="flex rounded-lg border border-zinc-700 bg-zinc-900 p-0.5 text-xs font-semibold">
+				<button
+					type="button"
+					onclick={() => (viewMode = 'tracks')}
+					class="rounded px-3 py-1 transition-colors {viewMode === 'tracks'
+						? 'bg-amber-400 text-zinc-950'
+						: 'text-zinc-400 hover:text-zinc-200'}"
+				>
+					Tracks
+				</button>
+				<button
+					type="button"
+					onclick={() => (viewMode = 'mashups')}
+					class="rounded px-3 py-1 transition-colors {viewMode === 'mashups'
+						? 'bg-amber-400 text-zinc-950'
+						: 'text-zinc-400 hover:text-zinc-200'}"
+				>
+					Mashups
+				</button>
+			</div>
+			{#if viewMode === 'tracks'}
+				<button
+					onclick={() => (showAddForm = !showAddForm)}
+					class="rounded-lg bg-amber-400 px-4 py-2 text-sm font-bold text-zinc-950 transition-colors hover:bg-amber-300"
+				>
+					+ Add Track
+				</button>
+			{:else}
+				<button
+					type="button"
+					onclick={() => {
+						showCreateMashup = !showCreateMashup;
+						if (!showCreateMashup) {
+							mashupUploadFile = null;
+							mashupUploadName = '';
+							mashupUploadStatus = 'idle';
+							mashupUploadError = null;
+							mashupUploadSources = [];
+							mashupCreateSourcePicker = '';
+						}
+					}}
+					class="rounded-lg bg-amber-400 px-4 py-2 text-sm font-bold text-zinc-950 transition-colors hover:bg-amber-300"
+				>
+					+ Create Mashup
+				</button>
+			{/if}
+		</div>
 	</div>
 
 	{#if form?.error}
@@ -421,1187 +504,1219 @@
 		</div>
 	{/if}
 
-	<!-- Add track form -->
-	{#if showAddForm}
-		<div class="mb-6 rounded-xl border border-amber-400/30 bg-zinc-900 p-5">
-			<h2 class="mb-4 text-sm font-semibold tracking-widest text-amber-400 uppercase">New Track</h2>
-			<form
-				method="POST"
-				action="?/createTrack"
-				use:enhance={() => {
-					addingTrack = true;
-					return async ({ result, update }) => {
-						try {
-							if (result.type === 'success' && result.data?.id) {
-								const trackId = result.data.id as string;
-								for (const staged of stagedFiles['__new__'] ?? []) {
-									if (staged.status !== 'queued') continue;
-									staged.status = 'uploading';
-									const fd = new FormData();
-									fd.append('file', staged.file);
-									fd.append('clip_type', staged.clipType);
-									if (staged.orderIndex != null)
-										fd.append('order_index', String(staged.orderIndex));
-									fd.append('duration', String(staged.duration));
-									try {
-										const res = await fetch(`/admin/tracks/${trackId}/upload`, {
-											method: 'POST',
-											body: fd
-										});
-										staged.status = res.ok ? 'done' : 'failed';
-										if (!res.ok) staged.error = await res.text();
-									} catch (e) {
-										staged.status = 'failed';
-										staged.error = String(e);
+	{#if viewMode === 'tracks'}
+		<!-- Add track form -->
+		{#if showAddForm}
+			<div class="mb-6 rounded-xl border border-amber-400/30 bg-zinc-900 p-5">
+				<h2 class="mb-4 text-sm font-semibold tracking-widest text-amber-400 uppercase">
+					New Track
+				</h2>
+				<form
+					method="POST"
+					action="?/createTrack"
+					use:enhance={() => {
+						addingTrack = true;
+						return async ({ result, update }) => {
+							try {
+								if (result.type === 'success' && result.data?.id) {
+									const trackId = result.data.id as string;
+									for (const staged of stagedFiles['__new__'] ?? []) {
+										if (staged.status !== 'queued') continue;
+										staged.status = 'uploading';
+										const fd = new FormData();
+										fd.append('file', staged.file);
+										fd.append('clip_type', staged.clipType);
+										if (staged.orderIndex != null)
+											fd.append('order_index', String(staged.orderIndex));
+										fd.append('duration', String(staged.duration));
+										try {
+											const res = await fetch(`/admin/tracks/${trackId}/upload`, {
+												method: 'POST',
+												body: fd
+											});
+											staged.status = res.ok ? 'done' : 'failed';
+											if (!res.ok) staged.error = await res.text();
+										} catch (e) {
+											staged.status = 'failed';
+											staged.error = String(e);
+										}
 									}
+									stagedFiles['__new__'] = [];
+									showAddForm = false;
+									newTrackArtists = [];
+									await invalidateAll();
+								} else {
+									await update();
 								}
-								stagedFiles['__new__'] = [];
-								showAddForm = false;
-								await invalidateAll();
-							} else {
-								await update();
+							} finally {
+								addingTrack = false;
 							}
-						} finally {
-							addingTrack = false;
-						}
-					};
-				}}
-				class="grid grid-cols-2 gap-3"
-			>
-				<input name="artist" placeholder="Artist *" required class="input-field" />
-				<input name="title" placeholder="Title *" required class="input-field" />
-				<input
-					name="year"
-					type="number"
-					placeholder="Year *"
-					required
-					min="1950"
-					max="2030"
-					class="input-field"
-				/>
-				<input name="record_label" placeholder="Record label" class="input-field" />
-				<input name="genre" placeholder="Genre" class="input-field" />
-				<input name="subgenre" placeholder="Subgenre" class="input-field" />
-				<input name="festival" placeholder="Festival (anthem variant)" class="input-field" />
-				<input name="vocal_source" placeholder="Vocal source (movie/show)" class="input-field" />
-
-				<!-- Inline clip drop zone -->
-				<div class="col-span-2 mt-1">
-					<div class="mb-1 text-xs font-semibold tracking-widest text-zinc-500 uppercase">
-						Clips (optional)
-					</div>
-					<div
-						role="region"
-						aria-label="Drop audio files here"
-						class="relative cursor-pointer rounded-xl border-2 border-dashed px-4 py-5 text-center transition-colors {dragOverTrack ===
-						'__new__'
-							? 'border-amber-400 bg-amber-400/5'
-							: 'border-zinc-700 hover:border-zinc-500'}"
-						ondragover={(e) => {
-							e.preventDefault();
-							dragOverTrack = '__new__';
-						}}
-						ondragleave={() => (dragOverTrack = null)}
-						ondrop={async (e) => {
-							e.preventDefault();
-							dragOverTrack = null;
-							if (e.dataTransfer?.files) await stageFiles('__new__', e.dataTransfer.files);
-						}}
-					>
-						<input
-							type="file"
-							accept="audio/*,video/mp4,video/quicktime,video/x-m4v,.mp4,.mov,.m4v"
-							multiple
-							class="absolute inset-0 cursor-pointer opacity-0"
-							onchange={async (e) => {
-								const files = (e.target as HTMLInputElement).files;
-								if (files) await stageFiles('__new__', files);
-								(e.target as HTMLInputElement).value = '';
-							}}
-						/>
-						<p class="text-sm text-zinc-500">
-							Drop audio or video clips, or <span class="text-amber-400">click to browse</span>
+						};
+					}}
+					class="grid grid-cols-2 gap-3"
+				>
+					<!-- T2: same multi-select tag input the edit view's Artists section uses
+				     (ArtistTagInput, T1/C1 stuk 2) — reused, not rebuilt, so create and
+				     edit can never write artists in different shapes. Full-width: a
+				     tag input can wrap to multiple lines as tags are added, which would
+				     make an adjacent 2-col cell (e.g. Title) look mismatched in height. -->
+					<div class="col-span-2">
+						<input type="hidden" name="artists_json" value={JSON.stringify(newTrackArtists)} />
+						<ArtistTagInput bind:tags={newTrackArtists} pool={data.artistPool} />
+						<p class="mt-1 text-xs text-zinc-600">
+							Artist * — at least one name. Add every artist on the track; each is worth part of the
+							points.
 						</p>
-						<p class="mt-0.5 text-xs text-zinc-600">mp3/wav/m4a · mp4/mov → audio extracted</p>
 					</div>
+					<input name="title" placeholder="Title *" required class="input-field" />
+					<input
+						name="year"
+						type="number"
+						placeholder="Year *"
+						required
+						min="1950"
+						max="2030"
+						class="input-field"
+					/>
+					<input name="record_label" placeholder="Record label" class="input-field" />
+					<input name="genre" placeholder="Genre" class="input-field" />
+					<input name="subgenre" placeholder="Subgenre" class="input-field" />
+					<input name="festival" placeholder="Festival (anthem variant)" class="input-field" />
+					<input name="vocal_source" placeholder="Vocal source (movie/show)" class="input-field" />
 
-					{#if (videoExtractions['__new__'] ?? []).length > 0}
-						<div class="mt-2 space-y-1.5">
-							{#each videoExtractions['__new__'] as extraction (extraction.id)}
-								<div
-									class="grid items-center gap-x-3 rounded-lg border border-amber-700 bg-amber-950/20 px-3 py-2 text-sm"
-									style="grid-template-columns: 1.25rem 1fr 1.25rem"
-								>
-									<span class="text-center text-xs text-amber-400">⟳</span>
-									<div class="min-w-0">
-										<div class="truncate text-zinc-200">{extraction.name}</div>
-										<div class="text-xs text-zinc-500">
-											{formatSize(extraction.size)} ·
+					<!-- Inline clip drop zone -->
+					<div class="col-span-2 mt-1">
+						<div class="mb-1 text-xs font-semibold tracking-widest text-zinc-500 uppercase">
+							Clips (optional)
+						</div>
+						<div
+							role="region"
+							aria-label="Drop audio files here"
+							class="relative cursor-pointer rounded-xl border-2 border-dashed px-4 py-5 text-center transition-colors {dragOverTrack ===
+							'__new__'
+								? 'border-amber-400 bg-amber-400/5'
+								: 'border-zinc-700 hover:border-zinc-500'}"
+							ondragover={(e) => {
+								e.preventDefault();
+								dragOverTrack = '__new__';
+							}}
+							ondragleave={() => (dragOverTrack = null)}
+							ondrop={async (e) => {
+								e.preventDefault();
+								dragOverTrack = null;
+								if (e.dataTransfer?.files) await stageFiles('__new__', e.dataTransfer.files);
+							}}
+						>
+							<input
+								type="file"
+								accept="audio/*,video/mp4,video/quicktime,video/x-m4v,.mp4,.mov,.m4v"
+								multiple
+								class="absolute inset-0 cursor-pointer opacity-0"
+								onchange={async (e) => {
+									const files = (e.target as HTMLInputElement).files;
+									if (files) await stageFiles('__new__', files);
+									(e.target as HTMLInputElement).value = '';
+								}}
+							/>
+							<p class="text-sm text-zinc-500">
+								Drop audio or video clips, or <span class="text-amber-400">click to browse</span>
+							</p>
+							<p class="mt-0.5 text-xs text-zinc-600">mp3/wav/m4a · mp4/mov → audio extracted</p>
+						</div>
+
+						{#if (videoExtractions['__new__'] ?? []).length > 0}
+							<div class="mt-2 space-y-1.5">
+								{#each videoExtractions['__new__'] as extraction (extraction.id)}
+									<div
+										class="grid items-center gap-x-3 rounded-lg border border-amber-700 bg-amber-950/20 px-3 py-2 text-sm"
+										style="grid-template-columns: 1.25rem 1fr 1.25rem"
+									>
+										<span class="text-center text-xs text-amber-400">⟳</span>
+										<div class="min-w-0">
+											<div class="truncate text-zinc-200">{extraction.name}</div>
+											<div class="text-xs text-zinc-500">
+												{formatSize(extraction.size)} ·
+												{#if extraction.status === 'extracting'}
+													<span class="text-amber-400"
+														>Extracting audio… {extraction.progress}%</span
+													>
+												{:else if extraction.status === 'done'}
+													<span class="text-green-400">Done</span>
+												{:else}
+													<span class="text-red-400">{extraction.error}</span>
+												{/if}
+											</div>
 											{#if extraction.status === 'extracting'}
-												<span class="text-amber-400">Extracting audio… {extraction.progress}%</span>
-											{:else if extraction.status === 'done'}
-												<span class="text-green-400">Done</span>
-											{:else}
-												<span class="text-red-400">{extraction.error}</span>
+												<div class="mt-1 h-1 w-full overflow-hidden rounded-full bg-zinc-700">
+													<div
+														class="h-full bg-amber-400 transition-all"
+														style="width: {extraction.progress}%"
+													></div>
+												</div>
 											{/if}
 										</div>
-										{#if extraction.status === 'extracting'}
-											<div class="mt-1 h-1 w-full overflow-hidden rounded-full bg-zinc-700">
-												<div
-													class="h-full bg-amber-400 transition-all"
-													style="width: {extraction.progress}%"
-												></div>
-											</div>
+										{#if extraction.status === 'failed'}
+											<button
+												type="button"
+												onclick={() => {
+													videoExtractions['__new__'] = (videoExtractions['__new__'] ?? []).filter(
+														(v) => v.id !== extraction.id
+													);
+												}}
+												class="text-zinc-600 hover:text-red-400"
+												title="Dismiss">✕</button
+											>
+										{:else}
+											<span></span>
 										{/if}
 									</div>
-									{#if extraction.status === 'failed'}
-										<button
-											type="button"
-											onclick={() => {
-												videoExtractions['__new__'] = (videoExtractions['__new__'] ?? []).filter(
-													(v) => v.id !== extraction.id
-												);
-											}}
-											class="text-zinc-600 hover:text-red-400"
-											title="Dismiss">✕</button
-										>
-									{:else}
-										<span></span>
-									{/if}
-								</div>
-							{/each}
-						</div>
-					{/if}
-
-					{#if newTrackStagedFiles.length > 0}
-						<div class="mt-2 space-y-1.5">
-							{#each newTrackStagedFiles as staged (staged.id)}
-								<div
-									class="grid items-center gap-x-3 rounded-lg border px-3 py-2 text-sm {staged.status ===
-									'done'
-										? 'border-green-800 bg-green-950/40'
-										: staged.status === 'failed'
-											? 'border-red-800 bg-red-950/40'
-											: staged.status === 'uploading'
-												? 'border-amber-700 bg-amber-950/30'
-												: 'border-zinc-700 bg-zinc-900'}"
-									style="grid-template-columns: 1.25rem 1fr 7.5rem 5rem 1.25rem"
-								>
-									<span class="text-center text-xs">
-										{#if staged.status === 'queued'}⏳{:else if staged.status === 'uploading'}⬆{:else if staged.status === 'done'}✓{:else}✗{/if}
-									</span>
-									<div class="min-w-0">
-										<div class="truncate text-zinc-200">{staged.name}</div>
-										<div class="text-xs text-zinc-500">
-											{formatSize(staged.size)}
-											{#if staged.duration > 0}· {formatDuration(staged.duration)}{/if}
-											{#if staged.error}<span class="text-red-400"> · {staged.error}</span>{/if}
-										</div>
-									</div>
-									<select
-										bind:value={staged.clipType}
-										disabled={staged.status !== 'queued'}
-										class="input-field py-1 text-xs disabled:opacity-50"
-									>
-										{#each CLIP_TYPES as t}
-											<option value={t}>{t}</option>
-										{/each}
-									</select>
-									<input
-										type="number"
-										bind:value={staged.orderIndex}
-										disabled={staged.status !== 'queued'}
-										placeholder="Order"
-										min="1"
-										class="input-field py-1 text-xs disabled:opacity-50"
-									/>
-									{#if staged.status === 'queued' || staged.status === 'failed'}
-										<button
-											type="button"
-											onclick={() => removeStagedFile('__new__', staged.id)}
-											class="text-zinc-600 hover:text-red-400"
-											title="Remove">✕</button
-										>
-									{:else}
-										<span></span>
-									{/if}
-								</div>
-							{/each}
-						</div>
-					{/if}
-				</div>
-
-				<div class="col-span-2 mt-1 flex justify-end gap-2">
-					<button
-						type="button"
-						onclick={() => {
-							showAddForm = false;
-							stagedFiles['__new__'] = [];
-						}}
-						class="btn-ghost">Cancel</button
-					>
-					<button type="submit" disabled={addingTrack} class="btn-primary">
-						{addingTrack ? 'Saving…' : 'Add Track'}
-					</button>
-				</div>
-			</form>
-		</div>
-	{/if}
-
-	<!-- Search / filter / sort -->
-	<div class="mb-4 flex flex-wrap items-center gap-2">
-		<input
-			value={searchQuery}
-			oninput={(e) => onSearchInput((e.target as HTMLInputElement).value)}
-			placeholder="Filter by artist, title, or genre…"
-			class="min-w-[200px] flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs text-zinc-300 placeholder-zinc-600 focus:border-amber-400 focus:outline-none"
-		/>
-		<select
-			value={data.genreFilter}
-			onchange={(e) => setParam('genre', (e.target as HTMLSelectElement).value)}
-			class="rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-300 focus:border-amber-400 focus:outline-none"
-		>
-			<option value="">All genres</option>
-			{#each data.allGenres as g (g)}
-				<option value={g}>{g}</option>
-			{/each}
-		</select>
-		<select
-			value={data.hasClips}
-			onchange={(e) => setParam('has_clips', (e.target as HTMLSelectElement).value)}
-			class="rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-300 focus:border-amber-400 focus:outline-none"
-		>
-			<option value="all">Any clips</option>
-			<option value="yes">Has clips</option>
-			<option value="no">No clips</option>
-		</select>
-		<select
-			value={data.sort}
-			onchange={(e) => setParam('sort', (e.target as HTMLSelectElement).value)}
-			class="rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-300 focus:border-amber-400 focus:outline-none"
-		>
-			<option value="name_asc">Name A→Z</option>
-			<option value="name_desc">Name Z→A</option>
-			<option value="created_desc">Newest first</option>
-			<option value="created_asc">Oldest first</option>
-			<option value="genre_asc">Genre A→Z</option>
-		</select>
-	</div>
-
-	<!-- Track list -->
-	<div class="space-y-2">
-		{#each data.tracks as track (track.id)}
-			<div class="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
-				<!-- Track header row -->
-				<div
-					class="flex cursor-pointer items-center gap-3 px-4 py-3 transition-colors hover:bg-zinc-800/50"
-					onclick={() => editingTrack !== track.id && toggleExpand(track.id)}
-					role="button"
-					tabindex="0"
-					onkeydown={(e) => e.key === 'Enter' && editingTrack !== track.id && toggleExpand(track.id)}
-				>
-					<span class="w-5 shrink-0 text-center text-zinc-500">
-						{expandedTrack === track.id ? '▾' : '▸'}
-					</span>
-
-					{#if editingTrack === track.id}
-						<form
-							method="POST"
-							action="?/updateTrack"
-							use:enhance
-							class="grid flex-1 grid-cols-4 items-center gap-2"
-						>
-							<input type="hidden" name="id" value={track.id} />
-							<!-- Artist is edited via the Artists tag section in the open track view
-							     (above Clips) — not here. Quick-edit covers title/year/label/etc. -->
-							<input name="title" value={track.title} required class="input-field text-sm" />
-							<input
-								name="year"
-								type="number"
-								value={track.year}
-								required
-								class="input-field text-sm"
-							/>
-							<input
-								name="record_label"
-								value={track.record_label ?? ''}
-								placeholder="Label"
-								class="input-field text-sm"
-							/>
-							<input
-								name="genre"
-								value={track.genre ?? ''}
-								placeholder="Genre"
-								class="input-field text-sm"
-							/>
-							<input
-								name="subgenre"
-								value={track.subgenre ?? ''}
-								placeholder="Subgenre"
-								class="input-field text-sm"
-							/>
-							<input
-								name="festival"
-								value={track.festival ?? ''}
-								placeholder="Festival"
-								class="input-field text-sm"
-							/>
-							<input
-								name="vocal_source"
-								value={track.vocal_source ?? ''}
-								placeholder="Vocal source"
-								class="input-field text-sm"
-							/>
-							<div class="col-span-4 flex justify-end gap-2">
-								<button
-									type="button"
-									onclick={() => (editingTrack = null)}
-									class="btn-ghost text-xs">Cancel</button
-								>
-								<button type="submit" class="btn-primary text-xs">Save</button>
+								{/each}
 							</div>
-						</form>
-					{:else}
-						<div class="grid min-w-0 flex-1 grid-cols-4 gap-2 text-sm">
-							<div class="truncate font-medium text-white">{track.artist}</div>
-							<div class="truncate text-zinc-300">{track.title}</div>
-							<div class="text-zinc-500">{track.year}</div>
-							<div class="truncate text-zinc-500">{track.record_label ?? '—'}</div>
-						</div>
-						<div class="shrink-0 text-xs text-zinc-600">
-							{clipsFor(track.id).length} clip{clipsFor(track.id).length !== 1 ? 's' : ''}
-						</div>
-					{/if}
+						{/if}
 
-					{#if editingTrack !== track.id}
+						{#if newTrackStagedFiles.length > 0}
+							<div class="mt-2 space-y-1.5">
+								{#each newTrackStagedFiles as staged (staged.id)}
+									<div
+										class="grid items-center gap-x-3 rounded-lg border px-3 py-2 text-sm {staged.status ===
+										'done'
+											? 'border-green-800 bg-green-950/40'
+											: staged.status === 'failed'
+												? 'border-red-800 bg-red-950/40'
+												: staged.status === 'uploading'
+													? 'border-amber-700 bg-amber-950/30'
+													: 'border-zinc-700 bg-zinc-900'}"
+										style="grid-template-columns: 1.25rem 1fr 7.5rem 5rem 1.25rem"
+									>
+										<span class="text-center text-xs">
+											{#if staged.status === 'queued'}⏳{:else if staged.status === 'uploading'}⬆{:else if staged.status === 'done'}✓{:else}✗{/if}
+										</span>
+										<div class="min-w-0">
+											<div class="truncate text-zinc-200">{staged.name}</div>
+											<div class="text-xs text-zinc-500">
+												{formatSize(staged.size)}
+												{#if staged.duration > 0}· {formatDuration(staged.duration)}{/if}
+												{#if staged.error}<span class="text-red-400"> · {staged.error}</span>{/if}
+											</div>
+										</div>
+										<select
+											bind:value={staged.clipType}
+											disabled={staged.status !== 'queued'}
+											class="input-field py-1 text-xs disabled:opacity-50"
+										>
+											{#each CLIP_TYPES as t}
+												<option value={t}>{t}</option>
+											{/each}
+										</select>
+										<input
+											type="number"
+											bind:value={staged.orderIndex}
+											disabled={staged.status !== 'queued'}
+											placeholder="Order"
+											min="1"
+											class="input-field py-1 text-xs disabled:opacity-50"
+										/>
+										{#if staged.status === 'queued' || staged.status === 'failed'}
+											<button
+												type="button"
+												onclick={() => removeStagedFile('__new__', staged.id)}
+												class="text-zinc-600 hover:text-red-400"
+												title="Remove">✕</button
+											>
+										{:else}
+											<span></span>
+										{/if}
+									</div>
+								{/each}
+							</div>
+						{/if}
+					</div>
+
+					<div class="col-span-2 mt-1 flex justify-end gap-2">
 						<button
-							onclick={(e) => { e.stopPropagation(); editingTrack = track.id; }}
-							class="rounded px-2 py-1 text-xs text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
-						>
-							Edit
-						</button>
-						<form
-							method="POST"
-							action="?/deleteTrack"
-							use:enhance={() => {
-								return async ({ result, update }) => {
-									if (
-										result.type === 'failure' &&
-										(result.data as { needsConfirm?: boolean } | undefined)?.needsConfirm
-									) {
-										pendingDeleteConfirm = {
-											trackId: track.id,
-											usedInChallenges:
-												(result.data as { usedInChallenges?: string[] }).usedInChallenges ?? []
-										};
-										return;
-									}
-									pendingDeleteConfirm = null;
-									await update();
-								};
+							type="button"
+							onclick={() => {
+								showAddForm = false;
+								stagedFiles['__new__'] = [];
+								newTrackArtists = [];
 							}}
+							class="btn-ghost">Cancel</button
 						>
-							<input type="hidden" name="id" value={track.id} />
+						<button
+							type="submit"
+							disabled={addingTrack || newTrackArtists.length === 0}
+							class="btn-primary disabled:cursor-not-allowed disabled:opacity-50"
+						>
+							{addingTrack ? 'Saving…' : 'Add Track'}
+						</button>
+					</div>
+				</form>
+			</div>
+		{/if}
+
+		<!-- Search / filter / sort -->
+		<div class="mb-4 flex flex-wrap items-center gap-2">
+			<input
+				value={searchQuery}
+				oninput={(e) => onSearchInput((e.target as HTMLInputElement).value)}
+				placeholder="Filter by artist, title, or genre…"
+				class="min-w-[200px] flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs text-zinc-300 placeholder-zinc-600 focus:border-amber-400 focus:outline-none"
+			/>
+			<select
+				value={data.genreFilter}
+				onchange={(e) => setParam('genre', (e.target as HTMLSelectElement).value)}
+				class="rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-300 focus:border-amber-400 focus:outline-none"
+			>
+				<option value="">All genres</option>
+				{#each data.allGenres as g (g)}
+					<option value={g}>{g}</option>
+				{/each}
+			</select>
+			<select
+				value={data.hasClips}
+				onchange={(e) => setParam('has_clips', (e.target as HTMLSelectElement).value)}
+				class="rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-300 focus:border-amber-400 focus:outline-none"
+			>
+				<option value="all">Any clips</option>
+				<option value="yes">Has clips</option>
+				<option value="no">No clips</option>
+			</select>
+			<select
+				value={data.sort}
+				onchange={(e) => setParam('sort', (e.target as HTMLSelectElement).value)}
+				class="rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-300 focus:border-amber-400 focus:outline-none"
+			>
+				<option value="name_asc">Name A→Z</option>
+				<option value="name_desc">Name Z→A</option>
+				<option value="created_desc">Newest first</option>
+				<option value="created_asc">Oldest first</option>
+				<option value="genre_asc">Genre A→Z</option>
+			</select>
+		</div>
+
+		<!-- Track list -->
+		<div class="space-y-2">
+			{#each data.tracks as track (track.id)}
+				<div class="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
+					<!-- Track header row -->
+					<div
+						class="flex cursor-pointer items-center gap-3 px-4 py-3 transition-colors hover:bg-zinc-800/50"
+						onclick={() => editingTrack !== track.id && toggleExpand(track.id)}
+						role="button"
+						tabindex="0"
+						onkeydown={(e) =>
+							e.key === 'Enter' && editingTrack !== track.id && toggleExpand(track.id)}
+					>
+						<span class="w-5 shrink-0 text-center text-zinc-500">
+							{expandedTrack === track.id ? '▾' : '▸'}
+						</span>
+
+						{#if editingTrack === track.id}
+							<form
+								method="POST"
+								action="?/updateTrack"
+								use:enhance
+								class="grid flex-1 grid-cols-4 items-center gap-2"
+							>
+								<input type="hidden" name="id" value={track.id} />
+								<!-- Artist is edited via the Artists tag section in the open track view
+							     (above Clips) — not here. Quick-edit covers title/year/label/etc. -->
+								<input name="title" value={track.title} required class="input-field text-sm" />
+								<input
+									name="year"
+									type="number"
+									value={track.year}
+									required
+									class="input-field text-sm"
+								/>
+								<input
+									name="record_label"
+									value={track.record_label ?? ''}
+									placeholder="Label"
+									class="input-field text-sm"
+								/>
+								<input
+									name="genre"
+									value={track.genre ?? ''}
+									placeholder="Genre"
+									class="input-field text-sm"
+								/>
+								<input
+									name="subgenre"
+									value={track.subgenre ?? ''}
+									placeholder="Subgenre"
+									class="input-field text-sm"
+								/>
+								<input
+									name="festival"
+									value={track.festival ?? ''}
+									placeholder="Festival"
+									class="input-field text-sm"
+								/>
+								<input
+									name="vocal_source"
+									value={track.vocal_source ?? ''}
+									placeholder="Vocal source"
+									class="input-field text-sm"
+								/>
+								<div class="col-span-4 flex justify-end gap-2">
+									<button
+										type="button"
+										onclick={() => (editingTrack = null)}
+										class="btn-ghost text-xs">Cancel</button
+									>
+									<button type="submit" class="btn-primary text-xs">Save</button>
+								</div>
+							</form>
+						{:else}
+							<!-- T2: title | artist | year (was artist | title | year | record_label).
+						     record_label moved into the expanded "details" block below, alongside
+						     genre/subgenre/festival/vocal_source — see the Details section under
+						     "Artists" in the expanded panel. -->
+							<div class="grid min-w-0 flex-1 grid-cols-3 gap-2 text-sm">
+								<div class="truncate font-medium text-white">{track.title}</div>
+								<div class="truncate text-zinc-300">{track.artist}</div>
+								<div class="text-zinc-500">{track.year}</div>
+							</div>
+							<div class="shrink-0 text-xs text-zinc-600">
+								{clipsFor(track.id).length} clip{clipsFor(track.id).length !== 1 ? 's' : ''}
+							</div>
+						{/if}
+
+						{#if editingTrack !== track.id}
 							<button
-								type="submit"
 								onclick={(e) => {
 									e.stopPropagation();
-									if (!confirm(`Delete "${track.title}" and all its clips?`)) e.preventDefault();
+									editingTrack = track.id;
 								}}
-								class="rounded px-2 py-1 text-xs text-red-600 transition-colors hover:bg-zinc-800 hover:text-red-400"
+								class="rounded px-2 py-1 text-xs text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
 							>
-								Delete
+								Edit
 							</button>
-						</form>
-					{/if}
-				</div>
-
-				{#if pendingDeleteConfirm?.trackId === track.id}
-					<div
-						class="mx-4 mb-3 rounded-lg border border-amber-600/50 bg-amber-900/30 p-3 text-xs text-amber-300"
-					>
-						<p class="mb-2">
-							"{track.title}" is used in {pendingDeleteConfirm.usedInChallenges.length} challenge{pendingDeleteConfirm
-								.usedInChallenges.length !== 1
-								? 's'
-								: ''}: {pendingDeleteConfirm.usedInChallenges.join(', ')}. Deleting it will break their
-							scoring.
-						</p>
-						<div class="flex gap-2">
 							<form
 								method="POST"
 								action="?/deleteTrack"
 								use:enhance={() => {
-									return async ({ update }) => {
+									return async ({ result, update }) => {
+										if (
+											result.type === 'failure' &&
+											(result.data as { needsConfirm?: boolean } | undefined)?.needsConfirm
+										) {
+											pendingDeleteConfirm = {
+												trackId: track.id,
+												usedInChallenges:
+													(result.data as { usedInChallenges?: string[] }).usedInChallenges ?? []
+											};
+											return;
+										}
 										pendingDeleteConfirm = null;
 										await update();
 									};
 								}}
 							>
 								<input type="hidden" name="id" value={track.id} />
-								<input type="hidden" name="confirmed" value="1" />
 								<button
 									type="submit"
-									class="rounded bg-red-900 px-3 py-1 font-semibold text-red-300 transition-colors hover:bg-red-800"
+									onclick={(e) => {
+										e.stopPropagation();
+										if (!confirm(`Delete "${track.title}" and all its clips?`)) e.preventDefault();
+									}}
+									class="rounded px-2 py-1 text-xs text-red-600 transition-colors hover:bg-zinc-800 hover:text-red-400"
 								>
-									Delete anyway
+									Delete
 								</button>
 							</form>
-							<button
-								type="button"
-								onclick={() => (pendingDeleteConfirm = null)}
-								class="rounded px-3 py-1 text-zinc-400 transition-colors hover:text-zinc-200"
-							>
-								Cancel
-							</button>
-						</div>
+						{/if}
 					</div>
-				{/if}
 
-				<!-- Clips panel -->
-				{#if expandedTrack === track.id}
-					<div class="border-t border-zinc-800 bg-zinc-950 px-4 py-3">
-						<!-- ── Artists (T1) ─────────────────────────────────────────────────── -->
-						<!-- One list: main artists AND vocalists/MCs are just names here. Which
-						     names score as a main share vs. a bonus is decided per-challenge in
-						     the editor (C1), not on the track. -->
-						<div class="mb-4">
-							<div class="mb-2 flex items-center justify-between">
-								<div class="flex items-center text-xs tracking-widest text-zinc-500 uppercase">
-									Artists
-									<HelpTooltip
-										text="Everyone credited on this track — main artists and vocalists/MCs alike. Whether a name counts as a main share or a bonus is set per challenge, not here."
-									/>
-								</div>
-								<button
-									onclick={() =>
-										editingArtists === track.id
-											? (editingArtists = null)
-											: startEditArtists(track)}
-									class="text-xs text-zinc-400 transition-colors hover:text-zinc-200"
+					{#if pendingDeleteConfirm?.trackId === track.id}
+						<div
+							class="mx-4 mb-3 rounded-lg border border-amber-600/50 bg-amber-900/30 p-3 text-xs text-amber-300"
+						>
+							<p class="mb-2">
+								"{track.title}" is used in {pendingDeleteConfirm.usedInChallenges.length} challenge{pendingDeleteConfirm
+									.usedInChallenges.length !== 1
+									? 's'
+									: ''}: {pendingDeleteConfirm.usedInChallenges.join(', ')}. Deleting it will break
+								their scoring.
+							</p>
+							<div class="flex gap-2">
+								<form
+									method="POST"
+									action="?/deleteTrack"
+									use:enhance={() => {
+										return async ({ update }) => {
+											pendingDeleteConfirm = null;
+											await update();
+										};
+									}}
 								>
-									{editingArtists === track.id ? 'Cancel' : 'Edit'}
+									<input type="hidden" name="id" value={track.id} />
+									<input type="hidden" name="confirmed" value="1" />
+									<button
+										type="submit"
+										class="rounded bg-red-900 px-3 py-1 font-semibold text-red-300 transition-colors hover:bg-red-800"
+									>
+										Delete anyway
+									</button>
+								</form>
+								<button
+									type="button"
+									onclick={() => (pendingDeleteConfirm = null)}
+									class="rounded px-3 py-1 text-zinc-400 transition-colors hover:text-zinc-200"
+								>
+									Cancel
 								</button>
 							</div>
-							{#if editingArtists === track.id}
-								<form method="POST" action="?/saveArtists" use:enhance>
-									<input type="hidden" name="id" value={track.id} />
-									<input type="hidden" name="artists_json" value={JSON.stringify(artistDraft)} />
-									<ArtistTagInput bind:tags={artistDraft} pool={data.artistPool} />
-									<div class="mt-2 flex justify-end">
-										<button
-											type="submit"
-											disabled={artistDraft.length === 0}
-											class="btn-primary text-xs disabled:opacity-50"
-										>
-											Save
-										</button>
+						</div>
+					{/if}
+
+					<!-- Clips panel -->
+					{#if expandedTrack === track.id}
+						<div class="border-t border-zinc-800 bg-zinc-950 px-4 py-3">
+							<!-- ── Artists (T1) ─────────────────────────────────────────────────── -->
+							<!-- One list: main artists AND vocalists/MCs are just names here. Which
+						     names score as a main share vs. a bonus is decided per-challenge in
+						     the editor (C1), not on the track. -->
+							<div class="mb-4">
+								<div class="mb-2 flex items-center justify-between">
+									<div class="flex items-center text-xs tracking-widest text-zinc-500 uppercase">
+										Artists
+										<HelpTooltip
+											text="Everyone credited on this track — main artists and vocalists/MCs alike. Whether a name counts as a main share or a bonus is set per challenge, not here."
+										/>
 									</div>
-								</form>
-								<p class="mt-1 text-xs text-zinc-600">
-									Enter or comma adds a tag; backspace on an empty field removes the last one.
-								</p>
+									<button
+										onclick={() =>
+											editingArtists === track.id
+												? (editingArtists = null)
+												: startEditArtists(track)}
+										class="text-xs text-zinc-400 transition-colors hover:text-zinc-200"
+									>
+										{editingArtists === track.id ? 'Cancel' : 'Edit'}
+									</button>
+								</div>
+								{#if editingArtists === track.id}
+									<form method="POST" action="?/saveArtists" use:enhance>
+										<input type="hidden" name="id" value={track.id} />
+										<input type="hidden" name="artists_json" value={JSON.stringify(artistDraft)} />
+										<ArtistTagInput bind:tags={artistDraft} pool={data.artistPool} />
+										<div class="mt-2 flex justify-end">
+											<button
+												type="submit"
+												disabled={artistDraft.length === 0}
+												class="btn-primary text-xs disabled:opacity-50"
+											>
+												Save
+											</button>
+										</div>
+									</form>
+									<p class="mt-1 text-xs text-zinc-600">
+										Enter or comma adds a tag; backspace on an empty field removes the last one.
+									</p>
+								{:else}
+									<div class="flex flex-wrap gap-1">
+										{#each track.artists?.length ? track.artists : [track.artist] as a}
+											<span class="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300">{a}</span>
+										{/each}
+									</div>
+								{/if}
+							</div>
+
+							<!-- ── Details (T2: open-to-see-more) ──────────────────────────────── -->
+							{#if trackDetails(track).length > 0}
+								<div class="mb-4">
+									<div class="mb-2 text-xs tracking-widest text-zinc-500 uppercase">Details</div>
+									<div class="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+										{#each trackDetails(track) as d (d.label)}
+											<div class="flex min-w-0 gap-1.5">
+												<span class="shrink-0 text-zinc-500">{d.label}:</span>
+												<span class="truncate text-zinc-300">{d.value}</span>
+											</div>
+										{/each}
+									</div>
+								</div>
+							{/if}
+
+							<!-- Existing clips -->
+							<div class="mb-1 flex items-center justify-between">
+								<div class="text-xs tracking-widest text-zinc-500 uppercase">Clips</div>
+								{#if selectedClips.size > 0}
+									<button
+										onclick={() => bulkDelete(track.id)}
+										disabled={isDeleting}
+										class="rounded bg-red-900 px-3 py-1 text-xs font-semibold text-red-300 transition-colors hover:bg-red-800 disabled:opacity-50"
+									>
+										{isDeleting ? 'Deleting…' : `Delete ${selectedClips.size} selected`}
+									</button>
+								{/if}
+							</div>
+
+							{#if data.clipsError}
+								<p class="mb-3 text-xs text-red-400">Clips failed to load: {data.clipsError}</p>
+							{:else if clipsFor(track.id).length === 0}
+								<p class="mb-3 text-sm text-zinc-600">No clips yet.</p>
 							{:else}
-								<div class="flex flex-wrap gap-1">
-									{#each track.artists?.length ? track.artists : [track.artist] as a}
-										<span class="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300">{a}</span>
+								<div class="mb-3 space-y-1">
+									{#each clipsFor(track.id) as clip (clip.id)}
+										<div class="rounded-lg hover:bg-zinc-900">
+											<!-- Clip row -->
+											<div class="flex items-center gap-2 px-2 py-1.5">
+												<input
+													type="checkbox"
+													checked={selectedClips.has(clip.id)}
+													onchange={(e) => {
+														if ((e.target as HTMLInputElement).checked) {
+															selectedClips.add(clip.id);
+															selectedClips = new Set(selectedClips);
+														} else {
+															selectedClips.delete(clip.id);
+															selectedClips = new Set(selectedClips);
+														}
+													}}
+													class="shrink-0 accent-amber-400"
+												/>
+												<span class="w-16 shrink-0 font-mono text-xs text-zinc-500"
+													>{clip.type}</span
+												>
+												{#if clip.position != null}
+													<span class="text-xs text-zinc-600">#{clip.position}</span>
+												{/if}
+												{#if clip.duration != null}
+													<span class="text-xs text-zinc-600">{formatDuration(clip.duration)}</span>
+												{/if}
+												<div class="flex min-w-0 flex-1 items-center gap-1.5">
+													<button
+														type="button"
+														onclick={() => waveformRefs[clip.id]?.playPause()}
+														class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-zinc-700 text-xs transition-colors hover:bg-zinc-600"
+														aria-label={clipPlaying[clip.id] ? 'Pause' : 'Play'}
+													>
+														{clipPlaying[clip.id] ? '⏸' : '▶'}
+													</button>
+													<div class="min-w-0 flex-1">
+														<Waveform
+															bind:this={waveformRefs[clip.id]}
+															src={clip.storage_path}
+															height={32}
+															effects={undefined}
+															onPlayStateChange={(p) => (clipPlaying[clip.id] = p)}
+														/>
+													</div>
+												</div>
+												<form method="POST" action="?/deleteClip" use:enhance class="shrink-0">
+													<input type="hidden" name="id" value={clip.id} />
+													<button
+														type="submit"
+														onclick={(e) => {
+															if (!confirm('Delete this clip?')) e.preventDefault();
+														}}
+														class="rounded px-1.5 py-0.5 text-xs text-red-700 transition-colors hover:bg-zinc-800 hover:text-red-400"
+													>
+														✕
+													</button>
+												</form>
+											</div>
+										</div>
 									{/each}
 								</div>
 							{/if}
-						</div>
 
-						<!-- Existing clips -->
-						<div class="mb-1 flex items-center justify-between">
-							<div class="text-xs tracking-widest text-zinc-500 uppercase">Clips</div>
-							{#if selectedClips.size > 0}
-								<button
-									onclick={() => bulkDelete(track.id)}
-									disabled={isDeleting}
-									class="rounded bg-red-900 px-3 py-1 text-xs font-semibold text-red-300 transition-colors hover:bg-red-800 disabled:opacity-50"
+							<!-- ── Drop zone ──────────────────────────────────────────────────── -->
+							<div class="mt-4 border-t border-zinc-800 pt-3">
+								<div class="mb-2 flex items-center justify-between">
+									<span class="text-xs tracking-widest text-zinc-500 uppercase">Upload clips</span>
+									<!-- Trim upload: single file → opens trim modal -->
+									<label
+										class="cursor-pointer rounded-lg border border-zinc-700 px-3 py-1 text-xs font-medium text-zinc-400 transition-colors hover:border-amber-400/50 hover:text-amber-400"
+									>
+										✂ Upload + Trim
+										<input
+											type="file"
+											accept="audio/*"
+											class="hidden"
+											onchange={async (e) => {
+												const files = (e.target as HTMLInputElement).files;
+												if (files?.[0])
+													openTrim(track.id, files[0], (stagedFiles[track.id] ?? []).length + 1);
+												(e.target as HTMLInputElement).value = '';
+											}}
+										/>
+									</label>
+								</div>
+
+								<!-- Drop target (quick upload — pre-trimmed files) -->
+								<div
+									role="region"
+									aria-label="Drop audio files here"
+									class="relative cursor-pointer rounded-xl border-2 border-dashed px-6 py-8 text-center transition-colors {dragOverTrack ===
+									track.id
+										? 'border-amber-400 bg-amber-400/5'
+										: 'border-zinc-700 hover:border-zinc-500'}"
+									ondragover={(e) => {
+										e.preventDefault();
+										dragOverTrack = track.id;
+									}}
+									ondragleave={() => (dragOverTrack = null)}
+									ondrop={async (e) => {
+										e.preventDefault();
+										dragOverTrack = null;
+										if (e.dataTransfer?.files) await stageFiles(track.id, e.dataTransfer.files);
+									}}
 								>
-									{isDeleting ? 'Deleting…' : `Delete ${selectedClips.size} selected`}
-								</button>
-							{/if}
-						</div>
-
-						{#if data.clipsError}
-							<p class="mb-3 text-xs text-red-400">Clips failed to load: {data.clipsError}</p>
-						{:else if clipsFor(track.id).length === 0}
-							<p class="mb-3 text-sm text-zinc-600">No clips yet.</p>
-						{:else}
-							<div class="mb-3 space-y-1">
-								{#each clipsFor(track.id) as clip (clip.id)}
-									<div class="rounded-lg hover:bg-zinc-900">
-										<!-- Clip row -->
-										<div class="flex items-center gap-2 px-2 py-1.5">
-											<input
-												type="checkbox"
-												checked={selectedClips.has(clip.id)}
-												onchange={(e) => {
-													if ((e.target as HTMLInputElement).checked) {
-														selectedClips.add(clip.id);
-														selectedClips = new Set(selectedClips);
-													} else {
-														selectedClips.delete(clip.id);
-														selectedClips = new Set(selectedClips);
-													}
-												}}
-												class="shrink-0 accent-amber-400"
-											/>
-											<span class="w-16 shrink-0 font-mono text-xs text-zinc-500">{clip.type}</span>
-											{#if clip.position != null}
-												<span class="text-xs text-zinc-600">#{clip.position}</span>
-											{/if}
-											{#if clip.duration != null}
-												<span class="text-xs text-zinc-600">{formatDuration(clip.duration)}</span>
-											{/if}
-											<div class="flex min-w-0 flex-1 items-center gap-1.5">
-												<button
-													type="button"
-													onclick={() => waveformRefs[clip.id]?.playPause()}
-													class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-zinc-700 text-xs transition-colors hover:bg-zinc-600"
-													aria-label={clipPlaying[clip.id] ? 'Pause' : 'Play'}
-												>
-													{clipPlaying[clip.id] ? '⏸' : '▶'}
-												</button>
-												<div class="min-w-0 flex-1">
-													<Waveform
-														bind:this={waveformRefs[clip.id]}
-														src={clip.storage_path}
-														height={32}
-														effects={undefined}
-														onPlayStateChange={(p) => (clipPlaying[clip.id] = p)}
-													/>
-												</div>
-											</div>
-											<form method="POST" action="?/deleteClip" use:enhance class="shrink-0">
-												<input type="hidden" name="id" value={clip.id} />
-												<button
-													type="submit"
-													onclick={(e) => {
-														if (!confirm('Delete this clip?')) e.preventDefault();
-													}}
-													class="rounded px-1.5 py-0.5 text-xs text-red-700 transition-colors hover:bg-zinc-800 hover:text-red-400"
-												>
-													✕
-												</button>
-											</form>
-										</div>
-									</div>
-								{/each}
-							</div>
-						{/if}
-
-						<!-- ── Drop zone ──────────────────────────────────────────────────── -->
-						<div class="mt-4 border-t border-zinc-800 pt-3">
-							<div class="mb-2 flex items-center justify-between">
-								<span class="text-xs tracking-widest text-zinc-500 uppercase">Upload clips</span>
-								<!-- Trim upload: single file → opens trim modal -->
-								<label
-									class="cursor-pointer rounded-lg border border-zinc-700 px-3 py-1 text-xs font-medium text-zinc-400 transition-colors hover:border-amber-400/50 hover:text-amber-400"
-								>
-									✂ Upload + Trim
 									<input
 										type="file"
-										accept="audio/*"
-										class="hidden"
+										accept="audio/*,video/mp4,video/quicktime,video/x-m4v,.mp4,.mov,.m4v"
+										multiple
+										class="absolute inset-0 cursor-pointer opacity-0"
 										onchange={async (e) => {
 											const files = (e.target as HTMLInputElement).files;
-											if (files?.[0])
-												openTrim(track.id, files[0], (stagedFiles[track.id] ?? []).length + 1);
+											if (files) await stageFiles(track.id, files);
 											(e.target as HTMLInputElement).value = '';
 										}}
 									/>
-								</label>
-							</div>
-
-							<!-- Drop target (quick upload — pre-trimmed files) -->
-							<div
-								role="region"
-								aria-label="Drop audio files here"
-								class="relative cursor-pointer rounded-xl border-2 border-dashed px-6 py-8 text-center transition-colors {dragOverTrack ===
-								track.id
-									? 'border-amber-400 bg-amber-400/5'
-									: 'border-zinc-700 hover:border-zinc-500'}"
-								ondragover={(e) => {
-									e.preventDefault();
-									dragOverTrack = track.id;
-								}}
-								ondragleave={() => (dragOverTrack = null)}
-								ondrop={async (e) => {
-									e.preventDefault();
-									dragOverTrack = null;
-									if (e.dataTransfer?.files) await stageFiles(track.id, e.dataTransfer.files);
-								}}
-							>
-								<input
-									type="file"
-									accept="audio/*,video/mp4,video/quicktime,video/x-m4v,.mp4,.mov,.m4v"
-									multiple
-									class="absolute inset-0 cursor-pointer opacity-0"
-									onchange={async (e) => {
-										const files = (e.target as HTMLInputElement).files;
-										if (files) await stageFiles(track.id, files);
-										(e.target as HTMLInputElement).value = '';
-									}}
-								/>
-								<p class="text-sm text-zinc-500">
-									Quick upload — drag pre-trimmed files, or <span class="text-amber-400"
-										>click to browse</span
-									>
-								</p>
-								<p class="mt-1 text-xs text-zinc-600">
-									mp3/wav/ogg/m4a/flac · mp4/mov → audio extracted
-								</p>
-							</div>
-
-							<!-- Video extraction progress -->
-							{#if (videoExtractions[track.id] ?? []).length > 0}
-								<div class="mt-3 space-y-2">
-									{#each videoExtractions[track.id] as extraction (extraction.id)}
-										<div
-											class="grid items-center gap-x-3 rounded-lg border border-amber-700 bg-amber-950/20 px-3 py-2 text-sm"
-											style="grid-template-columns: 1.25rem 1fr 1.25rem"
+									<p class="text-sm text-zinc-500">
+										Quick upload — drag pre-trimmed files, or <span class="text-amber-400"
+											>click to browse</span
 										>
-											<span class="text-center text-xs text-amber-400">⟳</span>
-											<div class="min-w-0">
-												<div class="truncate text-zinc-200">{extraction.name}</div>
-												<div class="text-xs text-zinc-500">
-													{formatSize(extraction.size)} ·
+									</p>
+									<p class="mt-1 text-xs text-zinc-600">
+										mp3/wav/ogg/m4a/flac · mp4/mov → audio extracted
+									</p>
+								</div>
+
+								<!-- Video extraction progress -->
+								{#if (videoExtractions[track.id] ?? []).length > 0}
+									<div class="mt-3 space-y-2">
+										{#each videoExtractions[track.id] as extraction (extraction.id)}
+											<div
+												class="grid items-center gap-x-3 rounded-lg border border-amber-700 bg-amber-950/20 px-3 py-2 text-sm"
+												style="grid-template-columns: 1.25rem 1fr 1.25rem"
+											>
+												<span class="text-center text-xs text-amber-400">⟳</span>
+												<div class="min-w-0">
+													<div class="truncate text-zinc-200">{extraction.name}</div>
+													<div class="text-xs text-zinc-500">
+														{formatSize(extraction.size)} ·
+														{#if extraction.status === 'extracting'}
+															<span class="text-amber-400"
+																>Extracting audio… {extraction.progress}%</span
+															>
+														{:else if extraction.status === 'done'}
+															<span class="text-green-400">Done</span>
+														{:else}
+															<span class="text-red-400">{extraction.error}</span>
+														{/if}
+													</div>
 													{#if extraction.status === 'extracting'}
-														<span class="text-amber-400"
-															>Extracting audio… {extraction.progress}%</span
-														>
-													{:else if extraction.status === 'done'}
-														<span class="text-green-400">Done</span>
-													{:else}
-														<span class="text-red-400">{extraction.error}</span>
+														<div class="mt-1 h-1 w-full overflow-hidden rounded-full bg-zinc-700">
+															<div
+																class="h-full bg-amber-400 transition-all"
+																style="width: {extraction.progress}%"
+															></div>
+														</div>
 													{/if}
 												</div>
-												{#if extraction.status === 'extracting'}
-													<div class="mt-1 h-1 w-full overflow-hidden rounded-full bg-zinc-700">
-														<div
-															class="h-full bg-amber-400 transition-all"
-															style="width: {extraction.progress}%"
-														></div>
-													</div>
+												{#if extraction.status === 'failed'}
+													<button
+														onclick={() => {
+															videoExtractions[track.id] = (
+																videoExtractions[track.id] ?? []
+															).filter((v) => v.id !== extraction.id);
+														}}
+														class="text-zinc-600 hover:text-red-400"
+														title="Dismiss">✕</button
+													>
+												{:else}
+													<span></span>
 												{/if}
 											</div>
-											{#if extraction.status === 'failed'}
-												<button
-													onclick={() => {
-														videoExtractions[track.id] = (videoExtractions[track.id] ?? []).filter(
-															(v) => v.id !== extraction.id
-														);
-													}}
-													class="text-zinc-600 hover:text-red-400"
-													title="Dismiss">✕</button
-												>
-											{:else}
-												<span></span>
-											{/if}
-										</div>
-									{/each}
-								</div>
-							{/if}
+										{/each}
+									</div>
+								{/if}
 
-							<!-- Staged file list -->
-							{#if (stagedFiles[track.id] ?? []).length > 0}
-								<div class="mt-3 space-y-2">
-									{#each stagedFiles[track.id] as staged (staged.id)}
-										<!--
+								<!-- Staged file list -->
+								{#if (stagedFiles[track.id] ?? []).length > 0}
+									<div class="mt-3 space-y-2">
+										{#each stagedFiles[track.id] as staged (staged.id)}
+											<!--
 											Explicit grid columns so .input-field width:100% fills each
 											column rather than blowing out the layout:
 											[icon] [filename+meta] [type dropdown] [order input] [remove]
 										-->
-										<div
-											class="grid items-center gap-x-3 rounded-lg border px-3 py-2 text-sm {staged.status ===
-											'done'
-												? 'border-green-800 bg-green-950/40'
-												: staged.status === 'failed'
-													? 'border-red-800 bg-red-950/40'
-													: staged.status === 'uploading'
-														? 'border-amber-700 bg-amber-950/30'
-														: 'border-zinc-700 bg-zinc-900'}"
-											style="grid-template-columns: 1.25rem 1fr 7.5rem 5rem 1.25rem"
-										>
-											<!-- Status indicator -->
-											<span class="text-center text-xs">
-												{#if staged.status === 'queued'}⏳
-												{:else if staged.status === 'uploading'}⬆
-												{:else if staged.status === 'done'}✓
-												{:else}✗{/if}
-											</span>
+											<div
+												class="grid items-center gap-x-3 rounded-lg border px-3 py-2 text-sm {staged.status ===
+												'done'
+													? 'border-green-800 bg-green-950/40'
+													: staged.status === 'failed'
+														? 'border-red-800 bg-red-950/40'
+														: staged.status === 'uploading'
+															? 'border-amber-700 bg-amber-950/30'
+															: 'border-zinc-700 bg-zinc-900'}"
+												style="grid-template-columns: 1.25rem 1fr 7.5rem 5rem 1.25rem"
+											>
+												<!-- Status indicator -->
+												<span class="text-center text-xs">
+													{#if staged.status === 'queued'}⏳
+													{:else if staged.status === 'uploading'}⬆
+													{:else if staged.status === 'done'}✓
+													{:else}✗{/if}
+												</span>
 
-											<!-- Filename + meta -->
-											<div class="min-w-0">
-												<div class="truncate text-zinc-200">{staged.name}</div>
-												<div class="text-xs text-zinc-500">
-													{formatSize(staged.size)}
-													{#if staged.duration > 0}· {formatDuration(staged.duration)}{/if}
-													{#if staged.error}<span class="text-red-400"> · {staged.error}</span>{/if}
+												<!-- Filename + meta -->
+												<div class="min-w-0">
+													<div class="truncate text-zinc-200">{staged.name}</div>
+													<div class="text-xs text-zinc-500">
+														{formatSize(staged.size)}
+														{#if staged.duration > 0}· {formatDuration(staged.duration)}{/if}
+														{#if staged.error}<span class="text-red-400">
+																· {staged.error}</span
+															>{/if}
+													</div>
 												</div>
-											</div>
 
-											<!-- Clip type -->
-											<div class="flex items-center gap-1">
-												<select
-													bind:value={staged.clipType}
+												<!-- Clip type -->
+												<div class="flex items-center gap-1">
+													<select
+														bind:value={staged.clipType}
+														disabled={staged.status !== 'queued'}
+														class="input-field min-w-0 flex-1 py-1 text-xs disabled:opacity-50"
+													>
+														{#each CLIP_TYPES as t}
+															<option value={t}>{t}</option>
+														{/each}
+													</select>
+													<HelpTooltip text="Which variant this clip can be used for." />
+												</div>
+
+												<!-- Order index -->
+												<input
+													type="number"
+													bind:value={staged.orderIndex}
 													disabled={staged.status !== 'queued'}
-													class="input-field min-w-0 flex-1 py-1 text-xs disabled:opacity-50"
-												>
-													{#each CLIP_TYPES as t}
-														<option value={t}>{t}</option>
-													{/each}
-												</select>
-												<HelpTooltip text="Which variant this clip can be used for." />
+													placeholder="Order"
+													min="1"
+													class="input-field py-1 text-xs disabled:opacity-50"
+												/>
+
+												<!-- Remove button (queued/failed only) -->
+												{#if staged.status === 'queued' || staged.status === 'failed'}
+													<button
+														onclick={() => removeStagedFile(track.id, staged.id)}
+														class="text-zinc-600 hover:text-red-400"
+														title="Remove"
+													>
+														✕
+													</button>
+												{:else}
+													<span></span>
+												{/if}
 											</div>
+										{/each}
+									</div>
 
-											<!-- Order index -->
-											<input
-												type="number"
-												bind:value={staged.orderIndex}
-												disabled={staged.status !== 'queued'}
-												placeholder="Order"
-												min="1"
-												class="input-field py-1 text-xs disabled:opacity-50"
-											/>
-
-											<!-- Remove button (queued/failed only) -->
-											{#if staged.status === 'queued' || staged.status === 'failed'}
-												<button
-													onclick={() => removeStagedFile(track.id, staged.id)}
-													class="text-zinc-600 hover:text-red-400"
-													title="Remove"
-												>
-													✕
-												</button>
-											{:else}
-												<span></span>
-											{/if}
-										</div>
-									{/each}
-								</div>
-
-								<!-- Upload all button -->
-								{#if (stagedFiles[track.id] ?? []).some((f) => f.status === 'queued')}
-									<button
-										onclick={() => uploadAll(track.id)}
-										class="mt-3 rounded-lg bg-amber-400 px-4 py-2 text-sm font-bold text-zinc-950 transition-colors hover:bg-amber-300"
-									>
-										Upload {(stagedFiles[track.id] ?? []).filter((f) => f.status === 'queued')
-											.length} file{(stagedFiles[track.id] ?? []).filter(
-											(f) => f.status === 'queued'
-										).length !== 1
-											? 's'
-											: ''}
-									</button>
+									<!-- Upload all button -->
+									{#if (stagedFiles[track.id] ?? []).some((f) => f.status === 'queued')}
+										<button
+											onclick={() => uploadAll(track.id)}
+											class="mt-3 rounded-lg bg-amber-400 px-4 py-2 text-sm font-bold text-zinc-950 transition-colors hover:bg-amber-300"
+										>
+											Upload {(stagedFiles[track.id] ?? []).filter((f) => f.status === 'queued')
+												.length} file{(stagedFiles[track.id] ?? []).filter(
+												(f) => f.status === 'queued'
+											).length !== 1
+												? 's'
+												: ''}
+										</button>
+									{/if}
 								{/if}
-							{/if}
-						</div>
-
-						<!-- ── Accepted titles ────────────────────────────────────────────── -->
-						<div class="mt-4 border-t border-zinc-800 pt-3">
-							<div class="mb-2 flex items-center justify-between">
-								<div class="flex items-center text-xs tracking-widest text-zinc-500 uppercase">
-									Accepted Titles
-									<HelpTooltip
-										text="Alternative spellings of the title that count as correct in open-text submissions (fuzzy matched at 90% similarity)."
-									/>
-								</div>
-								<button
-									onclick={() => (editingTitles = editingTitles === track.id ? null : track.id)}
-									class="text-xs text-zinc-400 transition-colors hover:text-zinc-200"
-								>
-									{editingTitles === track.id ? 'Cancel' : 'Edit'}
-								</button>
 							</div>
-							{#if editingTitles === track.id}
-								<form method="POST" action="?/saveAcceptedTitles" use:enhance class="flex gap-2">
-									<input type="hidden" name="id" value={track.id} />
-									<textarea
-										name="accepted_titles"
-										rows="3"
-										placeholder="One title per line"
-										class="input-field flex-1 font-mono text-xs"
-										>{(track.accepted_titles ?? [track.title]).join('\n')}</textarea
-									>
-									<button type="submit" class="btn-primary self-start text-xs">Save</button>
-								</form>
-								<p class="mt-1 text-xs text-zinc-600">
-									Fuzzy-matched against open-text submissions (90% = correct). Include alternate
-									spellings.
-								</p>
-							{:else}
-								<div class="flex flex-wrap gap-1">
-									{#each track.accepted_titles ?? [] as t}
-										<span class="rounded bg-zinc-800 px-2 py-0.5 font-mono text-xs text-zinc-300"
-											>{t}</span
-										>
-									{:else}
-										<span class="text-xs text-zinc-600"
-											>None set — defaults to canonical title at scoring time</span
-										>
-									{/each}
-								</div>
-							{/if}
-						</div>
-					</div>
-				{/if}
-			</div>
-		{:else}
-			{#if hasActiveFilters}
-				<div class="rounded-xl border border-zinc-800 bg-zinc-900 p-12 text-center">
-					<p class="text-sm font-semibold text-zinc-400">No tracks match the current filters</p>
-					<a
-						href="/admin/tracks"
-						class="mt-3 inline-block rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:border-zinc-500 hover:text-white"
-					>
-						Clear filters
-					</a>
-				</div>
-			{:else}
-				<div class="rounded-xl border border-zinc-800 bg-zinc-900 p-14 text-center">
-					<Music size={64} class="mx-auto mb-4 text-zinc-700" />
-					<p class="text-base font-bold text-zinc-300">No tracks yet</p>
-					<p class="mt-1 text-sm text-zinc-500">
-						Click "+ Add Track" above to add your first track
-					</p>
-				</div>
-			{/if}
-		{/each}
-	</div>
-</div>
 
-<!-- ── Mashups ──────────────────────────────────────────────────────────────── -->
-<div class="mt-8 px-6">
-	<div class="mb-4 flex items-center justify-between">
-		<h2 class="text-sm font-bold tracking-widest text-amber-400 uppercase">Mashups</h2>
-		<button
-			type="button"
-			onclick={() => {
-				showCreateMashup = !showCreateMashup;
-				if (!showCreateMashup) {
-					mashupUploadFile = null;
-					mashupUploadName = '';
-					mashupUploadStatus = 'idle';
-					mashupUploadError = null;
-					mashupUploadSources = [];
-					mashupCreateSourcePicker = '';
-				}
-			}}
-			class="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-300 hover:bg-zinc-700"
-		>
-			+ Create Mashup
-		</button>
-	</div>
-
-	{#if showCreateMashup}
-		<div class="mb-4 rounded-xl border border-zinc-700 bg-zinc-900 p-4">
-			<div class="mb-3">
-				<label class="mb-1 block text-xs text-zinc-400">Name</label>
-				<input
-					type="text"
-					bind:value={mashupUploadName}
-					placeholder="e.g. Hardstyle Megamix Vol. 1"
-					class="input-field"
-				/>
-			</div>
-			<!-- Audio file drop zone -->
-			<div
-				class="relative mb-3 flex min-h-[80px] cursor-pointer items-center justify-center rounded-xl border-2 border-dashed p-4 transition-colors {mashupDropOver
-					? 'border-amber-400 bg-amber-950/20'
-					: mashupUploadFile
-						? 'border-green-700 bg-green-950/20'
-						: 'border-zinc-700 bg-zinc-800/50 hover:border-zinc-500'}"
-				ondragover={(e) => {
-					e.preventDefault();
-					mashupDropOver = true;
-				}}
-				ondragleave={() => (mashupDropOver = false)}
-				ondrop={async (e) => {
-					e.preventDefault();
-					mashupDropOver = false;
-					const f = e.dataTransfer?.files[0];
-					if (f) await stageMashupFile(f);
-				}}
-			>
-				<input
-					type="file"
-					accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac"
-					class="absolute inset-0 cursor-pointer opacity-0"
-					onchange={async (e) => {
-						const f = (e.target as HTMLInputElement).files?.[0];
-						if (f) await stageMashupFile(f);
-						(e.target as HTMLInputElement).value = '';
-					}}
-				/>
-				{#if mashupUploadFile}
-					<div class="text-center">
-						<p class="text-sm font-semibold text-green-400">{mashupUploadFile.name}</p>
-						<p class="mt-0.5 text-xs text-zinc-500">
-							{formatSize(mashupUploadFile.size)}
-							{#if mashupUploadDuration > 0} · {formatDuration(mashupUploadDuration)}{/if}
-						</p>
-					</div>
-				{:else}
-					<div class="text-center">
-						<p class="text-sm text-zinc-500">
-							Drop mashup audio, or <span class="text-amber-400">click to browse</span>
-						</p>
-						<p class="mt-0.5 text-xs text-zinc-600">mp3 / wav / m4a · up to 50 MB</p>
-					</div>
-				{/if}
-			</div>
-			<!-- Source tracks -->
-			<div class="mb-3">
-				<label class="mb-1 block text-xs text-zinc-400">Source Tracks</label>
-				{#if mashupUploadSources.length > 0}
-					<div class="mb-2 flex flex-wrap gap-1.5">
-						{#each mashupUploadSources as tid (tid)}
-							{@const t = data.tracks.find((tr) => tr.id === tid)}
-							<span
-								class="flex items-center gap-1 rounded-full bg-zinc-700 px-2.5 py-0.5 text-xs text-zinc-200"
-							>
-								{t ? `${t.artist} — ${t.title}` : tid}
-								<button
-									type="button"
-									onclick={() =>
-										(mashupUploadSources = mashupUploadSources.filter((id) => id !== tid))}
-									class="text-zinc-400 hover:text-red-400">✕</button
-								>
-							</span>
-						{/each}
-					</div>
-				{/if}
-				<select
-					class="input-field text-xs"
-					bind:value={mashupCreateSourcePicker}
-					onchange={() => {
-						if (
-							mashupCreateSourcePicker &&
-							!mashupUploadSources.includes(mashupCreateSourcePicker)
-						) {
-							mashupUploadSources = [...mashupUploadSources, mashupCreateSourcePicker];
-						}
-						mashupCreateSourcePicker = '';
-					}}
-				>
-					<option value="">— add source track —</option>
-					{#each data.tracks.filter((t) => !mashupUploadSources.includes(t.id)) as t (t.id)}
-						<option value={t.id}>{t.artist} — {t.title} ({t.year})</option>
-					{/each}
-				</select>
-			</div>
-			{#if mashupUploadError}
-				<p class="mb-2 text-xs text-red-400">{mashupUploadError}</p>
-			{/if}
-			<div class="flex justify-end gap-2">
-				<button
-					type="button"
-					onclick={() => {
-						showCreateMashup = false;
-						mashupUploadFile = null;
-						mashupUploadName = '';
-						mashupUploadStatus = 'idle';
-						mashupUploadError = null;
-						mashupUploadSources = [];
-						mashupCreateSourcePicker = '';
-					}}
-					class="rounded px-3 py-1.5 text-xs text-zinc-500 hover:text-zinc-300"
-				>
-					Cancel
-				</button>
-				<button
-					type="button"
-					disabled={!mashupUploadFile || !mashupUploadName.trim() || mashupUploadStatus === 'uploading'}
-					onclick={uploadMashup}
-					class="rounded-lg bg-amber-400 px-4 py-1.5 text-xs font-bold text-zinc-950 hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-50"
-				>
-					{mashupUploadStatus === 'uploading' ? 'Uploading…' : 'Create'}
-				</button>
-			</div>
-		</div>
-	{/if}
-
-	{#if data.mashups.length === 0 && !showCreateMashup}
-		<div
-			class="rounded-xl border border-dashed border-zinc-700 bg-zinc-900 p-8 text-center text-sm text-zinc-500"
-		>
-			No mashups yet — create one above to use in mashup-type challenges.
-		</div>
-	{:else}
-		<div class="space-y-2">
-			{#each data.mashups as mashup (mashup.id)}
-				{@const sources = data.mashupSources.filter((s) => s.mashup_id === mashup.id)}
-
-				<div class="rounded-xl border border-zinc-800 bg-zinc-900">
-					<!-- Header row -->
-					<div class="flex items-center gap-3 px-4 py-3">
-						<button
-							type="button"
-							onclick={() => (expandedMashup = expandedMashup === mashup.id ? null : mashup.id)}
-							class="flex flex-1 items-center gap-3 text-left"
-						>
-							<span class="font-semibold text-zinc-200">{mashup.name}</span>
-							{#if mashup.audio_duration_seconds}
-								<span class="text-xs text-zinc-500">{formatDuration(mashup.audio_duration_seconds)}</span>
-							{/if}
-							<span class="rounded bg-zinc-800 px-1.5 py-0.5 text-xs text-zinc-400">
-								{sources.length} source{sources.length === 1 ? '' : 's'}
-							</span>
-						</button>
-						<form method="POST" action="?/deleteMashup" use:enhance class="shrink-0">
-							<input type="hidden" name="id" value={mashup.id} />
-							<button
-								type="submit"
-								onclick={(e) => {
-									if (!confirm('Delete this mashup? This also deletes the audio file.'))
-										e.preventDefault();
-								}}
-								class="rounded px-1.5 py-0.5 text-xs text-red-700 hover:text-red-400">✕</button
-							>
-						</form>
-					</div>
-
-					{#if expandedMashup === mashup.id}
-						<div class="space-y-4 border-t border-zinc-800 px-4 py-4">
-							<!-- Audio player -->
-							{#if mashup.audio_url}
-								<audio
-									controls
-									crossorigin="anonymous"
-									src={mashup.audio_url}
-									class="h-8 w-full rounded"
-								></audio>
-							{/if}
-
-							<!-- Edit name + sources (combined) -->
-							{#if editingMashup === mashup.id}
-								<form
-									method="POST"
-									action="?/updateMashup"
-									use:enhance={({ formData }) => {
-										formData.set(
-											'source_track_ids',
-											JSON.stringify(editingMashupSources)
-										);
-										return async ({ update }) => {
-											await update({ reset: false });
-											editingMashup = null;
-										};
-									}}
-									class="space-y-3"
-								>
-									<input type="hidden" name="id" value={mashup.id} />
-									<div>
-										<label class="mb-1 block text-xs text-zinc-400">Name</label>
-										<input
-											type="text"
-											name="name"
-											value={mashup.name}
-											required
-											class="input-field"
+							<!-- ── Accepted titles ────────────────────────────────────────────── -->
+							<div class="mt-4 border-t border-zinc-800 pt-3">
+								<div class="mb-2 flex items-center justify-between">
+									<div class="flex items-center text-xs tracking-widest text-zinc-500 uppercase">
+										Accepted Titles
+										<HelpTooltip
+											text="Alternative spellings of the title that count as correct in open-text submissions (fuzzy matched at 90% similarity)."
 										/>
 									</div>
-									<div>
-										<label class="mb-1 block text-xs text-zinc-400">Source Tracks</label>
-										{#if editingMashupSources.length > 0}
-											<div class="mb-2 flex flex-wrap gap-1.5">
-												{#each editingMashupSources as tid (tid)}
-													{@const t = data.tracks.find((tr) => tr.id === tid)}
-													<span
-														class="flex items-center gap-1 rounded-full bg-zinc-700 px-2.5 py-0.5 text-xs text-zinc-200"
-													>
-														{t ? `${t.artist} — ${t.title}` : tid}
-														<button
-															type="button"
-															onclick={() => {
-																editingMashupSources = editingMashupSources.filter(
-																	(id) => id !== tid
-																);
-															}}
-															class="text-zinc-400 hover:text-red-400">✕</button
-														>
-													</span>
-												{/each}
-											</div>
-										{/if}
-										<select
-											class="input-field text-xs"
-											bind:value={editingMashupSourcePicker}
-											onchange={() => {
-												if (
-													editingMashupSourcePicker &&
-													!editingMashupSources.includes(editingMashupSourcePicker)
-												) {
-													editingMashupSources = [
-														...editingMashupSources,
-														editingMashupSourcePicker
-													];
-												}
-												editingMashupSourcePicker = '';
-											}}
-										>
-											<option value="">— add source track —</option>
-											{#each data.tracks.filter((t) => !editingMashupSources.includes(t.id)) as t (t.id)}
-												<option value={t.id}>{t.artist} — {t.title} ({t.year})</option>
-											{/each}
-										</select>
-									</div>
-									<div class="flex justify-end gap-2">
-										<button
-											type="button"
-											onclick={() => (editingMashup = null)}
-											class="rounded px-3 py-1 text-xs text-zinc-500 hover:text-zinc-300"
-										>
-											Cancel
-										</button>
-										<button
-											type="submit"
-											class="rounded bg-amber-400 px-3 py-1 text-xs font-bold text-zinc-950 hover:bg-amber-300"
-										>
-											Save
-										</button>
-									</div>
-								</form>
-							{:else}
-								<!-- Read-only sources + Edit button -->
-								<div class="flex items-start justify-between gap-3">
-									{#if sources.length > 0}
-										<div class="flex flex-wrap gap-1.5">
-											{#each sources as src (src.id)}
-												{@const srcTrack = data.tracks.find((t) => t.id === src.track_id)}
-												<span
-													class="rounded-full bg-zinc-800 px-2.5 py-0.5 text-xs text-zinc-300"
-												>
-													{srcTrack
-														? `${srcTrack.artist} — ${srcTrack.title} (${srcTrack.year})`
-														: src.track_id.slice(0, 8)}
-												</span>
-											{/each}
-										</div>
-									{:else}
-										<p class="text-xs text-zinc-600 italic">No source tracks.</p>
-									{/if}
 									<button
-										type="button"
-										onclick={() => {
-											editingMashupSources = sources.map((s) => s.track_id);
-											editingMashupSourcePicker = '';
-											editingMashup = mashup.id;
-										}}
-										class="shrink-0 rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
+										onclick={() => (editingTitles = editingTitles === track.id ? null : track.id)}
+										class="text-xs text-zinc-400 transition-colors hover:text-zinc-200"
 									>
-										Edit
+										{editingTitles === track.id ? 'Cancel' : 'Edit'}
 									</button>
 								</div>
-							{/if}
+								{#if editingTitles === track.id}
+									<form method="POST" action="?/saveAcceptedTitles" use:enhance class="flex gap-2">
+										<input type="hidden" name="id" value={track.id} />
+										<textarea
+											name="accepted_titles"
+											rows="3"
+											placeholder="One title per line"
+											class="input-field flex-1 font-mono text-xs"
+											>{(track.accepted_titles ?? [track.title]).join('\n')}</textarea
+										>
+										<button type="submit" class="btn-primary self-start text-xs">Save</button>
+									</form>
+									<p class="mt-1 text-xs text-zinc-600">
+										Fuzzy-matched against open-text submissions (90% = correct). Include alternate
+										spellings.
+									</p>
+								{:else}
+									<div class="flex flex-wrap gap-1">
+										{#each track.accepted_titles ?? [] as t}
+											<span class="rounded bg-zinc-800 px-2 py-0.5 font-mono text-xs text-zinc-300"
+												>{t}</span
+											>
+										{:else}
+											<span class="text-xs text-zinc-600"
+												>None set — defaults to canonical title at scoring time</span
+											>
+										{/each}
+									</div>
+								{/if}
+							</div>
 						</div>
 					{/if}
 				</div>
+			{:else}
+				{#if hasActiveFilters}
+					<div class="rounded-xl border border-zinc-800 bg-zinc-900 p-12 text-center">
+						<p class="text-sm font-semibold text-zinc-400">No tracks match the current filters</p>
+						<a
+							href="/admin/tracks"
+							class="mt-3 inline-block rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:border-zinc-500 hover:text-white"
+						>
+							Clear filters
+						</a>
+					</div>
+				{:else}
+					<div class="rounded-xl border border-zinc-800 bg-zinc-900 p-14 text-center">
+						<Music size={64} class="mx-auto mb-4 text-zinc-700" />
+						<p class="text-base font-bold text-zinc-300">No tracks yet</p>
+						<p class="mt-1 text-sm text-zinc-500">
+							Click "+ Add Track" above to add your first track
+						</p>
+					</div>
+				{/if}
 			{/each}
 		</div>
+	{:else}
+		<!-- Mashups body — was its own always-visible sibling section (with its own
+	     "Mashups" heading + "+ Create Mashup" button) below the tracks list; now
+	     the mashups half of the view switch above, so its heading/button moved
+	     into the shared header. Everything else here is unchanged. -->
+		{#if showCreateMashup}
+			<div class="mb-4 rounded-xl border border-zinc-700 bg-zinc-900 p-4">
+				<div class="mb-3">
+					<label class="mb-1 block text-xs text-zinc-400">Name</label>
+					<input
+						type="text"
+						bind:value={mashupUploadName}
+						placeholder="e.g. Hardstyle Megamix Vol. 1"
+						class="input-field"
+					/>
+				</div>
+				<!-- Audio file drop zone -->
+				<div
+					class="relative mb-3 flex min-h-[80px] cursor-pointer items-center justify-center rounded-xl border-2 border-dashed p-4 transition-colors {mashupDropOver
+						? 'border-amber-400 bg-amber-950/20'
+						: mashupUploadFile
+							? 'border-green-700 bg-green-950/20'
+							: 'border-zinc-700 bg-zinc-800/50 hover:border-zinc-500'}"
+					ondragover={(e) => {
+						e.preventDefault();
+						mashupDropOver = true;
+					}}
+					ondragleave={() => (mashupDropOver = false)}
+					ondrop={async (e) => {
+						e.preventDefault();
+						mashupDropOver = false;
+						const f = e.dataTransfer?.files[0];
+						if (f) await stageMashupFile(f);
+					}}
+				>
+					<input
+						type="file"
+						accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac"
+						class="absolute inset-0 cursor-pointer opacity-0"
+						onchange={async (e) => {
+							const f = (e.target as HTMLInputElement).files?.[0];
+							if (f) await stageMashupFile(f);
+							(e.target as HTMLInputElement).value = '';
+						}}
+					/>
+					{#if mashupUploadFile}
+						<div class="text-center">
+							<p class="text-sm font-semibold text-green-400">{mashupUploadFile.name}</p>
+							<p class="mt-0.5 text-xs text-zinc-500">
+								{formatSize(mashupUploadFile.size)}
+								{#if mashupUploadDuration > 0}
+									· {formatDuration(mashupUploadDuration)}{/if}
+							</p>
+						</div>
+					{:else}
+						<div class="text-center">
+							<p class="text-sm text-zinc-500">
+								Drop mashup audio, or <span class="text-amber-400">click to browse</span>
+							</p>
+							<p class="mt-0.5 text-xs text-zinc-600">mp3 / wav / m4a · up to 50 MB</p>
+						</div>
+					{/if}
+				</div>
+				<!-- Source tracks -->
+				<div class="mb-3">
+					<label class="mb-1 block text-xs text-zinc-400">Source Tracks</label>
+					{#if mashupUploadSources.length > 0}
+						<div class="mb-2 flex flex-wrap gap-1.5">
+							{#each mashupUploadSources as tid (tid)}
+								{@const t = data.tracks.find((tr) => tr.id === tid)}
+								<span
+									class="flex items-center gap-1 rounded-full bg-zinc-700 px-2.5 py-0.5 text-xs text-zinc-200"
+								>
+									{t ? `${t.artist} — ${t.title}` : tid}
+									<button
+										type="button"
+										onclick={() =>
+											(mashupUploadSources = mashupUploadSources.filter((id) => id !== tid))}
+										class="text-zinc-400 hover:text-red-400">✕</button
+									>
+								</span>
+							{/each}
+						</div>
+					{/if}
+					<select
+						class="input-field text-xs"
+						bind:value={mashupCreateSourcePicker}
+						onchange={() => {
+							if (
+								mashupCreateSourcePicker &&
+								!mashupUploadSources.includes(mashupCreateSourcePicker)
+							) {
+								mashupUploadSources = [...mashupUploadSources, mashupCreateSourcePicker];
+							}
+							mashupCreateSourcePicker = '';
+						}}
+					>
+						<option value="">— add source track —</option>
+						{#each data.tracks.filter((t) => !mashupUploadSources.includes(t.id)) as t (t.id)}
+							<option value={t.id}>{t.artist} — {t.title} ({t.year})</option>
+						{/each}
+					</select>
+				</div>
+				{#if mashupUploadError}
+					<p class="mb-2 text-xs text-red-400">{mashupUploadError}</p>
+				{/if}
+				<div class="flex justify-end gap-2">
+					<button
+						type="button"
+						onclick={() => {
+							showCreateMashup = false;
+							mashupUploadFile = null;
+							mashupUploadName = '';
+							mashupUploadStatus = 'idle';
+							mashupUploadError = null;
+							mashupUploadSources = [];
+							mashupCreateSourcePicker = '';
+						}}
+						class="rounded px-3 py-1.5 text-xs text-zinc-500 hover:text-zinc-300"
+					>
+						Cancel
+					</button>
+					<button
+						type="button"
+						disabled={!mashupUploadFile ||
+							!mashupUploadName.trim() ||
+							mashupUploadStatus === 'uploading'}
+						onclick={uploadMashup}
+						class="rounded-lg bg-amber-400 px-4 py-1.5 text-xs font-bold text-zinc-950 hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-50"
+					>
+						{mashupUploadStatus === 'uploading' ? 'Uploading…' : 'Create'}
+					</button>
+				</div>
+			</div>
+		{/if}
+
+		{#if data.mashups.length === 0 && !showCreateMashup}
+			<div
+				class="rounded-xl border border-dashed border-zinc-700 bg-zinc-900 p-8 text-center text-sm text-zinc-500"
+			>
+				No mashups yet — create one above to use in mashup-type challenges.
+			</div>
+		{:else}
+			<div class="space-y-2">
+				{#each data.mashups as mashup (mashup.id)}
+					{@const sources = data.mashupSources.filter((s) => s.mashup_id === mashup.id)}
+
+					<div class="rounded-xl border border-zinc-800 bg-zinc-900">
+						<!-- Header row -->
+						<div class="flex items-center gap-3 px-4 py-3">
+							<button
+								type="button"
+								onclick={() => (expandedMashup = expandedMashup === mashup.id ? null : mashup.id)}
+								class="flex flex-1 items-center gap-3 text-left"
+							>
+								<span class="font-semibold text-zinc-200">{mashup.name}</span>
+								{#if mashup.audio_duration_seconds}
+									<span class="text-xs text-zinc-500"
+										>{formatDuration(mashup.audio_duration_seconds)}</span
+									>
+								{/if}
+								<span class="rounded bg-zinc-800 px-1.5 py-0.5 text-xs text-zinc-400">
+									{sources.length} source{sources.length === 1 ? '' : 's'}
+								</span>
+							</button>
+							<form method="POST" action="?/deleteMashup" use:enhance class="shrink-0">
+								<input type="hidden" name="id" value={mashup.id} />
+								<button
+									type="submit"
+									onclick={(e) => {
+										if (!confirm('Delete this mashup? This also deletes the audio file.'))
+											e.preventDefault();
+									}}
+									class="rounded px-1.5 py-0.5 text-xs text-red-700 hover:text-red-400">✕</button
+								>
+							</form>
+						</div>
+
+						{#if expandedMashup === mashup.id}
+							<div class="space-y-4 border-t border-zinc-800 px-4 py-4">
+								<!-- Audio player -->
+								{#if mashup.audio_url}
+									<audio
+										controls
+										crossorigin="anonymous"
+										src={mashup.audio_url}
+										class="h-8 w-full rounded"
+									></audio>
+								{/if}
+
+								<!-- Edit name + sources (combined) -->
+								{#if editingMashup === mashup.id}
+									<form
+										method="POST"
+										action="?/updateMashup"
+										use:enhance={({ formData }) => {
+											formData.set('source_track_ids', JSON.stringify(editingMashupSources));
+											return async ({ update }) => {
+												await update({ reset: false });
+												editingMashup = null;
+											};
+										}}
+										class="space-y-3"
+									>
+										<input type="hidden" name="id" value={mashup.id} />
+										<div>
+											<label class="mb-1 block text-xs text-zinc-400">Name</label>
+											<input
+												type="text"
+												name="name"
+												value={mashup.name}
+												required
+												class="input-field"
+											/>
+										</div>
+										<div>
+											<label class="mb-1 block text-xs text-zinc-400">Source Tracks</label>
+											{#if editingMashupSources.length > 0}
+												<div class="mb-2 flex flex-wrap gap-1.5">
+													{#each editingMashupSources as tid (tid)}
+														{@const t = data.tracks.find((tr) => tr.id === tid)}
+														<span
+															class="flex items-center gap-1 rounded-full bg-zinc-700 px-2.5 py-0.5 text-xs text-zinc-200"
+														>
+															{t ? `${t.artist} — ${t.title}` : tid}
+															<button
+																type="button"
+																onclick={() => {
+																	editingMashupSources = editingMashupSources.filter(
+																		(id) => id !== tid
+																	);
+																}}
+																class="text-zinc-400 hover:text-red-400">✕</button
+															>
+														</span>
+													{/each}
+												</div>
+											{/if}
+											<select
+												class="input-field text-xs"
+												bind:value={editingMashupSourcePicker}
+												onchange={() => {
+													if (
+														editingMashupSourcePicker &&
+														!editingMashupSources.includes(editingMashupSourcePicker)
+													) {
+														editingMashupSources = [
+															...editingMashupSources,
+															editingMashupSourcePicker
+														];
+													}
+													editingMashupSourcePicker = '';
+												}}
+											>
+												<option value="">— add source track —</option>
+												{#each data.tracks.filter((t) => !editingMashupSources.includes(t.id)) as t (t.id)}
+													<option value={t.id}>{t.artist} — {t.title} ({t.year})</option>
+												{/each}
+											</select>
+										</div>
+										<div class="flex justify-end gap-2">
+											<button
+												type="button"
+												onclick={() => (editingMashup = null)}
+												class="rounded px-3 py-1 text-xs text-zinc-500 hover:text-zinc-300"
+											>
+												Cancel
+											</button>
+											<button
+												type="submit"
+												class="rounded bg-amber-400 px-3 py-1 text-xs font-bold text-zinc-950 hover:bg-amber-300"
+											>
+												Save
+											</button>
+										</div>
+									</form>
+								{:else}
+									<!-- Read-only sources + Edit button -->
+									<div class="flex items-start justify-between gap-3">
+										{#if sources.length > 0}
+											<div class="flex flex-wrap gap-1.5">
+												{#each sources as src (src.id)}
+													{@const srcTrack = data.tracks.find((t) => t.id === src.track_id)}
+													<span
+														class="rounded-full bg-zinc-800 px-2.5 py-0.5 text-xs text-zinc-300"
+													>
+														{srcTrack
+															? `${srcTrack.artist} — ${srcTrack.title} (${srcTrack.year})`
+															: src.track_id.slice(0, 8)}
+													</span>
+												{/each}
+											</div>
+										{:else}
+											<p class="text-xs text-zinc-600 italic">No source tracks.</p>
+										{/if}
+										<button
+											type="button"
+											onclick={() => {
+												editingMashupSources = sources.map((s) => s.track_id);
+												editingMashupSourcePicker = '';
+												editingMashup = mashup.id;
+											}}
+											class="shrink-0 rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
+										>
+											Edit
+										</button>
+									</div>
+								{/if}
+							</div>
+						{/if}
+					</div>
+				{/each}
+			</div>
+		{/if}
 	{/if}
 </div>
 
