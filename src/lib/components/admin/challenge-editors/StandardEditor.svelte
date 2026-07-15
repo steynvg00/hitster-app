@@ -9,6 +9,7 @@
 		type: string;
 		storage_path: string;
 		storage_object_path: string | null;
+		duration: number | null;
 	};
 	type Tab = { id: string; position: number };
 	type Src = { id: string; tab_id: string; track_id: string; sort_order: number };
@@ -47,6 +48,38 @@
 	function clipsForTrack(trackId: string): Clip[] {
 		return clips.filter((c) => c.track_id === trackId);
 	}
+
+	function formatDur(dur: number | null): string | null {
+		if (dur == null || dur <= 0) return null;
+		return `${Math.floor(dur / 60)}:${String(Math.floor(dur % 60)).padStart(2, '0')}`;
+	}
+
+	// Multi-clip per tab (C2) — per-clip audio preview, one clip playing at a
+	// time. This mirrors FragmentsEditor's own play-state pattern rather than
+	// importing a shared component: fragments' clip handling is explicitly out
+	// of scope for this change, and the two rows differ (this tab's track is
+	// fixed; a fragments clip's track varies row to row), so a shared component
+	// would either touch fragments.svelte or carry unused generality. Mirroring
+	// is the documented fallback for that tradeoff.
+	let audioEls = $state<Record<string, HTMLAudioElement>>({});
+	let playingClipId = $state<string | null>(null);
+
+	function playPreview(clipId: string) {
+		if (playingClipId && playingClipId !== clipId && audioEls[playingClipId]) {
+			audioEls[playingClipId].pause();
+			audioEls[playingClipId].currentTime = 0;
+		}
+		const el = audioEls[clipId];
+		if (!el) return;
+		if (el.paused) {
+			el.play();
+			playingClipId = clipId;
+		} else {
+			el.pause();
+			el.currentTime = 0;
+			playingClipId = null;
+		}
+	}
 </script>
 
 <!-- ── Tabs ── -->
@@ -75,7 +108,6 @@
 				{@const srcs = srcsForTab(tab.id)}
 				{@const tabClips = clipsForTab(tab.id)}
 				{@const src = srcs[0]}
-				{@const tabClip = tabClips[0]}
 
 				<div class="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
 					<div class="mb-3 flex items-center justify-between">
@@ -115,33 +147,115 @@
 							</form>
 						</div>
 
+						<!-- Clips (C2: ordered, 1-N per tab — add/remove/reorder, cribbed from
+						     FragmentsEditor's per-clip row). Clips don't score (getSourceTracksForTab
+						     resolves standard/anthem/label tabs from the source track above, not from
+						     these rows) — this list only controls what the player can PLAY. -->
 						<div>
-							<label class="mb-1 block text-xs text-zinc-400">Clip</label>
-							{#if src?.track_id}
-								<form method="POST" action="?/setTabClip" use:enhance>
-									<input type="hidden" name="tab_id" value={tab.id} />
-									<input type="hidden" name="existing_clip_id" value={tabClip?.id ?? ''} />
-									<SearchablePicker
-										name="clip_id"
-										items={clipsForTrack(src.track_id).map((c) => ({
-											id: c.id,
-											label: c.type,
-											subtitle: c.storage_path.split('/').pop() ?? ''
-										}))}
-										value={tabClip?.clip_id ?? ''}
-										placeholder="Search clips…"
-										emptyLabel="— no clip —"
-									/>
-								</form>
-								{#if tabClip?.clip_id}
-									{@const previewClip = clips.find((c) => c.id === tabClip.clip_id)}
-									{#if previewClip}
-										<audio controls crossorigin="anonymous" src={previewClip.storage_path} class="mt-2 h-8 w-full rounded"
-										></audio>
-									{/if}
-								{/if}
+							<span class="mb-2 block text-xs font-semibold text-zinc-400"
+								>Clips ({tabClips.length})</span
+							>
+							{#if !src?.track_id}
+								<p class="text-xs text-zinc-600 italic">Pick a source track first.</p>
 							{:else}
-								<p class="text-xs text-zinc-600 italic">Pick a track first</p>
+								{#if tabClips.length === 0}
+									<p class="mb-2 text-xs text-zinc-600 italic">No clips yet.</p>
+								{:else}
+									<div class="mb-2 space-y-1.5">
+										{#each tabClips as tc, ci (tc.id)}
+											{@const c = clips.find((c) => c.id === tc.clip_id)}
+											<div class="flex items-center gap-2 rounded bg-zinc-800 px-3 py-2 text-xs">
+												<span
+													class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-400 text-[10px] font-black text-zinc-950"
+												>
+													{ci + 1}
+												</span>
+												<span class="flex-1 text-zinc-300">
+													{c ? `[${c.type}]` : 'unknown clip'}
+													{#if c?.duration}
+														<span class="ml-1 text-zinc-500">{formatDur(c.duration)}</span>
+													{/if}
+												</span>
+												{#if c?.storage_path}
+													<button
+														type="button"
+														onclick={() => playPreview(tc.clip_id)}
+														class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold transition-colors
+															{playingClipId === tc.clip_id
+															? 'bg-amber-400 text-zinc-950'
+															: 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'}"
+														title={playingClipId === tc.clip_id ? 'Stop' : 'Play'}
+													>
+														{playingClipId === tc.clip_id ? '■' : '▶'}
+													</button>
+													<audio
+														bind:this={audioEls[tc.clip_id]}
+														src={c.storage_path}
+														crossorigin="anonymous"
+														onended={() => (playingClipId = null)}
+													></audio>
+												{/if}
+												<form method="POST" action="?/moveTabClip" use:enhance class="inline">
+													<input type="hidden" name="tab_id" value={tab.id} />
+													<input type="hidden" name="tc_id" value={tc.id} />
+													<input type="hidden" name="direction" value="up" />
+													<button
+														type="submit"
+														disabled={ci === 0}
+														class="text-zinc-500 hover:text-white disabled:opacity-30 disabled:hover:text-zinc-500"
+														title="Move up">▲</button
+													>
+												</form>
+												<form method="POST" action="?/moveTabClip" use:enhance class="inline">
+													<input type="hidden" name="tab_id" value={tab.id} />
+													<input type="hidden" name="tc_id" value={tc.id} />
+													<input type="hidden" name="direction" value="down" />
+													<button
+														type="submit"
+														disabled={ci === tabClips.length - 1}
+														class="text-zinc-500 hover:text-white disabled:opacity-30 disabled:hover:text-zinc-500"
+														title="Move down">▼</button
+													>
+												</form>
+												<form method="POST" action="?/removeTabClip" use:enhance class="inline">
+													<input type="hidden" name="tc_id" value={tc.id} />
+													<button type="submit" class="text-red-700 hover:text-red-400">✕</button>
+												</form>
+											</div>
+										{/each}
+									</div>
+								{/if}
+
+								<!-- Add clip — restricted to the tab's already-chosen source track (only
+								     one source track per normal tab; that part is unchanged). Already-added
+								     clips are excluded so the host can't add the same clip under two
+								     different "Part N" labels by mistake. Keyed on the clip count so the
+								     picker remounts blank after each add, mirroring how FragmentsEditor's
+								     step-2 picker resets via its own {#key}. -->
+								{#key tabClips.length}
+									{@const addableClips = clipsForTrack(src.track_id).filter(
+										(c) => !tabClips.some((tc) => tc.clip_id === c.id)
+									)}
+									{#if addableClips.length > 0}
+										<form method="POST" action="?/addTabClip" use:enhance>
+											<input type="hidden" name="tab_id" value={tab.id} />
+											<SearchablePicker
+												name="clip_id"
+												items={addableClips.map((c) => ({
+													id: c.id,
+													label: c.type,
+													subtitle: formatDur(c.duration) ?? c.storage_path.split('/').pop() ?? ''
+												}))}
+												placeholder={`Add clip ${tabClips.length + 1}…`}
+												emptyLabel="— cancel —"
+											/>
+										</form>
+									{:else if tabClips.length > 0}
+										<p class="text-xs text-zinc-600 italic">
+											All clips for this track are already added.
+										</p>
+									{/if}
+								{/key}
 							{/if}
 						</div>
 					</div>

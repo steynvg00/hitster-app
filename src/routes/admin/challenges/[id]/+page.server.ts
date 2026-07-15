@@ -2,7 +2,11 @@ import { error, fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
 import { CHALLENGE_TYPES } from '$lib/variants';
-import { resolveChallengeFields, resolveArtistBonus, FIELD_POOL_TABLE } from '$lib/server/scoring.js';
+import {
+	resolveChallengeFields,
+	resolveArtistBonus,
+	FIELD_POOL_TABLE
+} from '$lib/server/scoring.js';
 import { parseBattleConfig } from '$lib/battle-ranking';
 
 export const load: PageServerLoad = async ({ params, locals }) => {
@@ -116,7 +120,10 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 	// Suggestions for the bonus name field. Nice-to-have: the host can type any
 	// name (a challenge spans tabs with different tracks, and a name that matches
 	// no track simply no-ops — that's stuk 1's model).
-	const { data: artistPoolRows } = await db.from('answer_pool_artists').select('name').order('name');
+	const { data: artistPoolRows } = await db
+		.from('answer_pool_artists')
+		.select('name')
+		.order('name');
 
 	return {
 		challenge,
@@ -341,6 +348,53 @@ export const actions: Actions = {
 		return { success: true, action: 'removeTabClip' };
 	},
 
+	// Multi-clip ordering (C2 — normal-tab multi-clip). Swaps a clip with its
+	// up/down neighbour by CURRENT sort_order position, then renumbers the whole
+	// tab 0..N-1 sequentially. Renumbering (rather than swapping the two raw
+	// sort_order values) sidesteps any pre-existing duplicate sort_order — old
+	// single-clip tabs were all inserted at sort_order 0 by setTabClip — self-
+	// healing them into a clean, gap-free order the moment they're first reordered.
+	// No unique constraint on (tab_id, sort_order), so the per-row update loop
+	// below never collides even transiently.
+	moveTabClip: async ({ request }) => {
+		const db = createAdminClient();
+		const data = await request.formData();
+		const tab_id = data.get('tab_id') as string;
+		const tc_id = data.get('tc_id') as string;
+		const direction = data.get('direction') as string | null;
+		if (!tab_id || !tc_id || (direction !== 'up' && direction !== 'down')) {
+			return fail(400, { error: 'Missing tab_id, tc_id, or direction' });
+		}
+
+		const { data: rows, error: selErr } = await db
+			.from('challenge_tab_clips')
+			.select('id')
+			.eq('tab_id', tab_id)
+			.order('sort_order', { ascending: true });
+		if (selErr) return fail(500, { error: selErr.message });
+
+		const ids = (rows ?? []).map((r) => r.id as string);
+		const idx = ids.indexOf(tc_id);
+		if (idx === -1) return fail(400, { error: 'Clip not found in tab' });
+
+		const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+		if (swapIdx < 0 || swapIdx >= ids.length) {
+			// Already at the boundary — a no-op, not an error (the UI disables the
+			// button here, but a stale form submit should still succeed quietly).
+			return { success: true, action: 'moveTabClip' };
+		}
+		[ids[idx], ids[swapIdx]] = [ids[swapIdx], ids[idx]];
+
+		for (let i = 0; i < ids.length; i++) {
+			const { error: e } = await db
+				.from('challenge_tab_clips')
+				.update({ sort_order: i })
+				.eq('id', ids[i]);
+			if (e) return fail(500, { error: e.message });
+		}
+		return { success: true, action: 'moveTabClip' };
+	},
+
 	setTabMashup: async ({ request }) => {
 		const db = createAdminClient();
 		const data = await request.formData();
@@ -466,7 +520,15 @@ export const actions: Actions = {
 
 		// Server-side validation mirrors resolveChallengeFields's constraints —
 		// never trust the wire, even though the client UI already enforces these.
-		const KNOWN_FIELDS = ['artist', 'title', 'year', 'label', 'festival', 'vocal_source', 'grouping'];
+		const KNOWN_FIELDS = [
+			'artist',
+			'title',
+			'year',
+			'label',
+			'festival',
+			'vocal_source',
+			'grouping'
+		];
 		const VALID_MODES = ['multiple_choice', 'combobox', 'open_text', 'typeable_number', 'slider'];
 		const poolBackedFields = new Set(Object.keys(FIELD_POOL_TABLE));
 		const seen = new Set<string>();
@@ -482,12 +544,14 @@ export const actions: Actions = {
 			if (typeof name !== 'string' || !KNOWN_FIELDS.includes(name) || seen.has(name)) continue;
 			seen.add(name);
 			const modeRaw = (row as Record<string, unknown>).input_mode;
-			let input_mode = typeof modeRaw === 'string' && VALID_MODES.includes(modeRaw) ? modeRaw : 'open_text';
+			let input_mode =
+				typeof modeRaw === 'string' && VALID_MODES.includes(modeRaw) ? modeRaw : 'open_text';
 			// combobox is backed by a shared answer pool (artist/label/festival) — any
 			// other field falls back to open_text, same as the client-side guard.
 			if (input_mode === 'combobox' && !poolBackedFields.has(name)) input_mode = 'open_text';
 			const pointsRaw = (row as Record<string, unknown>).max_points;
-			const max_points = typeof pointsRaw === 'number' && Number.isFinite(pointsRaw) ? pointsRaw : 10;
+			const max_points =
+				typeof pointsRaw === 'number' && Number.isFinite(pointsRaw) ? pointsRaw : 10;
 			const is_bonus = (row as Record<string, unknown>).is_bonus === true;
 			cleaned.push({ name, input_mode, max_points, is_bonus });
 		}
