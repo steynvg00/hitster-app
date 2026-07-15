@@ -541,6 +541,42 @@
 	// Legacy flat result for simple display when tabs not present
 	const resultTrack = $derived(result?.tracks?.[resultTabIndex] ?? null);
 
+	// ── Totals block: base | bonus+extras | total ─────────────────────────────
+	// BASE is the scorer's own bonus-excluded sum (thresholdTotal) — the exact
+	// quantity the per-field badges above display, and the one powerup earning
+	// uses, so the block can never disagree with the rows it summarises. Both
+	// result paths supply it (scoreSubmission on submit; the loader rebuilds it
+	// for priorResult), and the fallback sums the rendered FieldResults by the
+	// same rule for any older result that predates the field.
+	//
+	// TOTAL is breakdown.final — post multipliers/streak/speed, i.e. the team's
+	// actual challenge score, and what animatedScore counts to.
+	//
+	// EXTRAS is TOTAL − BASE rather than a hand-assembled sum, so the three cells
+	// add up by construction. It deliberately sweeps in every non-base quantity
+	// that already exists — bonus-artist points, whole-field bonus fields, the
+	// difficulty/round/comeback multiplier uplift, streak, speed and powerup
+	// bonuses — instead of inventing a category the breakdown doesn't have.
+	const baseTotal = $derived(
+		result?.thresholdTotal ??
+			(result?.tabs ?? []).reduce(
+				(s, t) =>
+					s +
+					t.slots.reduce(
+						(ss, sl) =>
+							ss +
+							sl.fields.reduce(
+								(f, fr) => f + (fr.isBonus ? 0 : fr.score - (fr.bonusScore ?? 0)),
+								0
+							),
+						0
+					),
+				0
+			)
+	);
+	const totalScore = $derived(result?.breakdown?.final ?? result?.total ?? 0);
+	const extrasTotal = $derived(totalScore - baseTotal);
+
 	let reviewedKeys = $state<Set<string>>(new Set());
 	$effect(() => {
 		if (f?.reviewRequested && f.reviewedField) reviewedKeys.add(f.reviewedField);
@@ -776,6 +812,17 @@
 		{#if (result.tabs?.length ?? 0) > 1}
 			<div class="mb-4 flex gap-1 overflow-x-auto pb-1">
 				{#each result.tabs ?? [] as tr, i}
+					<!-- Base-only, like the field badges: tr.total carries the bonus but
+					     tr.maxTotal is base-only, so the raw pair would read "15/10". -->
+					{@const tabBase = tr.slots.reduce(
+						(s, sl) =>
+							s +
+							sl.fields.reduce(
+								(f, fr) => f + (fr.isBonus ? 0 : fr.score - (fr.bonusScore ?? 0)),
+								0
+							),
+						0
+					)}
 					<button
 						type="button"
 						onclick={() => (resultTabIndex = i)}
@@ -785,7 +832,7 @@
 							: 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}"
 						style={resultTabIndex === i ? `background-color: ${teamHex};` : ''}
 					>
-						Tab {tr.tabIndex} <span class="ml-1 text-xs opacity-70">{tr.total}/{tr.maxTotal}</span>
+						Tab {tr.tabIndex} <span class="ml-1 text-xs opacity-70">{tabBase}/{tr.maxTotal}</span>
 					</button>
 				{/each}
 			</div>
@@ -803,8 +850,14 @@
 				{/if}
 				<div class="mb-4 space-y-1 rounded-2xl bg-zinc-900 p-5">
 					{#each slot.fields as fr, i}
-						{@const isPartial = fr.score > 0 && fr.score < fr.maxScore}
-						{@const isCorrect = fr.score === fr.maxScore}
+						<!-- The badge and the ✓/~/✗ marker are BASE-only: fr.score is the
+						     team's contribution (main + bonus artists), fr.maxScore is the
+						     base max. Comparing those two directly would call a perfect
+						     answer with a bonus artist "partial" (or worse, score > max).
+						     The bonus is shown separately, in the star lines below. -->
+						{@const baseScore = fr.score - (fr.bonusScore ?? 0)}
+						{@const isPartial = baseScore > 0 && baseScore < fr.maxScore}
+						{@const isCorrect = baseScore === fr.maxScore}
 						{@const reviewKey = `tab_${resultTab.tabPosition}_slot_${slot.slotIndex}_${fr.field}`}
 
 						{#if i > 0}<div class="border-t border-zinc-800"></div>{/if}
@@ -860,13 +913,13 @@
 										{#if fr.isBonus}
 											+{fr.score} bonus
 										{:else}
-											+{fr.score} / {fr.maxScore}
+											+{baseScore} / {fr.maxScore}
 										{/if}
 									</div>
 								</div>
 							</div>
 
-							{#if (fr.score === 0 || isPartial) && data.fieldModes[fr.field] === 'open_text'}
+							{#if (baseScore === 0 || isPartial) && data.fieldModes[fr.field] === 'open_text'}
 								{@const effectiveStatus = liveStatus ?? result.status}
 								{@const alreadyRequested =
 									reviewedKeys.has(reviewKey) ||
@@ -978,17 +1031,45 @@
 			<BonusTracker breakdown={result.breakdown} teamColor={teamHex} />
 		{/if}
 
+		<!--
+			Three quantities, side by side, instead of one merged "N out of M":
+			base points | bonus + extras | total. Total is the hero (it's the number
+			that lands on the leaderboard) and keeps the count-up animation; the other
+			two explain how it was reached. base + bonus === total always, by
+			construction — see baseTotal/extrasTotal above.
+		-->
 		<div
-			class="mb-6 rounded-2xl border p-6 text-center"
+			class="mb-6 grid grid-cols-3 rounded-2xl border p-5 text-center"
 			style="border-color: {teamHex}40; background-color: {teamHex}1a;"
 		>
-			<div class="mb-1 text-sm text-zinc-400">Total Score</div>
-			<div class="text-6xl font-black text-white tabular-nums transition-none">{animatedScore}</div>
-			{#if result.breakdown && result.breakdown.base !== result.breakdown.final}
-				<div class="mt-1 text-xs text-zinc-500">{result.breakdown.base} base pts</div>
-			{:else}
-				<div class="mt-1 text-sm text-zinc-400">out of {result.maxTotal} pts</div>
-			{/if}
+			<div class="flex flex-col justify-center px-1">
+				<div class="text-[10px] font-bold tracking-wider text-zinc-400 uppercase">Base</div>
+				<div class="text-2xl font-black text-white tabular-nums">{baseTotal}</div>
+				{#if result.thresholdMax}
+					<div class="text-[10px] text-zinc-500">of {result.thresholdMax}</div>
+				{/if}
+			</div>
+
+			<div class="flex flex-col justify-center border-x px-1" style="border-color: {teamHex}33;">
+				<div class="text-[10px] font-bold tracking-wider text-zinc-400 uppercase">Bonus</div>
+				<!-- Amber ties this to the ⭐ bonus-artist lines above. A no-bonus
+				     challenge shows a dimmed 0 rather than hiding the cell, so the three
+				     columns don't reflow between challenges. -->
+				<div
+					class="text-2xl font-black tabular-nums {extrasTotal > 0
+						? 'text-amber-300'
+						: 'text-zinc-600'}"
+				>
+					{extrasTotal > 0 ? `+${extrasTotal}` : '0'}
+				</div>
+			</div>
+
+			<div class="flex flex-col justify-center px-1">
+				<div class="text-[10px] font-bold tracking-wider text-zinc-400 uppercase">Total</div>
+				<div class="text-4xl font-black text-white tabular-nums transition-none">
+					{animatedScore}
+				</div>
+			</div>
 		</div>
 
 		<div class="flex flex-col items-center gap-3">

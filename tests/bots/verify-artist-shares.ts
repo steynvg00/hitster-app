@@ -29,6 +29,7 @@
 import {
 	scoreArtistField,
 	scoreField,
+	buildFieldResults,
 	resolveArtistBonus,
 	parseArtistTags,
 	artistTargets,
@@ -38,7 +39,8 @@ import {
 	PENALTY_PER_SURPLUS_TAG,
 	type TrackData,
 	type TabInput,
-	type TabSourceTrackData
+	type TabSourceTrackData,
+	type ArtistBonusConfig
 } from '../../src/lib/server/scoring';
 
 // ── tiny assert harness ───────────────────────────────────────────────────────
@@ -274,6 +276,52 @@ assert(
 	[]
 );
 
+// ── 6c. Badge model: base-only numerator AND denominator (stuk 2 correction) ──
+// The results screen renders `+{score − bonusScore} / {maxScore}`. Stuk 1 put the
+// bonus INTO maxScore, so a 10-point artist field with a 5-point bonus artist read
+// "+15 / 15" — and with "⭐ MC Villain +5 bonus" printed underneath, the same 5
+// looked counted twice. Base-only badge + a separate star line removes that.
+console.log('\n── Badge model: base-only; the bonus lives only in the star line ──');
+const buildArtist = (submitted: string, bonus: ArtistBonusConfig = mcBonus) =>
+	buildFieldResults(
+		['artist'],
+		{ artist: submitted },
+		trackWithMc,
+		{ artist: 'open_text' },
+		{ artist: MAX },
+		new Set(),
+		bonus
+	)[0];
+
+const frHit = buildArtist('Ran-D\nMC Villain');
+assert('badge denominator = base max, bonus NOT added', frHit.maxScore, MAX);
+assert('badge numerator = base only (score − bonusScore)', frHit.score - (frHit.bonusScore ?? 0), 10);
+assert('team contribution is still base + bonus', frHit.score, 15);
+assert('bonus carried separately, for the star line', frHit.bonusScore, 5);
+assert(
+	'star lines sum to the field bonus',
+	frHit.bonusArtists!.reduce((s, b) => s + b.points, 0),
+	frHit.bonusScore
+);
+
+const frMiss = buildArtist('Ran-D');
+assert('bonus missed: badge reads base/base', [frMiss.score - (frMiss.bonusScore ?? 0), frMiss.maxScore], [
+	10,
+	10
+]);
+assert('bonus missed: no star lines at all', frMiss.bonusArtists, undefined);
+
+// A no-bonus artist field is byte-identical to a pre-C1 FieldResult. Both names
+// are guessed here because WITHOUT the config MC Villain is an ordinary main
+// artist sharing the 10 — naming only Ran-D would correctly score half.
+const frPlain = buildArtist('Ran-D\nMC Villain', {});
+assert('no bonus config: badge base/base', [frPlain.score, frPlain.maxScore], [10, 10]);
+assert('no bonus config: no bonus keys leak onto the result', [
+	'bonusScore' in frPlain,
+	'bonusMax' in frPlain,
+	'bonusArtists' in frPlain
+], [false, false, false]);
+
 // ── 7. Over-guess penalty ─────────────────────────────────────────────────────
 console.log('\n── Over-guess penalty (only when tags > targets) ──');
 assert('PENALTY_PER_SURPLUS_TAG is 1', PENALTY_PER_SURPLUS_TAG, 1);
@@ -383,14 +431,21 @@ assert('main-only: total = 20 (10 artist + 10 title)', noMc.total, 20);
 assert('main-only: thresholdTotal = 20', noMc.thresholdTotal, 20);
 assert('main-only: thresholdMax = 20 (bonus artist excluded)', noMc.thresholdMax, 20);
 assert('main-only: threshold-perfect → auto_correct despite the missing MC', noMc.status, 'auto_correct');
-assert('main-only: display maxTotal = 25 (bonus artist visible in the max)', noMc.maxTotal, 25);
+// Stuk 2 correction: the DISPLAY max is base-only too. This asserted 25 while
+// maxScore was fieldMax + bonusMax, which made the badge read "+15 / 15" on a
+// perfect answer and look like it double-counted the star line's +5.
+assert('main-only: display maxTotal = 20 (bonus artist NOT in the display max)', noMc.maxTotal, 20);
 
-// Same, but the MC is named → +5 on top, threshold pair unmoved.
+// Same, but the MC is named → +5 on top, threshold pair AND display max unmoved.
 const withMcInt = runInt({ artist: 'Ran-D\nMC Villain', title: 'Zombie' });
-assert('bonus hit: total = 25', withMcInt.total, 25);
+assert('bonus hit: total = 25 (team still gets base + bonus)', withMcInt.total, 25);
 assert('bonus hit: thresholdTotal still 20 (bonus not counted)', withMcInt.thresholdTotal, 20);
 assert('bonus hit: thresholdMax still 20', withMcInt.thresholdMax, 20);
+assert('bonus hit: display maxTotal still 20 (bonus never inflates the max)', withMcInt.maxTotal, 20);
 assert('bonus hit: still auto_correct', withMcInt.status, 'auto_correct');
+// The three-part totals block reads base = thresholdTotal, total = the team's
+// score, extras = total − base. Assert that split is exactly the bonus here.
+assert('totals block: extras = total − base = the bonus', withMcInt.total - withMcInt.thresholdTotal!, 5);
 
 // A pre-C1-shaped challenge (no artist_bonus, single-artist track) is untouched.
 const plainTrack: TrackData = { id: 't2', artist: 'Ran-D', title: 'Zombie', year: 2015 };

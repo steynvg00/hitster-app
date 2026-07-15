@@ -305,6 +305,17 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 			(tracksResult.data ?? []).map((t) => [t.id, t as TrackData])
 		);
 
+		// Bonus-excluded pair for the results screen's three-part totals block (and
+		// parity with the submit path, which returns these from scoreSubmission).
+		// Mirrors scoring.ts's thresholdOf: skip whole-field bonus fields, subtract
+		// the artist field's bonus-artist portion, and take maxScore as-is (it is
+		// base-only since the stuk 2 correction).
+		const groupingMaxPts = fieldPoints['grouping'] ?? DEFAULT_FIELD_MAX['grouping'] ?? 10;
+		const hasGroupingField = variantFields.includes('grouping' as AnswerField);
+		const groupingIsBonusField = bonusFields.has('grouping');
+		let thresholdTotal = 0;
+		let thresholdMax = 0;
+
 		// Rebuild result from stored TabAnswer[]
 		const tabFieldResults = (Array.isArray(answersArray) ? answersArray : []).map((tabAns, i) => {
 			const slotResults = (tabAns.source_answers ?? []).map((sa, j) => {
@@ -322,6 +333,22 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 							artistBonus
 						)
 					: [];
+				for (const fr of fields) {
+					if (fr.isBonus) continue;
+					thresholdTotal += fr.score - (fr.bonusScore ?? 0);
+					thresholdMax += fr.maxScore;
+				}
+				// This loader rebuilds only the non-grouping fields, so grouping has no
+				// FieldResult to read here (unlike the submit path, where scoreTab pushes
+				// one). Fold its stored per-slot score in from sa.scored — otherwise a
+				// fragments reload would credit grouping points to the Bonus cell.
+				if (hasGroupingField && !groupingIsBonusField) {
+					thresholdTotal += Number(
+						(sa.scored as Record<string, number> | undefined)?.['grouping'] ?? 0
+					);
+					thresholdMax += groupingMaxPts;
+				}
+
 				const total = sa.total ?? fields.reduce((s, fr) => s + fr.score, 0);
 				const maxTotal =
 					fields.reduce((s, fr) => s + fr.maxScore, 0) ||
@@ -365,6 +392,8 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		priorResult = {
 			total,
 			maxTotal,
+			thresholdTotal,
+			thresholdMax,
 			tabs: tabFieldResults,
 			tracks: legacyTracks,
 			status: (existing.status ?? 'auto_wrong') as ChallengeResult['status'],

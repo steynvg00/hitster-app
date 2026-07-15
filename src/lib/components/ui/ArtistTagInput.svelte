@@ -128,13 +128,22 @@
 
 	{#if !disabled && !atLimit}
 		<div class="relative min-w-[9rem] flex-1">
+			<!--
+				border-0 is load-bearing, not tidying. layout.css loads
+				@plugin '@tailwindcss/forms', which gives every bare <input type="text"> a
+				1px gray-500 border. OpenText/Combobox only avoid it because they declare
+				their own `border border-zinc-700`; this input declares none, so the
+				plugin's default rendered a second box INSIDE the container — the visible
+				"search bar" line. It also cost 2px of height, which is why the container
+				measured 52px against Title's 50px.
+			-->
 			<input
 				type="text"
 				bind:value={query}
 				onkeydown={onKeydown}
 				{placeholder}
 				autocomplete="off"
-				class="w-full bg-transparent px-2 py-1 text-zinc-100 focus:outline-none"
+				class="w-full border-0 bg-transparent px-2 py-1 text-zinc-100 focus:outline-none"
 			/>
 			{#if suggestions.length > 0}
 				<div

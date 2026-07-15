@@ -664,10 +664,19 @@ export function buildFieldResults(
 				fieldMax,
 				artistBonus
 			);
-			// The artist field's max is the share pool PLUS any bonus artists this
-			// track actually has — bonus points are extra on top, not carved out of
-			// the field's configured points. Every other field: max is unchanged.
-			const maxScore = fieldMax + (bonusMax ?? 0);
+			// BASE-ONLY (C1 stuk 2 correction, reverting stuk 1's fieldMax + bonusMax).
+			// maxScore is the field's DISPLAY max — the badge's denominator — and bonus
+			// artists are deliberately not in it. Stuk 1 put them in, which rendered
+			// "+10 / 10" on a 5-point artist field with a 5-point bonus artist AND a
+			// "⭐ +5 bonus" line beneath it: the player reads 10 and then another 5, so
+			// the bonus looks double-counted. Base-only badge + a separate star line
+			// keeps the two quantities visually distinct.
+			//
+			// `score` still carries main + bonus (it is the team's contribution); the
+			// badge subtracts bonusScore to display base. See the results screen.
+			// Bonus was ALREADY out of thresholdMax in stuk 1 — that part was right and
+			// is unchanged, so powerup earning % does not move.
+			const maxScore = fieldMax;
 			const correct =
 				field === 'year'
 					? String(track.year)
@@ -762,20 +771,25 @@ export function scoreTab(
 	//
 	// Two kinds of bonus are subtracted here:
 	//   1. WHOLE-field bonus (isBonus) — skipped entirely, as before.
-	//   2. PARTIAL bonus inside a threshold field (bonusScore/bonusMax) — the
-	//      bonus-artist points inside the artist field (C1 stuk 1). Subtracting
-	//      them is what keeps a bonus artist out of thresholdMax, so it lands in
-	//      the "+N bonus" path: it still counts toward the team's points (base
-	//      includes it) but can't demote a perfect main answer from auto_correct
-	//      and doesn't move the powerup-earning %.
-	// Both default to 0, so every pre-C1 field sums exactly as it did.
+	//   2. PARTIAL bonus inside a threshold field (bonusScore) — the bonus-artist
+	//      points inside the artist field (C1 stuk 1). Subtracting them from the
+	//      TOTAL is what keeps a bonus artist out of the threshold: it still counts
+	//      toward the team's points (score includes it) but can't demote a perfect
+	//      main answer from auto_correct and doesn't move the powerup-earning %.
+	//
+	// The max needs NO bonus subtraction: maxScore is base-only since the stuk 2
+	// correction. Subtracting bonusMax here (as this did while maxScore was
+	// fieldMax + bonusMax) would now double-subtract and drive thresholdMax to 0 on
+	// a fully-bonus-marked artist field — handing out a free auto_correct via the
+	// thresholdMax > 0 guard below and zeroing the earning denominator.
+	// Defaults to 0, so every pre-C1 field sums exactly as it did.
 	const thresholdOf = (frs: FieldResult[]): { total: number; max: number } => {
 		let total = 0;
 		let max = 0;
 		for (const fr of frs) {
 			if (fr.isBonus) continue;
 			total += fr.score - (fr.bonusScore ?? 0);
-			max += fr.maxScore - (fr.bonusMax ?? 0);
+			max += fr.maxScore;
 		}
 		return { total, max };
 	};
