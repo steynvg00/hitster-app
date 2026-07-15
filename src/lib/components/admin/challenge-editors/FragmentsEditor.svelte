@@ -3,7 +3,7 @@
 	import SearchablePicker from '$lib/components/admin/SearchablePicker.svelte';
 
 	type Track = { id: string; artist: string; title: string; year: number };
-	type Clip = { id: string; track_id: string; type: string; storage_path: string; duration: number | null };
+	type Clip = { id: string; track_id: string; storage_path: string; duration: number | null };
 	type Tab = { id: string; position: number };
 	type TabClip = {
 		id: string;
@@ -51,6 +51,7 @@
 
 	// Per-tab track selection for the two-step add-fragment picker (local UI state only)
 	let selectedAddTrack = $state<Record<string, string>>({});
+	let activeTabIdx = $state(0);
 
 	// Audio preview — only one clip plays at a time
 	let audioEls = $state<Record<string, HTMLAudioElement>>({});
@@ -101,16 +102,45 @@
 			No tabs yet.
 		</div>
 	{:else}
+		<!-- Tab pills — the tab navigation. Sets the SAME activeTabIdx the card's
+		     own hidden-binding below reads: same state, same handler as the in-card
+		     header, no second source of truth. Active pill reuses this page's own
+		     STATUS-pill treatment (bg-amber-400 + zinc-950 text) so the two agree. -->
+		<div class="mb-3 flex flex-wrap gap-2">
+			{#each tabs as tab, tabIdx (tab.id)}
+				<button
+					type="button"
+					onclick={() => (activeTabIdx = tabIdx)}
+					class="rounded-lg px-4 py-2 text-sm font-semibold transition-colors {activeTabIdx ===
+					tabIdx
+						? 'bg-amber-400 text-zinc-950'
+						: 'border border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-white'}"
+				>
+					Tab {tabIdx + 1}
+				</button>
+			{/each}
+		</div>
+
 		<div class="space-y-6">
 			{#each tabs as tab, tabIdx (tab.id)}
 				{@const tabClips = clipsForTab(tab.id)}
 				{@const sourceTracks = sourceTracksForTab(tab.id)}
 
-				<div class="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
+				<div
+					class="rounded-xl border border-zinc-800 bg-zinc-900 p-4"
+					hidden={activeTabIdx !== tabIdx}
+				>
 					<div class="mb-3 flex items-center justify-between">
-						<span class="text-xs font-bold tracking-widest text-zinc-500 uppercase"
-							>Tab {tabIdx + 1}</span
+						<button
+							type="button"
+							onclick={() => (activeTabIdx = tabIdx)}
+							class="text-xs font-bold tracking-widest uppercase transition-colors {activeTabIdx ===
+							tabIdx
+								? 'text-amber-400'
+								: 'text-zinc-500 hover:text-zinc-300'}"
 						>
+							Tab {tabIdx + 1}
+						</button>
 						<form method="POST" action="?/removeTab" use:enhance class="inline">
 							<input type="hidden" name="tab_id" value={tab.id} />
 							<button
@@ -143,7 +173,6 @@
 										</span>
 										<span class="flex-1 text-zinc-300">
 											{parentTrack ? `${parentTrack.artist} — ${parentTrack.title}` : 'unknown'}
-											{c ? `[${c.type}]` : ''}
 											{#if c?.duration}
 												<span class="ml-1 text-zinc-500">{formatDur(c.duration)}</span>
 											{/if}
@@ -213,7 +242,7 @@
 							<!-- Step 2: clip (only once track is chosen; keyed so it remounts on track change) -->
 							{#if selectedAddTrack[tab.id]}
 								{@const trackClips = clips.filter(
-									(c) => c.track_id === selectedAddTrack[tab.id] && c.type !== 'mashup'
+									(c) => c.track_id === selectedAddTrack[tab.id]
 								)}
 								{#key selectedAddTrack[tab.id]}
 									{#if trackClips.length > 0}
@@ -223,7 +252,7 @@
 												const dur = formatDur(c.duration);
 												return {
 													id: c.id,
-													label: dur ? `[${c.type}] ${dur}` : `[${c.type}]`,
+													label: dur ? `${c.storage_path.split('/').pop() ?? 'Clip'} · ${dur}` : (c.storage_path.split('/').pop() ?? 'Clip'),
 													subtitle: ''
 												};
 											})}

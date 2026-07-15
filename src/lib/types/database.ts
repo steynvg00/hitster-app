@@ -8,7 +8,6 @@ type TeamColor = 'blue' | 'yellow' | 'green' | 'red' | 'indigo' | 'black';
 type PowerupCategory = 'offensive' | 'defensive' | 'information' | 'social' | 'self';
 type PowerupVisibility = 'public' | 'target_only' | 'hidden' | 'silent';
 type PowerupTargetType = 'self' | 'team' | 'all_others' | 'none';
-type ClipType = 'snippet' | 'fragment' | 'kick' | 'vocal' | 'mashup';
 type ChallengeType = 'standard' | 'anthem' | 'label' | 'mashup' | 'fragments' | 'effects';
 type AnswerField = 'artist' | 'title' | 'year' | 'label' | 'festival' | 'vocal_source' | 'grouping';
 type NfcTagPurpose = 'team_identity' | 'team_entry' | 'challenge' | 'hint' | 'challenge_unlock';
@@ -155,7 +154,6 @@ export type Database = {
 				Row: {
 					id: string;
 					track_id: string;
-					type: ClipType;
 					storage_path: string;
 					position: number | null;
 					duration: number | null;
@@ -167,7 +165,6 @@ export type Database = {
 				Insert: {
 					id?: string;
 					track_id: string;
-					type: ClipType;
 					storage_path: string;
 					position?: number | null;
 					duration?: number | null;
@@ -179,7 +176,6 @@ export type Database = {
 				Update: {
 					id?: string;
 					track_id?: string;
-					type?: ClipType;
 					storage_path?: string;
 					position?: number | null;
 					duration?: number | null;

@@ -12,8 +12,6 @@ export interface Team {
 
 // ─── Tracks & Clips ──────────────────────────────────────────────────────────
 
-export type ClipType = 'snippet' | 'fragment' | 'kick' | 'vocal' | 'mashup';
-
 export interface Track {
 	id: string;
 	artist: string;
@@ -27,7 +25,6 @@ export interface Track {
 export interface Clip {
 	id: string;
 	track_id: string;
-	type: ClipType;
 	storage_path: string;
 	position?: number;
 }

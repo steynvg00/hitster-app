@@ -17,7 +17,6 @@
 	type Clip = {
 		id: string;
 		track_id: string;
-		type: string;
 		storage_path: string;
 		storage_object_path: string | null;
 	};
@@ -116,6 +115,7 @@
 	// Per-tab save status, surfaced in the tab header. 'error' offers a retry so a
 	// failed ?/saveTabEffects can't silently drop the host's edit.
 	let saveState = $state<Record<string, 'saving' | 'saved' | 'error' | undefined>>({});
+	let activeTabIdx = $state(0);
 	// Tabs whose latest edit hasn't been confirmed saved — flushed on navigation/unload
 	// so a debounce still pending at nav time isn't lost.
 	const dirtyTabs = new Set<string>();
@@ -324,6 +324,25 @@
 			No tabs yet — click "+ Add Tab" to create the first one.
 		</div>
 	{:else}
+		<!-- Tab pills — the tab navigation. Sets the SAME activeTabIdx the card's
+		     own hidden-binding below reads: same state, same handler as the in-card
+		     header, no second source of truth. Active pill reuses this page's own
+		     STATUS-pill treatment (bg-amber-400 + zinc-950 text) so the two agree. -->
+		<div class="mb-3 flex flex-wrap gap-2">
+			{#each tabs as tab, tabIdx (tab.id)}
+				<button
+					type="button"
+					onclick={() => (activeTabIdx = tabIdx)}
+					class="rounded-lg px-4 py-2 text-sm font-semibold transition-colors {activeTabIdx ===
+					tabIdx
+						? 'bg-amber-400 text-zinc-950'
+						: 'border border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-white'}"
+				>
+					Tab {tabIdx + 1}
+				</button>
+			{/each}
+		</div>
+
 		<div class="space-y-4">
 			{#each tabs as tab, tabIdx (tab.id)}
 				{@const cfg = tabEffects[tab.id] ?? {}}
@@ -337,13 +356,23 @@
 				)}
 				{@const reverseOn = reverseOf(cfg).enabled}
 
-				<div class="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
+				<div
+					class="rounded-xl border border-zinc-800 bg-zinc-900 p-4"
+					hidden={activeTabIdx !== tabIdx}
+				>
 					<!-- Tab header -->
 					<div class="mb-4 flex items-center justify-between">
 						<div class="flex items-center gap-2">
-							<span class="text-xs font-bold tracking-widest text-zinc-500 uppercase"
-								>Tab {tabIdx + 1}</span
+							<button
+								type="button"
+								onclick={() => (activeTabIdx = tabIdx)}
+								class="text-xs font-bold tracking-widest uppercase transition-colors {activeTabIdx ===
+								tabIdx
+									? 'text-amber-400'
+									: 'text-zinc-500 hover:text-zinc-300'}"
 							>
+								Tab {tabIdx + 1}
+							</button>
 							{#if saveState[tab.id] === 'saving'}
 								<span class="text-xs text-zinc-500">Saving…</span>
 							{:else if saveState[tab.id] === 'saved'}
@@ -402,8 +431,8 @@
 									name="clip_id"
 									items={clipsForTrack(src.track_id).map((c) => ({
 										id: c.id,
-										label: c.type,
-										subtitle: c.storage_path.split('/').pop() ?? ''
+										label: c.storage_path.split('/').pop() ?? 'Clip',
+										subtitle: ''
 									}))}
 									value={tabClip?.clip_id ?? ''}
 									placeholder="Search clips…"

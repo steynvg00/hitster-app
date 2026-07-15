@@ -11,16 +11,12 @@
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
-	const CLIP_TYPES = ['snippet', 'fragment', 'kick', 'vocal', 'mashup'] as const;
-	type ClipType = (typeof CLIP_TYPES)[number];
-
 	type StagedFile = {
 		id: string;
 		file: File;
 		name: string;
 		size: number;
 		duration: number;
-		clipType: ClipType;
 		orderIndex: number | null;
 		status: 'queued' | 'uploading' | 'done' | 'failed';
 		error?: string;
@@ -177,7 +173,6 @@
 				name: file.name,
 				size: file.size,
 				duration: await getAudioDuration(file),
-				clipType: 'snippet' as ClipType,
 				orderIndex: nextOrder + i,
 				status: 'queued' as const
 			}))
@@ -199,7 +194,6 @@
 
 			const fd = new FormData();
 			fd.append('file', staged.file);
-			fd.append('clip_type', staged.clipType);
 			if (staged.orderIndex != null) fd.append('order_index', String(staged.orderIndex));
 			fd.append('duration', String(staged.duration));
 
@@ -525,7 +519,6 @@
 										staged.status = 'uploading';
 										const fd = new FormData();
 										fd.append('file', staged.file);
-										fd.append('clip_type', staged.clipType);
 										if (staged.orderIndex != null)
 											fd.append('order_index', String(staged.orderIndex));
 										fd.append('duration', String(staged.duration));
@@ -686,7 +679,7 @@
 												: staged.status === 'uploading'
 													? 'border-amber-700 bg-amber-950/30'
 													: 'border-zinc-700 bg-zinc-900'}"
-										style="grid-template-columns: 1.25rem 1fr 7.5rem 5rem 1.25rem"
+										style="grid-template-columns: 1.25rem 1fr 5rem 1.25rem"
 									>
 										<span class="text-center text-xs">
 											{#if staged.status === 'queued'}⏳{:else if staged.status === 'uploading'}⬆{:else if staged.status === 'done'}✓{:else}✗{/if}
@@ -699,15 +692,6 @@
 												{#if staged.error}<span class="text-red-400"> · {staged.error}</span>{/if}
 											</div>
 										</div>
-										<select
-											bind:value={staged.clipType}
-											disabled={staged.status !== 'queued'}
-											class="input-field py-1 text-xs disabled:opacity-50"
-										>
-											{#each CLIP_TYPES as t}
-												<option value={t}>{t}</option>
-											{/each}
-										</select>
 										<input
 											type="number"
 											bind:value={staged.orderIndex}
@@ -1076,9 +1060,6 @@
 													}}
 													class="shrink-0 accent-amber-400"
 												/>
-												<span class="w-16 shrink-0 font-mono text-xs text-zinc-500"
-													>{clip.type}</span
-												>
 												{#if clip.position != null}
 													<span class="text-xs text-zinc-600">#{clip.position}</span>
 												{/if}
@@ -1242,7 +1223,7 @@
 											<!--
 											Explicit grid columns so .input-field width:100% fills each
 											column rather than blowing out the layout:
-											[icon] [filename+meta] [type dropdown] [order input] [remove]
+											[icon] [filename+meta] [order input] [remove]
 										-->
 											<div
 												class="grid items-center gap-x-3 rounded-lg border px-3 py-2 text-sm {staged.status ===
@@ -1253,7 +1234,7 @@
 														: staged.status === 'uploading'
 															? 'border-amber-700 bg-amber-950/30'
 															: 'border-zinc-700 bg-zinc-900'}"
-												style="grid-template-columns: 1.25rem 1fr 7.5rem 5rem 1.25rem"
+												style="grid-template-columns: 1.25rem 1fr 5rem 1.25rem"
 											>
 												<!-- Status indicator -->
 												<span class="text-center text-xs">
@@ -1273,20 +1254,6 @@
 																· {staged.error}</span
 															>{/if}
 													</div>
-												</div>
-
-												<!-- Clip type -->
-												<div class="flex items-center gap-1">
-													<select
-														bind:value={staged.clipType}
-														disabled={staged.status !== 'queued'}
-														class="input-field min-w-0 flex-1 py-1 text-xs disabled:opacity-50"
-													>
-														{#each CLIP_TYPES as t}
-															<option value={t}>{t}</option>
-														{/each}
-													</select>
-													<HelpTooltip text="Which variant this clip can be used for." />
 												</div>
 
 												<!-- Order index -->
