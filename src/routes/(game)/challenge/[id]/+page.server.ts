@@ -123,13 +123,12 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 	// Fetch clips first — for fragments the source tracks are derived from clip.track_id,
 	// so we need the clip rows before we can build the full trackIds list.
 	const clipsResult = await (clipIds.length
-		? supabase.from('clips').select('id, track_id, storage_path, type').in('id', clipIds)
+		? supabase.from('clips').select('id, track_id, storage_path').in('id', clipIds)
 		: Promise.resolve({
 				data: [] as {
 					id: string;
 					track_id: string;
 					storage_path: string;
-					type: string;
 				}[]
 			}));
 

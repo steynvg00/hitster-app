@@ -1,26 +1,15 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 
-	const CLIP_TYPES = ['snippet', 'fragment', 'kick', 'vocal', 'mashup'] as const;
-	type ClipType = (typeof CLIP_TYPES)[number];
-
 	interface Props {
 		file: File;
 		trackId: string;
-		initialClipType?: ClipType;
 		orderIndex?: number | null;
 		onClose: () => void;
 		onUploaded: () => void;
 	}
 
-	let {
-		file,
-		trackId,
-		initialClipType = 'snippet',
-		orderIndex = null,
-		onClose,
-		onUploaded
-	}: Props = $props();
+	let { file, trackId, orderIndex = null, onClose, onUploaded }: Props = $props();
 
 	// ── waveform state ─────────────────────────────────────────────────────────
 	let container: HTMLElement;
@@ -38,9 +27,6 @@
 	const selectionLabel = $derived(
 		`${fmt(regionStart)} – ${fmt(regionEnd)}  (${(regionEnd - regionStart).toFixed(1)}s selected)`
 	);
-
-	// ── clip type ──────────────────────────────────────────────────────────────
-	let clipType = $state<ClipType>(initialClipType);
 
 	// ── status ─────────────────────────────────────────────────────────────────
 	type Phase = 'loading' | 'ready' | 'loadingFfmpeg' | 'trimming' | 'uploading' | 'done' | 'error';
@@ -195,7 +181,6 @@
 			const dur = regionEnd - regionStart;
 			const fd = new FormData();
 			fd.append('file', trimmedFile);
-			fd.append('clip_type', clipType);
 			if (orderIndex != null) fd.append('order_index', String(orderIndex));
 			fd.append('duration', String(dur));
 
@@ -278,26 +263,6 @@
 				{/if}
 			</div>
 
-			<!-- Clip type -->
-			<div class="mb-4">
-				<label class="mb-1 block text-xs font-semibold tracking-widest text-zinc-500 uppercase">
-					Clip type
-				</label>
-				<div class="flex flex-wrap gap-2">
-					{#each CLIP_TYPES as ct}
-						<button
-							type="button"
-							onclick={() => (clipType = ct)}
-							class="rounded-lg px-3 py-1 text-xs font-medium transition-colors
-								{clipType === ct
-								? 'bg-amber-400 text-zinc-950'
-								: 'border border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'}"
-						>
-							{ct}
-						</button>
-					{/each}
-				</div>
-			</div>
 		{/if}
 
 		<!-- Status / error -->
