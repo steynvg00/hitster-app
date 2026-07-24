@@ -62,15 +62,20 @@ function loadEnv() {
 }
 
 const SET_ID = 'e5100000-0000-4000-8000-000000000001';
-const WORKING_TYPES = [
-	'shield',
-	'time_boost',
-	'insurance',
-	'bonus_points',
-	'hard_gaan',
-	'single_event_mult',
-	'free_answer'
-];
+
+// The type POOL is derived from powerup_types at run start (deriveWorkingTypes),
+// NOT hardcoded — a hardcoded list silently drifts as the catalog grows and lets
+// un-neutralised types leak awards into the chance=0 scenario. The three filters
+// below are the planner's TYPE-TRAIT predicates (powerups.ts:165-168): coming_soon,
+// enabled_by_default, default_inverse. The planner narrows further at runtime by
+// category (:167) and per-type threshold band (:169-170), but those only ever
+// SUBTRACT from the pool — so zeroing `chance` across this trait-eligible superset
+// is the correct, safe basis for emptying the pool.
+//
+// SELF_TYPES stays hardcoded ON PURPOSE: it is part of the ORACLE (the manually
+// reasoned expectation of which awards belong to the `self` category), not the
+// pool. Deriving it from the same catalog the behaviour reads would make the test
+// grade itself. Do not "robustify" it into a query.
 const SELF_TYPES = ['bonus_points', 'hard_gaan', 'single_event_mult'];
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -84,10 +89,28 @@ type V2Config = {
 	categories: Record<string, boolean>;
 };
 
+/**
+ * Derive the awardable type pool from the live catalog, using the planner's
+ * type-trait predicates (powerups.ts:165-168): non-coming_soon, enabled by
+ * default, non-inverse. Sorted for stable, comparable logging. This is the set
+ * the harness must give a chance override to, so `allChance(0)` truly empties
+ * the pool regardless of how many types the catalog grows to.
+ */
+async function deriveWorkingTypes(db: SupabaseClient): Promise<string[]> {
+	const { data, error } = await db
+		.from('powerup_types')
+		.select('id, enabled_by_default, coming_soon, default_inverse');
+	if (error) throw new Error(`deriveWorkingTypes: ${error.message}`);
+	return ((data ?? []) as { id: string; enabled_by_default: boolean; coming_soon: boolean; default_inverse: boolean }[])
+		.filter((t) => t.enabled_by_default && !t.coming_soon && !t.default_inverse)
+		.map((t) => t.id)
+		.sort();
+}
+
 /** Build a `types` map giving every working type the same chance (enabled). */
-function allChance(v: number): Record<string, PowerupTypeOverride> {
+function allChance(v: number, workingTypes: string[]): Record<string, PowerupTypeOverride> {
 	const types: Record<string, PowerupTypeOverride> = {};
-	for (const id of WORKING_TYPES) types[id] = { enabled: true, chance: v };
+	for (const id of workingTypes) types[id] = { enabled: true, chance: v };
 	return types;
 }
 
@@ -106,43 +129,52 @@ function cfg(over: Partial<V2Config>): V2Config {
 type Expected = { total?: number; highwater?: number; selfCount?: number };
 type Scenario = { key: string; note: string; config: V2Config; expect: Expected };
 
-const SCENARIOS: Scenario[] = [
-	{
-		key: 'per_challenge · all_bands · chance=1',
-		note: '3 awards/challenge × 6 challenges',
-		config: cfg({ threshold_mode: 'per_challenge', band_mode: 'all_bands', types: allChance(1) }),
-		expect: { total: 18, highwater: 0 }
-	},
-	{
-		key: 'per_challenge · highest_band · chance=1',
-		note: '1 award/challenge × 6 challenges',
-		config: cfg({ threshold_mode: 'per_challenge', band_mode: 'highest_band', types: allChance(1) }),
-		expect: { total: 6, highwater: 0 }
-	},
-	{
-		key: 'cumulative · all_bands · chance=1',
-		note: '3 bands crossed once over the game; highwater → 75',
-		config: cfg({ threshold_mode: 'cumulative', band_mode: 'all_bands', types: allChance(1) }),
-		expect: { total: 3, highwater: 75 }
-	},
-	{
-		key: 'cumulative · all_bands · chance=0',
-		note: '0 awards, but highwater STILL advances → 75',
-		config: cfg({ threshold_mode: 'cumulative', band_mode: 'all_bands', types: allChance(0) }),
-		expect: { total: 0, highwater: 75 }
-	},
-	{
-		key: 'category-off(self) · per_challenge · all_bands · chance=1',
-		note: 'self types never drop; other categories still fire (18 total)',
-		config: cfg({
-			threshold_mode: 'per_challenge',
-			band_mode: 'all_bands',
-			types: allChance(1),
-			categories: { self: false }
-		}),
-		expect: { total: 18, selfCount: 0 }
-	}
-];
+/**
+ * Build the scenario matrix. Only the POOL (which types get a chance override)
+ * is derived from `workingTypes`; the `expect` values stay hand-reasoned — one
+ * award lands per crossed band regardless of pool size, so growing the catalog
+ * does not change any expected count. Never compute an expected value from the
+ * catalog or planner: that would make the harness grade itself.
+ */
+function buildScenarios(workingTypes: string[]): Scenario[] {
+	return [
+		{
+			key: 'per_challenge · all_bands · chance=1',
+			note: '3 awards/challenge × 6 challenges',
+			config: cfg({ threshold_mode: 'per_challenge', band_mode: 'all_bands', types: allChance(1, workingTypes) }),
+			expect: { total: 18, highwater: 0 }
+		},
+		{
+			key: 'per_challenge · highest_band · chance=1',
+			note: '1 award/challenge × 6 challenges',
+			config: cfg({ threshold_mode: 'per_challenge', band_mode: 'highest_band', types: allChance(1, workingTypes) }),
+			expect: { total: 6, highwater: 0 }
+		},
+		{
+			key: 'cumulative · all_bands · chance=1',
+			note: '3 bands crossed once over the game; highwater → 75',
+			config: cfg({ threshold_mode: 'cumulative', band_mode: 'all_bands', types: allChance(1, workingTypes) }),
+			expect: { total: 3, highwater: 75 }
+		},
+		{
+			key: 'cumulative · all_bands · chance=0',
+			note: '0 awards, but highwater STILL advances → 75',
+			config: cfg({ threshold_mode: 'cumulative', band_mode: 'all_bands', types: allChance(0, workingTypes) }),
+			expect: { total: 0, highwater: 75 }
+		},
+		{
+			key: 'category-off(self) · per_challenge · all_bands · chance=1',
+			note: 'self types never drop; other categories still fire (18 total)',
+			config: cfg({
+				threshold_mode: 'per_challenge',
+				band_mode: 'all_bands',
+				types: allChance(1, workingTypes),
+				categories: { self: false }
+			}),
+			expect: { total: 18, selfCount: 0 }
+		}
+	];
+}
 
 /** Soft-reset scoped to the Mechanics set — mirrors reset.ts's operations. */
 async function softReset(db: SupabaseClient) {
@@ -267,8 +299,15 @@ async function main() {
 	if (!url || !key) throw new Error('Missing PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY in .env');
 	const db = createClient(url, key, { auth: { persistSession: false } });
 
+	// Derive the awardable type pool from the live catalog and log it, so
+	// catalog drift shows up in the output instead of silently leaking awards.
+	const workingTypes = await deriveWorkingTypes(db);
+	const SCENARIOS = buildScenarios(workingTypes);
+
 	console.log(`▶ Powerup earning verification — ${SCENARIOS.length} scenarios against ${BOT_BASE_URL}`);
-	console.log(`  set: ${SET_ID}  profile: ace (accuracy 1.0)\n`);
+	console.log(`  set: ${SET_ID}  profile: ace (accuracy 1.0)`);
+	console.log(`  pool: ${workingTypes.length} awardable types (enabled_by_default, !coming_soon, !inverse)`);
+	console.log(`        ${workingTypes.join(', ')}\n`);
 
 	const browser = await chromium.launch();
 	const results: Array<{ scenario: Scenario; actual: Expected; pass: boolean; note?: string }> = [];
