@@ -27,6 +27,7 @@ import {
 	type MashupSourceRaw,
 	type ClipRaw
 } from '$lib/server/scoring.js';
+import { thresholdOfFields } from '$lib/threshold';
 
 // ─── Load ────────────────────────────────────────────────────────────────────
 
@@ -332,11 +333,9 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 							artistBonus
 						)
 					: [];
-				for (const fr of fields) {
-					if (fr.isBonus) continue;
-					thresholdTotal += fr.score - (fr.bonusScore ?? 0);
-					thresholdMax += fr.maxScore;
-				}
+				const slotTh = thresholdOfFields(fields);
+				thresholdTotal += slotTh.total;
+				thresholdMax += slotTh.max;
 				// This loader rebuilds only the non-grouping fields, so grouping has no
 				// FieldResult to read here (unlike the submit path, where scoreTab pushes
 				// one). Fold its stored per-slot score in from sa.scored — otherwise a
