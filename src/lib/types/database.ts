@@ -273,6 +273,10 @@ export type Database = {
 					created_by: string | null;
 					effects: Json | null;
 					mashup_id: string | null;
+					// C3b (migration 0068). NULL = inherit challenge-wide fields; a
+					// non-empty array overrides fields for this tab only. Same row shape
+					// as points_config.fields[]. Resolved via resolveTabFields.
+					fields: Json | null;
 				};
 				Insert: {
 					id?: string;
@@ -282,6 +286,7 @@ export type Database = {
 					created_by?: string | null;
 					effects?: Json | null;
 					mashup_id?: string | null;
+					fields?: Json | null;
 				};
 				Update: {
 					id?: string;
@@ -291,6 +296,7 @@ export type Database = {
 					created_by?: string | null;
 					effects?: Json | null;
 					mashup_id?: string | null;
+					fields?: Json | null;
 				};
 				Relationships: [];
 			};
