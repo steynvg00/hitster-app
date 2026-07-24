@@ -10,6 +10,7 @@
 	import YearInput from '$lib/components/ui/YearInput.svelte';
 	import ArtistTagInput from '$lib/components/ui/ArtistTagInput.svelte';
 	import { parseArtistTags, joinArtistTags } from '$lib/artist-tags';
+	import { thresholdOfFields } from '$lib/threshold';
 	import { supabaseBrowser } from '$lib/supabase-browser';
 	import Waveform from '$lib/components/ui/Waveform.svelte';
 	import BonusTracker from '$lib/components/game/BonusTracker.svelte';
@@ -546,8 +547,9 @@
 	// quantity the per-field badges above display, and the one powerup earning
 	// uses, so the block can never disagree with the rows it summarises. Both
 	// result paths supply it (scoreSubmission on submit; the loader rebuilds it
-	// for priorResult), and the fallback sums the rendered FieldResults by the
-	// same rule for any older result that predates the field.
+	// for priorResult), and the fallback sums the rendered FieldResults via the
+	// shared thresholdOfFields ($lib/threshold) — the same rule the scorer uses —
+	// for any older result that predates the field.
 	//
 	// TOTAL is breakdown.final — post multipliers/streak/speed, i.e. the team's
 	// actual challenge score, and what animatedScore counts to.
@@ -560,17 +562,7 @@
 	const baseTotal = $derived(
 		result?.thresholdTotal ??
 			(result?.tabs ?? []).reduce(
-				(s, t) =>
-					s +
-					t.slots.reduce(
-						(ss, sl) =>
-							ss +
-							sl.fields.reduce(
-								(f, fr) => f + (fr.isBonus ? 0 : fr.score - (fr.bonusScore ?? 0)),
-								0
-							),
-						0
-					),
+				(s, t) => s + t.slots.reduce((ss, sl) => ss + thresholdOfFields(sl.fields).total, 0),
 				0
 			)
 	);
@@ -815,12 +807,7 @@
 					<!-- Base-only, like the field badges: tr.total carries the bonus but
 					     tr.maxTotal is base-only, so the raw pair would read "15/10". -->
 					{@const tabBase = tr.slots.reduce(
-						(s, sl) =>
-							s +
-							sl.fields.reduce(
-								(f, fr) => f + (fr.isBonus ? 0 : fr.score - (fr.bonusScore ?? 0)),
-								0
-							),
+						(s, sl) => s + thresholdOfFields(sl.fields).total,
 						0
 					)}
 					<button

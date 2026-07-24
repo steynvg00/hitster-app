@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/types/database.js';
 import { parseArtistTags } from '$lib/artist-tags';
+import { thresholdOfFields } from '$lib/threshold';
 import type {
 	AnswerField,
 	InputMode,
@@ -766,33 +767,11 @@ export function scoreTab(
 	const groupingMax = fieldPoints['grouping'] ?? DEFAULT_FIELD_MAX['grouping'] ?? 10;
 	const groupingIsBonus = bonusFields.has('grouping');
 
-	// Threshold (bonus-excluded) sums from a scored FieldResult[]; the results
-	// already carry isBonus (buildFieldResults tags them from bonusFields).
+	// The per-slot threshold (bonus-excluded) fold lives in $lib/threshold
+	// (thresholdOfFields) — shared with the challenge page's rebuild and client
+	// fallback so the grensregel can't drift across the three. See that module for
+	// the whole-field / partial-bonus rationale.
 	//
-	// Two kinds of bonus are subtracted here:
-	//   1. WHOLE-field bonus (isBonus) — skipped entirely, as before.
-	//   2. PARTIAL bonus inside a threshold field (bonusScore) — the bonus-artist
-	//      points inside the artist field (C1 stuk 1). Subtracting them from the
-	//      TOTAL is what keeps a bonus artist out of the threshold: it still counts
-	//      toward the team's points (score includes it) but can't demote a perfect
-	//      main answer from auto_correct and doesn't move the powerup-earning %.
-	//
-	// The max needs NO bonus subtraction: maxScore is base-only since the stuk 2
-	// correction. Subtracting bonusMax here (as this did while maxScore was
-	// fieldMax + bonusMax) would now double-subtract and drive thresholdMax to 0 on
-	// a fully-bonus-marked artist field — handing out a free auto_correct via the
-	// thresholdMax > 0 guard below and zeroing the earning denominator.
-	// Defaults to 0, so every pre-C1 field sums exactly as it did.
-	const thresholdOf = (frs: FieldResult[]): { total: number; max: number } => {
-		let total = 0;
-		let max = 0;
-		for (const fr of frs) {
-			if (fr.isBonus) continue;
-			total += fr.score - (fr.bonusScore ?? 0);
-			max += fr.maxScore;
-		}
-		return { total, max };
-	};
 	// Bonus-excluded max for a field list (empty/overflow slots have no FieldResult[]).
 	const nonBonusFieldMax = (fields: AnswerField[]): number =>
 		fields.reduce(
@@ -815,7 +794,7 @@ export function scoreTab(
 		);
 		const slotTotal = fieldResultsList.reduce((s, fr) => s + fr.score, 0);
 		const slotMax = fieldResultsList.reduce((s, fr) => s + fr.maxScore, 0);
-		const th = thresholdOf(fieldResultsList);
+		const th = thresholdOfFields(fieldResultsList);
 
 		const scored: Record<string, number> = {};
 		for (const fr of fieldResultsList) scored[fr.field] = fr.score;
@@ -949,7 +928,7 @@ export function scoreTab(
 		// present and not flagged bonus. Max includes groupingMax only under that
 		// same gate (hasGrouping && !groupingIsBonus) — a bonus-flagged grouping is
 		// excluded, unlike totalMax; total adds groupingScore (0 if no fragments).
-		const slotTh = thresholdOf(bestFields);
+		const slotTh = thresholdOfFields(bestFields);
 		tabThresholdTotal += slotTh.total + (hasGrouping && !groupingIsBonus ? groupingScore : 0);
 		tabThresholdMax += slotTh.max + (hasGrouping && !groupingIsBonus ? groupingMax : 0);
 
