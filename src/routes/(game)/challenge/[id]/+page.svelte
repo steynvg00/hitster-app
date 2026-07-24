@@ -547,8 +547,9 @@
 	// quantity the per-field badges above display, and the one powerup earning
 	// uses, so the block can never disagree with the rows it summarises. Both
 	// result paths supply it (scoreSubmission on submit; the loader rebuilds it
-	// for priorResult), and the fallback sums the rendered FieldResults by the
-	// same rule for any older result that predates the field.
+	// for priorResult), and the fallback sums the rendered FieldResults via the
+	// shared thresholdOfFields ($lib/threshold) — the same rule the scorer uses —
+	// for any older result that predates the field.
 	//
 	// TOTAL is breakdown.final — post multipliers/streak/speed, i.e. the team's
 	// actual challenge score, and what animatedScore counts to.

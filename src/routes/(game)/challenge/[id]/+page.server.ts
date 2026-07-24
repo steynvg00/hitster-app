@@ -307,9 +307,9 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 
 		// Bonus-excluded pair for the results screen's three-part totals block (and
 		// parity with the submit path, which returns these from scoreSubmission).
-		// Mirrors scoring.ts's thresholdOf: skip whole-field bonus fields, subtract
-		// the artist field's bonus-artist portion, and take maxScore as-is (it is
-		// base-only since the stuk 2 correction).
+		// The per-slot field fold is the shared thresholdOfFields ($lib/threshold);
+		// grouping is folded in below from stored scores (this loader rebuilds only
+		// the non-grouping FieldResults, unlike the submit path).
 		const groupingMaxPts = fieldPoints['grouping'] ?? DEFAULT_FIELD_MAX['grouping'] ?? 10;
 		const hasGroupingField = variantFields.includes('grouping' as AnswerField);
 		const groupingIsBonusField = bonusFields.has('grouping');
