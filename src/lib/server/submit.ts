@@ -3,6 +3,7 @@ import type { Database } from '$lib/types/database';
 import type { ChallengeResult, SubmissionStatus } from '$lib/types/index.js';
 import {
 	resolveChallengeFields,
+	resolveTabFields,
 	fieldMapsFromResolved,
 	resolveArtistBonus,
 	scoreSubmission,
@@ -37,8 +38,9 @@ export type ScoreAndPersistInput = {
 		difficulty_rating?: number;
 		speed_threshold_seconds?: number | null;
 	};
-	// Pre-loaded challenge_tabs rows.
-	tabs: Array<{ id: string; position: number; mashup_id?: string | null }>;
+	// Pre-loaded challenge_tabs rows. `fields` (C3b, migration 0068) is the per-tab
+	// fields override; NULL/absent → inherit challenge-wide. Both callers select('*').
+	tabs: Array<{ id: string; position: number; mashup_id?: string | null; fields?: unknown }>;
 	teamId: string;
 	playerSetId: string | null;
 	// New multi-track shape: Record<tabPosition, SlotDraft[]>. Pass {} for an
@@ -169,12 +171,15 @@ export async function scoreAndPersistSubmission(
 	const streakThresholds = ((vdRow?.streak_config as Record<string, unknown> | null)?.thresholds ??
 		[]) as Array<{ streak: number; bonus: number }>;
 
-	// Single source of truth for fields + modes + points + bonus flags.
+	// Challenge-wide fields — the fallback for tabs without an override, and the
+	// scoreSubmission base params. Per-tab resolution (C3b) is attached below via
+	// resolveTabFields on each TabInput; with every tab NULL the two are identical.
 	const resolvedFields = resolveChallengeFields(variant, pcRaw, variantDefaultPoints);
 	const { fields: variantFields, fieldModes, fieldPoints, bonusFields } =
 		fieldMapsFromResolved(resolvedFields);
-	// Per-challenge bonus-artist marking (C1 stuk 1). {} for every challenge that
-	// hasn't set one, which is all of them until C1 stuk 2's editor ships.
+	// Per-challenge bonus-artist marking (C1 stuk 1) stays challenge-wide. {} for
+	// every challenge that hasn't set one, which is all of them until C1 stuk 2's
+	// editor ships.
 	const artistBonus = resolveArtistBonus(pcRaw);
 
 	// ── Bonus params ──────────────────────────────────────────────────────
@@ -224,12 +229,23 @@ export async function scoreAndPersistSubmission(
 		);
 		const tabClipItems = allTabClipData.filter((c) => c.tabId === tab.id);
 		const playerDraft: SlotDraft[] = draftByTab[String(tab.position)] ?? [{ fieldValues: {} }];
+		// C3b: resolve THIS tab's fields (override or inherited-challenge-wide) and
+		// attach as fieldMaps. NULL tab (all of them, this batch) → challenge-wide,
+		// so scoring is bit-identical.
+		const fieldMaps = fieldMapsFromResolved(
+			resolveTabFields(
+				{ fields: (tab as { fields?: unknown }).fields },
+				{ variant, points_config: pcRaw },
+				variantDefaultPoints
+			)
+		);
 		return {
 			tabId: tab.id,
 			tabPosition: tab.position,
 			sourceTracks: tabSrcs,
 			clips: tabClipItems,
-			playerDraft
+			playerDraft,
+			fieldMaps
 		};
 	});
 

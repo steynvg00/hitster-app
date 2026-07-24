@@ -1188,6 +1188,15 @@ export type TabInput = {
 	sourceTracks: TabSourceTrackData[];
 	clips: TabClipData[];
 	playerDraft: SlotDraft[]; // indexed by slot
+	// C3b: optional per-tab resolved field maps (from resolveTabFields via
+	// fieldMapsFromResolved). When present they OVERRIDE the challenge-wide
+	// maps for THIS tab; when absent the challenge-wide params below are used.
+	// The real submit path always fills this (resolveTabFields never returns
+	// null — a NULL tab yields the challenge-wide maps), so the fallback is for
+	// fixtures/tests that pass challenge-wide maps and no per-tab override.
+	// Shape is exactly fieldMapsFromResolved's return (its `fields` key is the
+	// field-name list).
+	fieldMaps?: ReturnType<typeof fieldMapsFromResolved>;
 };
 
 export function scoreSubmission(
@@ -1214,15 +1223,19 @@ export function scoreSubmission(
 
 	for (let i = 0; i < tabs.length; i++) {
 		const tab = tabs[i];
+		// C3b: prefer this tab's own resolved maps (a per-tab override) and fall
+		// back to the challenge-wide params. With every tab NULL (this batch) the
+		// per-tab maps ARE the challenge-wide maps, so scoring is bit-identical.
+		const tf = tab.fieldMaps;
 		const { slotResults, tabTotal, tabMaxTotal, tabThresholdTotal, tabThresholdMax, sourceAnswers } =
 			scoreTab(
-				variantFields,
-				fieldModes,
-				fieldPoints,
+				tf?.fields ?? variantFields,
+				tf?.fieldModes ?? fieldModes,
+				tf?.fieldPoints ?? fieldPoints,
 				tab.sourceTracks,
 				tab.clips,
 				tab.playerDraft,
-				bonusFields,
+				tf?.bonusFields ?? bonusFields,
 				artistBonus
 			);
 		thresholdTotal += tabThresholdTotal;
@@ -1331,6 +1344,7 @@ export async function computeSetMaxScore(
 		id: string;
 		challenge_id: string;
 		mashup_id?: string | null;
+		fields?: unknown; // C3b per-tab override (migration 0068)
 	}>;
 	if (tabs.length === 0) return 0;
 	const tabIds = tabs.map((t) => t.id);
@@ -1397,13 +1411,15 @@ export async function computeSetMaxScore(
 	for (const ch of challenges) {
 		const variant = ch.variant;
 		const vdPoints = vdPointsByVariant.get(variant) ?? {};
-		// Route field resolution through the single source of truth so bonus fields
-		// are excluded from the cumulative-threshold denominator.
-		const resolved = resolveChallengeFields(variant, ch.points_config, vdPoints);
-		const { fields: variantFields, fieldModes, fieldPoints, bonusFields } =
-			fieldMapsFromResolved(resolved);
 
 		for (const tab of tabsByChallenge.get(ch.id) ?? []) {
+			// C3b: resolve PER TAB via the single source of truth so a tab override
+			// changes this tab's denominator contribution — and bonus fields are
+			// still excluded. NULL tab → challenge-wide, bit-identical to pre-C3b.
+			const { fields: variantFields, fieldModes, fieldPoints, bonusFields } =
+				fieldMapsFromResolved(
+					resolveTabFields(tab, { variant, points_config: ch.points_config }, vdPoints)
+				);
 			const resolvedSrcs = getSourceTracksForTab(
 				variant,
 				tab,
