@@ -341,7 +341,9 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 				// FieldResult to read here (unlike the submit path, where scoreTab pushes
 				// one). Fold its stored per-slot score in from sa.scored — otherwise a
 				// fragments reload would credit grouping points to the Bonus cell.
-				if (hasGroupingField && !groupingIsBonusField) {
+				// `track` gates this exactly like the field rebuild above: an overflow
+				// slot (no matched source track) contributes nothing to thresholdMax.
+				if (hasGroupingField && !groupingIsBonusField && track) {
 					thresholdTotal += Number(
 						(sa.scored as Record<string, number> | undefined)?.['grouping'] ?? 0
 					);

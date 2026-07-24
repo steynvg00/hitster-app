@@ -882,12 +882,13 @@ export function scoreTab(
 
 		if (bestTrackIdx === -1) {
 			// More player slots than source tracks — score 0 for overflow slots.
-			// (Mirrors the max: overflow slots do NOT include groupingMax.)
+			// An overflow slot has no source track and can never be scored, so it
+			// contributes NOTHING to thresholdMax (the powerup-earn denominator).
+			// Its display maxTotal is kept for the result screen only.
 			const maxTotal = nonGroupingFields.reduce(
 				(s, f) => s + (fieldPoints[f] ?? DEFAULT_FIELD_MAX[f] ?? 10),
 				0
 			);
-			tabThresholdMax += nonBonusFieldMax(nonGroupingFields);
 			slotResults.push({
 				slotIndex: slotIdx,
 				matchedTrackId: null,
@@ -945,8 +946,9 @@ export function scoreTab(
 		const totalMax = slotMax + (hasGrouping ? groupingMax : 0);
 
 		// Threshold (bonus-excluded): non-bonus regular fields + grouping when it's
-		// present and not flagged bonus. Max always includes groupingMax when
-		// hasGrouping (mirrors totalMax); total adds groupingScore (0 if no fragments).
+		// present and not flagged bonus. Max includes groupingMax only under that
+		// same gate (hasGrouping && !groupingIsBonus) — a bonus-flagged grouping is
+		// excluded, unlike totalMax; total adds groupingScore (0 if no fragments).
 		const slotTh = thresholdOf(bestFields);
 		tabThresholdTotal += slotTh.total + (hasGrouping && !groupingIsBonus ? groupingScore : 0);
 		tabThresholdMax += slotTh.max + (hasGrouping && !groupingIsBonus ? groupingMax : 0);
