@@ -336,7 +336,14 @@
 		{ id: 'tap_to_break', name: 'Tap to Break', icon: '🔨' },
 		{ id: 'lucky_dice', name: 'Lucky Dice', icon: '🍀' },
 		{ id: 'x_ray', name: 'X-Ray', icon: '🔎' },
-		{ id: 'free_tab', name: 'Free Tab', icon: '🗂️' }
+		{ id: 'free_tab', name: 'Free Tab', icon: '🗂️' },
+		{ id: 'double_down', name: 'Double Down', icon: '🎰' },
+		// Inverse types (earned on a LOW score in production) belong in this list
+		// too: it feeds a dev TEST tool, not an earn simulation — the award endpoint
+		// and the force-cookie path both take any type id verbatim, so the only
+		// thing that ever hid these was this hardcoded list going stale.
+		{ id: 'penalty_shot', name: 'Penalty Shot', icon: '🥃' },
+		{ id: 'lifeline', name: 'Lifeline', icon: '🆘' }
 	];
 
 	const TEAM_COLORS = ['blue', 'yellow', 'green', 'red', 'indigo', 'black'];
