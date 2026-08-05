@@ -79,29 +79,52 @@
 				return `×${payload.multiplier ?? 1.5} on your next challenge!`;
 			case 'penalty_shot':
 				return 'You scored low — penalty shot! 🥃 Bottoms up.';
-			case 'power_spin': {
-				// WHAT the wheel landed on is the entire payoff of this powerup, so the
-				// rolled powerup's own name and icon are the message — read from the
-				// payload the server wrote, the same way lucky_dice shows its number.
-				//
-				// The rolled powerup is NOT resolved here: it was already materialized
-				// through the normal award path and arrives as its own queue entry, so
-				// the very next card is its ordinary store/lose (or immediate-use)
-				// reveal. This line only announces it.
-				if (!payload.rolled_type_id)
-					return 'The wheel came up empty — no powerups were available to win. Unlucky!';
-				return `🎡 The wheel landed on ${payload.rolled_type_icon ?? ''} ${payload.rolled_type_name ?? 'a powerup'} — it's yours!`;
-			}
+			case 'power_spin':
+				// The rolled powerup's NAME and ICON are no longer said here — the slot
+				// machine settles on them (see spinOutcome / settleIcon below), which is
+				// what makes the animation the reveal instead of decoration in front of
+				// one. This line is the caption underneath, so it must not repeat the
+				// name the title already shows.
+				return payload.rolled_type_id
+					? "Won on the Power Spin — it's yours!"
+					: 'The wheel came up empty — no powerups were available to win. Unlucky!';
 			default:
 				return powerupType.description ?? 'Effect applied!';
 		}
 	}
+
+	// ── power_spin: what the wheel landed on ─────────────────────────────────
+	//
+	// Read from the payload the server already wrote. The ROLL itself is entirely
+	// server-side (activatePowerup's power_spin branch) and is not touched here —
+	// this only decides WHEN the outcome becomes visible.
+	//
+	// Before: the slot machine settled on Power Spin's OWN icon (🎡), which reveals
+	// nothing, and the outcome arrived as a line of text that popped in at the same
+	// instant. The animation had no payoff and the reveal had no moment.
+	// Now: the machine settles ON the rolled powerup, so stopping IS the reveal.
+	//
+	// null for every other powerup, which keeps their behaviour byte-identical.
+	const spinOutcome = $derived.by(() => {
+		if (powerupType.id !== 'power_spin') return null;
+		const p = activation?.payload ?? {};
+		if (!p.rolled_type_id) return { empty: true, name: '', icon: '🎡' };
+		return {
+			empty: false,
+			name: typeof p.rolled_type_name === 'string' ? p.rolled_type_name : 'a powerup',
+			icon: typeof p.rolled_type_icon === 'string' ? p.rolled_type_icon : '✦'
+		};
+	});
 
 	// Slot-machine animation: cycle through random icons for 2 seconds then settle.
 	// penalty_shot is a spontaneous social popup, not a prize roll — skip the roll
 	// and render the settled state immediately.
 	const ICONS = ['🎲', '⚡', '🛡️', '🔥', '💡', '✨', '⏱️', '🪙', '🎯', '🌀'];
 	const animate = powerupType.id !== 'penalty_shot';
+
+	// What the machine comes to rest on. For a spin that is the PRIZE; for
+	// everything else it is the powerup's own icon, exactly as before.
+	const settleIcon = $derived(spinOutcome ? spinOutcome.icon : (powerupType.icon ?? '✦'));
 
 	let displayIcon = $state(animate ? ICONS[0] : (powerupType.icon ?? '✦'));
 	let settled = $state(!animate);
@@ -124,7 +147,9 @@
 			displayIcon = ICONS[idx];
 			animFrame = requestAnimationFrame(runAnimation);
 		} else {
-			displayIcon = powerupType.icon ?? '✦';
+			// The settle. For a spin this is the reveal moment: the wheel stops on the
+			// powerup that was won, and only then does the name below appear.
+			displayIcon = settleIcon;
 			settled = true;
 		}
 	}
@@ -161,9 +186,14 @@
 		aria-modal="true"
 	>
 		<div class="w-full max-w-sm rounded-2xl border border-zinc-700 bg-zinc-900 p-6 shadow-2xl">
-			<!-- Header -->
+			<!-- Header. A spin says what is happening WITHOUT saying what was won, so
+			     the wheel below stays the only thing that can give the outcome away. -->
 			<p class="mb-5 text-center text-xs font-bold tracking-widest text-amber-400 uppercase">
-				Powerup Earned!
+				{#if spinOutcome}
+					{settled ? 'Power Spin — you won' : 'Spinning the wheel…'}
+				{:else}
+					Powerup Earned!
+				{/if}
 			</p>
 
 			<!-- Slot machine / settled icon -->
@@ -180,8 +210,12 @@
 			</div>
 
 			{#if settled}
-				<!-- Name + description -->
-				<p class="mb-1 text-center text-lg font-black text-white">{powerupType.name}</p>
+				<!-- Name. On a spin the prize is the headline, not "Power Spin" — the
+				     card is announcing what was won, and the header above already says
+				     where it came from. An empty wheel falls back to "Power Spin". -->
+				<p class="mb-1 text-center text-lg font-black text-white">
+					{spinOutcome && !spinOutcome.empty ? spinOutcome.name : powerupType.name}
+				</p>
 				{#if powerupType.description && !powerupType.immediate_use}
 					<p class="mb-6 text-center text-sm text-zinc-400">{powerupType.description}</p>
 				{:else}
