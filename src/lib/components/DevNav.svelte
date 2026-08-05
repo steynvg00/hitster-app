@@ -13,6 +13,16 @@
 		active_set: { id: string; name: string; play_state: string } | null;
 		recent_sets: Array<{ id: string; name: string; status: string; created_at: string }>;
 		recent_challenges: Array<{ id: string; name: string; variant: string; status: string }>;
+		// The powerup catalog, straight from powerup_types (see /api/dev/state).
+		// Optional so a stale/older response — or a fetch that has not landed yet —
+		// degrades to an empty dropdown rather than a crash.
+		powerup_types?: Array<{
+			id: string;
+			name: string;
+			icon: string | null;
+			category: string;
+			coming_soon: boolean;
+		}>;
 	};
 
 	type LinkDef = {
@@ -322,39 +332,45 @@
 		black: 'bg-neutral-700 border border-zinc-500'
 	};
 
-	const POWERUP_TYPES = [
-		{ id: 'shield', name: 'Shield', icon: '🛡️' },
-		{ id: 'time_boost', name: 'Time Boost', icon: '⏱️' },
-		{ id: 'insurance', name: 'Insurance', icon: '🪙' },
-		{ id: 'bonus_points', name: 'Bonus Points', icon: '✨' },
-		{ id: 'hard_gaan', name: 'Hard Gaan', icon: '🔥' },
-		{ id: 'single_event_mult', name: 'Single-Event Mult', icon: '🎲' },
-		{ id: 'free_answer', name: 'Free Answer', icon: '💡' },
-		{ id: 'give_a_shot', name: 'Give a Shot', icon: '🥂' },
-		{ id: 'freeze', name: 'Freeze', icon: '🧊' },
-		{ id: 'time_drain', name: 'Time Drain', icon: '⏳' },
-		{ id: 'tap_to_break', name: 'Tap to Break', icon: '🔨' },
-		{ id: 'lucky_dice', name: 'Lucky Dice', icon: '🍀' },
-		{ id: 'x_ray', name: 'X-Ray', icon: '🔎' },
-		{ id: 'free_tab', name: 'Free Tab', icon: '🗂️' },
-		{ id: 'double_down', name: 'Double Down', icon: '🎰' },
-		// Inverse types (earned on a LOW score in production) belong in this list
-		// too: it feeds a dev TEST tool, not an earn simulation — the award endpoint
-		// and the force-cookie path both take any type id verbatim, so the only
-		// thing that ever hid these was this hardcoded list going stale.
-		{ id: 'penalty_shot', name: 'Penalty Shot', icon: '🥃' },
-		{ id: 'lifeline', name: 'Lifeline', icon: '🆘' }
-	];
-
 	const TEAM_COLORS = ['blue', 'yellow', 'green', 'red', 'indigo', 'black'];
 
 	// ── Powerup tools state ───────────────────────────────────────────────────
+
+	// The list both powerup tools offer, DERIVED FROM THE CATALOG rather than
+	// restated here. This used to be a hardcoded literal that had to be edited by
+	// hand for every new powerup, and it fell behind every time — lifeline was
+	// missing, then power_spin — because nothing connects a literal to the table it
+	// mirrors. Now a new row in powerup_types shows up on the next panel open, with
+	// no code change at all.
+	//
+	// Deliberately NOT filtered on coming_soon: this is a TEST tool, and forcing a
+	// half-built powerup to see what it does is exactly what it is for. Both dev
+	// paths accept any id already (the award endpoint inserts powerup_type_id
+	// verbatim; the force cookie is read back with a plain .eq), so nothing but
+	// this list ever decided what was reachable. Placeholders are LABELLED below
+	// instead of hidden, so the tool tells the truth about what it is offering.
+	const powerupTypes = $derived(devState?.powerup_types ?? []);
+	const powerupTypesReady = $derived(powerupTypes.length > 0);
+
 	let forcePowerupTypeId = $state('');
-	const forcedType = $derived(POWERUP_TYPES.find((p) => p.id === forcePowerupTypeId));
+	const forcedType = $derived(powerupTypes.find((p) => p.id === forcePowerupTypeId));
 	let awardTeamColor = $state('blue');
-	let awardTypeId = $state('shield');
+	// Empty until the catalog lands — the old default was a hardcoded 'shield',
+	// which is the same staleness in miniature (it would silently break the day
+	// shield is renamed or dropped). The effect below picks the catalog's first
+	// entry instead, so the select is never bound to an id that does not exist.
+	let awardTypeId = $state('');
 	let awardStatus = $state<'idle' | 'loading' | 'ok' | 'error'>('idle');
 	let awardError = $state('');
+
+	$effect(() => {
+		if (!powerupTypesReady) return;
+		// Seed on first load, and self-heal if the currently selected id vanished
+		// from the catalog (a type renamed or removed between fetches).
+		if (!awardTypeId || !powerupTypes.some((p) => p.id === awardTypeId)) {
+			awardTypeId = powerupTypes[0].id;
+		}
+	});
 
 	$effect(() => {
 		try {
@@ -629,8 +645,10 @@
 									class="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-300 outline-none focus:border-purple-600"
 								>
 									<option value="">Random (default)</option>
-									{#each POWERUP_TYPES as pt}
-										<option value={pt.id}>{pt.icon} {pt.name}</option>
+									{#each powerupTypes as pt}
+										<option value={pt.id}
+											>{pt.icon ?? '✦'} {pt.name}{pt.coming_soon ? ' · soon' : ''}</option
+										>
 									{/each}
 								</select>
 								{#if forcePowerupTypeId}
@@ -672,14 +690,19 @@
 									bind:value={awardTypeId}
 									class="flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-300 outline-none focus:border-purple-600"
 								>
-									{#each POWERUP_TYPES as pt}
-										<option value={pt.id}>{pt.icon} {pt.name}</option>
+									{#if !powerupTypesReady}
+										<option value="">{loading ? 'Loading…' : 'No powerup types'}</option>
+									{/if}
+									{#each powerupTypes as pt}
+										<option value={pt.id}
+											>{pt.icon ?? '✦'} {pt.name}{pt.coming_soon ? ' · soon' : ''}</option
+										>
 									{/each}
 								</select>
 							</div>
 							<button
 								onclick={awardPowerup}
-								disabled={awardStatus === 'loading' || !activeSetId}
+								disabled={awardStatus === 'loading' || !activeSetId || !awardTypeId}
 								class="w-full rounded border border-purple-800 bg-purple-950/50 px-2 py-1 text-[11px] font-semibold text-purple-300 transition hover:bg-purple-900/50 disabled:cursor-not-allowed disabled:opacity-50"
 							>
 								{awardStatus === 'loading'
