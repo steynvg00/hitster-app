@@ -392,12 +392,14 @@ export function deriveEffectModifiers(effects: ActiveEffect[]): {
 	extraMultipliers: number[];
 	insuranceActive: boolean;
 	bonusPoints: number;
+	doubleDownPct: number | null;
 	toConsume: ActiveEffect[];
 } {
 	const now = Date.now();
 	const extraMultipliers: number[] = [];
 	let insuranceActive = false;
 	let bonusPoints = 0;
+	let doubleDownPct: number | null = null;
 	const toConsume: ActiveEffect[] = [];
 
 	for (const e of effects) {
@@ -427,10 +429,29 @@ export function deriveEffectModifiers(effects: ActiveEffect[]): {
 				toConsume.push(e);
 				break;
 			}
+			case 'double_down': {
+				// The only effect whose multiplier is NOT knowable here: it depends on
+				// the percentage this submission scores, which does not exist until
+				// scoreSubmission has folded every tab. So this hands the raw prediction
+				// through to the scorer instead of a number, and computeBreakdown — the
+				// one place with both the prediction and the threshold pair in scope —
+				// resolves it into the same additive-delta sum as the multipliers above.
+				//
+				// Only one can be active (activatePowerup guard 3); if a stale row ever
+				// slipped past, the first wins rather than two bets compounding.
+				const pct = e.payload.predicted_pct as number | undefined;
+				if (typeof pct === 'number' && Number.isFinite(pct) && doubleDownPct === null) {
+					doubleDownPct = pct;
+				}
+				// Consumed win or lose, like single_event_mult: the bet rode this
+				// submission and does not carry over to the next challenge.
+				toConsume.push(e);
+				break;
+			}
 		}
 	}
 
-	return { extraMultipliers, insuranceActive, bonusPoints, toConsume };
+	return { extraMultipliers, insuranceActive, bonusPoints, doubleDownPct, toConsume };
 }
 
 /**

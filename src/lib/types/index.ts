@@ -173,6 +173,15 @@ export interface ScoreBreakdown {
 	final: number;
 	bonus_powerup?: number;
 	powerup_multipliers?: number[];
+	// double_down: the resolved bet. Persisted so the result screen can explain WHY
+	// the points moved — the multiplier alone is indistinguishable from any other
+	// entry in powerup_multipliers. Present only when a Double Down was active.
+	double_down?: {
+		predicted_pct: number; // what the team predicted, 0–100
+		score_pct: number; // what it actually scored (bonus-excluded threshold %)
+		hit: boolean; // score_pct >= predicted_pct
+		multiplier: number; // the factor that entered the additive-delta sum
+	};
 }
 
 // Per-slot answer within a tab (new multi-source shape)

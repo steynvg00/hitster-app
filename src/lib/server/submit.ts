@@ -195,6 +195,7 @@ export async function scoreAndPersistSubmission(
 		extraMultipliers: [],
 		insuranceActive: false,
 		bonusPoints: 0,
+		doubleDownPct: null,
 		toConsume: []
 	};
 	if (playerSetId) {
@@ -213,7 +214,10 @@ export async function scoreAndPersistSubmission(
 		speed_threshold_seconds: challenge.speed_threshold_seconds ?? null,
 		extraMultipliers: effectModifiers.extraMultipliers,
 		insuranceActive: effectModifiers.insuranceActive,
-		bonusPoints: effectModifiers.bonusPoints
+		bonusPoints: effectModifiers.bonusPoints,
+		// Not a multiplier — the prediction behind one. scoreSubmission resolves it
+		// once it knows this submission's threshold percentage (see computeBreakdown).
+		doubleDownPct: effectModifiers.doubleDownPct
 	};
 
 	// Build TabInput[] for scoreSubmission using getSourceTracksForTab

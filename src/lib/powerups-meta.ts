@@ -62,7 +62,14 @@ export function doubleDownMultiplier(predictedPct: number, scorePct: number): nu
 		DOUBLE_DOWN_MAX_PCT,
 		Math.max(DOUBLE_DOWN_MIN_PCT, Math.round(predictedPct))
 	);
-	return scorePct >= g ? 1 + g / 100 : 1 - g / 100;
+	const raw = scorePct >= g ? 1 + g / 100 : 1 - g / 100;
+	// Snap to 2 decimals. Not cosmetic: 1 - 80/100 is 0.19999999999999996 in
+	// IEEE754, and this number is PERSISTED in submissions.answers[0].breakdown
+	// and rendered to the team ("×0.19999999999999996"). The rounded score is
+	// unaffected either way — Math.round in computeBreakdown absorbs the epsilon —
+	// but the stored and displayed multiplier must be the value the team was
+	// promised. An integer g can never need more than 2 decimals.
+	return Math.round(raw * 100) / 100;
 }
 
 // ─── free_answer reveal addressing ───────────────────────────────────────────

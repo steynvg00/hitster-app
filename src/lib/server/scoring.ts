@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/types/database.js';
 import { parseArtistTags } from '$lib/artist-tags';
 import { thresholdOfFields } from '$lib/threshold';
+import { doubleDownMultiplier } from '$lib/powerups-meta';
 import type {
 	AnswerField,
 	InputMode,
@@ -29,6 +30,11 @@ export interface BonusParams {
 	extraMultipliers?: number[]; // e.g. [1.5] from hard_gaan or single_event_mult
 	insuranceActive?: boolean; // floor base to 50% of maxTotal if true
 	bonusPoints?: number; // flat pts added after final calc (bonus_points powerup)
+	// double_down: the percentage the team predicted BEFORE this challenge started.
+	// Unlike extraMultipliers this is not a multiplier but the input to one — the
+	// factor depends on what this submission actually scores, so only
+	// computeBreakdown (which receives the threshold pair) can resolve it.
+	doubleDownPct?: number | null;
 }
 
 // ─── Field metadata ───────────────────────────────────────────────────────────
@@ -1151,7 +1157,16 @@ export function getSourceTracksForTab(
 
 // ─── Bonus scoring ────────────────────────────────────────────────────────────
 
-export function computeBreakdown(base: number, bonus: BonusParams): ScoreBreakdown {
+export function computeBreakdown(
+	base: number,
+	bonus: BonusParams,
+	// The bonus-excluded threshold pair for THIS submission — the same pair that
+	// drives powerup earning (src/lib/server/submit.ts) and auto_correct, folded by
+	// thresholdOfFields ($lib/threshold). Only double_down reads it, and only
+	// scoreSubmission can supply it, so it is optional: every other caller shape
+	// (and every fixture) behaves exactly as before.
+	threshold?: { total: number; max: number }
+): ScoreBreakdown {
 	// Floor at 1.0 so an easy challenge (rating ≤3) is neutral, never a penalty.
 	// Bonus preserved on hard: rating 4 → 1.33×, rating 5 → 1.67×.
 	const difficulty_multiplier = Math.max(1.0, bonus.difficulty_rating / 3);
@@ -1159,11 +1174,58 @@ export function computeBreakdown(base: number, bonus: BonusParams): ScoreBreakdo
 	const comeback_multiplier =
 		base > 0 && bonus.leader_score > 0 && bonus.team_score < bonus.leader_score * 0.5 ? 1.5 : 1.0;
 
+	// ── double_down: the one conditional multiplier ──────────────────────────
+	// Resolved HERE rather than in deriveEffectModifiers because it needs the
+	// achieved percentage, which does not exist until every tab has been folded.
+	// score% uses the threshold pair, NOT `base`: base may have been lifted by the
+	// insurance floor below, and insurance guaranteeing half the points must not
+	// also win the bet. Same numerator/denominator as the powerup earn-%.
+	//
+	// thresholdMax = 0 (a tab with no source tracks) means there is no percentage
+	// to hit at all. The bet resolves to a no-op ×1.0 — following the C3a-1 posture
+	// that a zero threshold yields no measurable percentage rather than a 0% miss,
+	// which would punish a team for a mis-configured challenge. The effect is still
+	// consumed (deriveEffectModifiers), like single_event_mult.
+	const ddPct = bonus.doubleDownPct;
+	let double_down: ScoreBreakdown['double_down'];
+	if (typeof ddPct === 'number' && Number.isFinite(ddPct)) {
+		const max = threshold?.max ?? 0;
+		if (max > 0) {
+			const score_pct = ((threshold?.total ?? 0) / max) * 100;
+			const multiplier = doubleDownMultiplier(ddPct, score_pct);
+			double_down = {
+				predicted_pct: ddPct,
+				score_pct: Math.round(score_pct * 10) / 10,
+				hit: score_pct >= ddPct,
+				multiplier
+			};
+		} else {
+			double_down = { predicted_pct: ddPct, score_pct: 0, hit: false, multiplier: 1 };
+		}
+	}
+
 	// Additive-delta formula: multiplied = base × (1 + Σ(m_i - 1)) for all multipliers.
-	// Prevents runaway stacking vs chain-multiply.
+	// Prevents runaway stacking vs chain-multiply. double_down joins the SAME sum —
+	// it is not a second × layer on top — so a lost bet subtracts from what
+	// hard_gaan / single_event_mult added instead of compounding against them.
 	const extraMultipliers = bonus.extraMultipliers ?? [];
-	const allMultipliers = [difficulty_multiplier, round_multiplier, comeback_multiplier, ...extraMultipliers];
-	const multiplied = Math.round(base * (1 + allMultipliers.reduce((sum, m) => sum + (m - 1), 0)));
+	const allMultipliers = [
+		difficulty_multiplier,
+		round_multiplier,
+		comeback_multiplier,
+		...extraMultipliers,
+		...(double_down ? [double_down.multiplier] : [])
+	];
+	const deltaSum = allMultipliers.reduce((sum, m) => sum + (m - 1), 0);
+	// Every other multiplier contributes a delta ≥ 0 by construction (difficulty is
+	// floored at 1.0 above, set_challenges.challenge_multiplier has CHECK >= 1 per
+	// migration 0053, comeback is 1.0 or 1.5, powerup multipliers are 1.5), so
+	// 1 + Σ can only reach 0 — never below — and only via a fully-lost double_down
+	// at g=100. The clamp is therefore unreachable today; it is applied ONLY when a
+	// bet is present so that no submission without one can change behaviour, and it
+	// exists so a future sub-1.0 multiplier can never invert a score into negative.
+	const factor = double_down ? Math.max(0, 1 + deltaSum) : 1 + deltaSum;
+	const multiplied = Math.round(base * factor);
 
 	let streak_bonus = 0;
 	for (const t of bonus.streak_thresholds) {
@@ -1190,7 +1252,8 @@ export function computeBreakdown(base: number, bonus: BonusParams): ScoreBreakdo
 		speed_bonus,
 		final,
 		...(bonus_powerup > 0 ? { bonus_powerup } : {}),
-		...(extraMultipliers.length > 0 ? { powerup_multipliers: extraMultipliers } : {})
+		...(extraMultipliers.length > 0 ? { powerup_multipliers: extraMultipliers } : {}),
+		...(double_down ? { double_down } : {})
 	};
 }
 
@@ -1300,7 +1363,11 @@ export function scoreSubmission(
 	const status: SubmissionStatus =
 		thresholdMax > 0 && thresholdTotal === thresholdMax ? 'auto_correct' : 'auto_wrong';
 
-	const breakdown = bonus ? computeBreakdown(base, bonus) : undefined;
+	// The threshold pair is handed over so a double_down bet can be resolved against
+	// the percentage this submission actually scored (see computeBreakdown).
+	const breakdown = bonus
+		? computeBreakdown(base, bonus, { total: thresholdTotal, max: thresholdMax })
+		: undefined;
 
 	if (breakdown && answersArray.length > 0) {
 		answersArray[0] = { ...answersArray[0], breakdown };

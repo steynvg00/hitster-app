@@ -85,8 +85,20 @@
 		speed_bonus: 'Speed +',
 		bonus_powerup: 'Powerup +',
 		powerup_multipliers: 'Powerup ×',
+		double_down: 'Double Down',
 		final: 'Final'
 	};
+
+	// Every breakdown value is a number or a number[] except double_down, which is
+	// an object — rendering it raw would print [object Object] in the host console.
+	function breakdownValue(key: string, value: unknown): string {
+		if (key === 'double_down' && value && typeof value === 'object') {
+			const dd = value as ScoreBreakdown['double_down'];
+			if (!dd) return '';
+			return `${dd.predicted_pct}% predicted, ${dd.score_pct}% scored → ${dd.hit ? 'hit' : 'miss'} ×${dd.multiplier}`;
+		}
+		return String(value);
+	}
 
 	type ParsedSlot = {
 		slotIndex: number;
@@ -903,7 +915,10 @@
 										class="mt-2 flex flex-wrap gap-x-3 gap-y-1 border-t border-zinc-800 pt-2 text-[11px] text-zinc-500"
 									>
 										{#each Object.entries(parsed.breakdown) as [key, value]}
-											<span>{BREAKDOWN_LABELS[key as keyof ScoreBreakdown] ?? key} {value}</span>
+											<span
+											>{BREAKDOWN_LABELS[key as keyof ScoreBreakdown] ?? key}
+											{breakdownValue(key, value)}</span
+										>
 										{/each}
 									</div>
 								{/if}

@@ -20,6 +20,7 @@
 		"bots:verify-recap-flow": "tsx tests/bots/verify-recap-flow.ts",
 		"bots:verify-battle-integration": "tsx tests/bots/verify-battle-integration.ts",
 		"bots:verify-earning": "tsx tests/bots/verify-earning.ts",
+		"bots:verify-double-down": "tsx tests/bots/verify-double-down.ts",
 		"bots:verify-regression": "tsx tests/bots/verify-regression.ts",
 		"bots:fixtures": "tsx scripts/gen-fixtures.ts",
 		"seed:mechanics": "tsx scripts/seed-mechanics-set.ts"
