@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { supabaseBrowser } from '$lib/supabase-browser';
+	import { doubleDownMultiplier } from '$lib/powerups-meta';
 
 	type ActiveEffect = {
 		id: string;
@@ -48,6 +49,7 @@
 		insurance: '🪙 Insurance ready',
 		free_answer: '💡 Free answer',
 		time_boost: '⏱ Time boost',
+		double_down: '🎰 Double Down',
 		// tap_to_break (stuk 3) is the one offensive attack that ISN'T pre-consumed,
 		// so it survives to show here — useful on /team where the challenge page's
 		// full-screen lock overlay isn't mounted.
@@ -66,6 +68,13 @@
 		if (e.effect_type === 'bonus_points') {
 			const v = (e.payload.value as number | undefined) ?? 15;
 			return `+${v} next submission`;
+		}
+		if (e.effect_type === 'double_down') {
+			// The prediction is the whole point of the pill: a team that has bet must be
+			// able to see WHAT it bet while playing, not just that a bet is live.
+			const g = e.payload.predicted_pct as number | undefined;
+			if (typeof g !== 'number') return base;
+			return `${base} — ${g}% predicted (×${doubleDownMultiplier(g, 100)} / ×${doubleDownMultiplier(g, 0)})`;
 		}
 		return base;
 	}
