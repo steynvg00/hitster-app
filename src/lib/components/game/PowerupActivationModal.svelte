@@ -7,7 +7,9 @@
 		doubleDownMultiplier,
 		DOUBLE_DOWN_MIN_PCT,
 		DOUBLE_DOWN_MAX_PCT,
-		type RevealResult
+		X_RAY_DEFAULT_BUDGET,
+		type RevealResult,
+		type RevealTarget
 	} from '$lib/powerups-meta';
 	import { supabaseBrowser } from '$lib/supabase-browser';
 
@@ -27,6 +29,14 @@
 		hasActiveTimedAttempt?: boolean;
 	};
 
+	// One tab of the challenge, as far as the free_tab picker needs to know it:
+	// which fields it has and how many answer slots.
+	type RevealTab = {
+		id: string;
+		label: string;
+		fields: string[];
+		slotCount: number;
+	};
 
 	let {
 		teamPowerupId,
@@ -36,12 +46,16 @@
 		variantFields = [],
 		tabId,
 		slotIndex = 0,
+		revealTabs = [],
 		targetTeams = [],
 		activateAction = '?/activatePowerup'
 	}: {
 		teamPowerupId: string;
 		type: PowerupType;
-		onclose: (activated?: boolean, reveal?: RevealResult) => void;
+		// `reveals` is a LIST because free_tab produces several at once. free_answer
+		// hands back a one-element list — one apply path on the page, not one per
+		// powerup.
+		onclose: (activated?: boolean, reveals?: RevealResult[]) => void;
 		currentChallengeId?: string;
 		// free_answer: the fields of the tab being answered, and the (tab, slot) the
 		// reveal is addressed to. A field name alone does not identify an answer on a
@@ -49,6 +63,9 @@
 		variantFields?: string[];
 		tabId?: string;
 		slotIndex?: number;
+		// free_tab only: every tab of this challenge with its fields and slot count,
+		// so the picker can address a tab the player is not currently looking at.
+		revealTabs?: RevealTab[];
 		targetTeams?: TargetTeam[];
 		// The form action to POST to. Defaults to the held-powerup activation path
 		// (?/activatePowerup, requires status='held'). The reveal modal's "Use now"
@@ -65,7 +82,18 @@
 	let selectedField = $state(variantFields.filter((f) => f !== 'grouping')[0] ?? '');
 	let selectedTargetId = $state('');
 	// After a targeted attack resolves, show a confirmation instead of auto-closing.
-	let resultState = $state<'idle' | 'sent' | 'blocked'>('idle');
+	// 'rolled' is the same idea for lucky_dice: an activation with an OUTCOME the
+	// team has to see. Closing straight away — which is what every other self
+	// powerup does, because their effect is a promise about a later submission —
+	// threw the rolled number away, so the points appeared with no explanation.
+	let resultState = $state<'idle' | 'sent' | 'blocked' | 'rolled'>('idle');
+	let rolled = $state<{ value?: number; dice_min?: number; dice_max?: number; new_score?: number }>(
+		{}
+	);
+	// Powerups whose activation resolves to a number the team must be shown. Only
+	// lucky_dice today; the check is on the payload as well, so a type that starts
+	// returning a roll gets the same treatment without another branch here.
+	const showsRoll = $derived(powerupType.id === 'lucky_dice');
 
 	const TEAM_HEX: Record<string, string> = {
 		blue: '#3b82f6',
@@ -102,6 +130,17 @@
 			action: 'One field will be revealed for you. Choose which field to unlock.',
 			warning: 'Requires an active challenge.'
 		},
+		lucky_dice: {
+			action: 'Roll the dice — whatever you roll is added to your score immediately.'
+		},
+		x_ray: {
+			action: `Activates ${X_RAY_DEFAULT_BUDGET} reveals. Spend them one answer at a time, on any tab, while you play — a reveal button appears next to every field.`,
+			warning: 'A reveal can only be spent during a challenge you have started.'
+		},
+		free_tab: {
+			action: 'Pick one tab — every field of every track on that tab is revealed and filled in.',
+			warning: 'Requires an active challenge.'
+		},
 		double_down: {
 			action:
 				'Predict how much of the next challenge you will score. Hit your prediction and your points go up by that percentage — miss it and they go down by it.',
@@ -124,6 +163,42 @@
 
 	const copy = $derived(EFFECT_COPY[powerupType.id] ?? { action: powerupType.description ?? '' });
 	const needsFieldPicker = $derived(powerupType.id === 'free_answer');
+
+	// ── free_tab tab picker ───────────────────────────────────────────────────
+	//
+	// Builds a list of (tab, slot, field) addresses — the SAME address free_answer's
+	// single field + tab_id + slot_index form — for every cell of the chosen tab.
+	// Nothing is resolved client-side: the addresses go to the server and come back
+	// as answers from free_answer's resolver.
+	//
+	// x_ray has NO picker here any more. Activating it only opens a budget; the
+	// choosing happens later, one field at a time, on the challenge page itself.
+	const needsTabPicker = $derived(powerupType.id === 'free_tab');
+
+	// `grouping` is scored across a whole tab rather than per track, so it has no
+	// single answer — excluded from every picker, exactly as free_answer excludes it.
+	const revealable = (fields: string[]) => fields.filter((f) => f !== 'grouping');
+
+	let selectedTabId = $state('');
+	$effect(() => {
+		if (needsTabPicker && !selectedTabId) selectedTabId = tabId ?? revealTabs[0]?.id ?? '';
+	});
+	const selectedTab = $derived(revealTabs.find((t) => t.id === selectedTabId));
+
+	// What actually gets posted. Built here so the "how many answers will this
+	// reveal" preview below and the hidden input can never disagree.
+	const revealTargets = $derived<RevealTarget[]>(
+		needsTabPicker && selectedTab
+			? Array.from({ length: Math.max(selectedTab.slotCount, 1) }, (_, si) =>
+					revealable(selectedTab.fields).map((f) => ({
+						tabId: selectedTab.id,
+						slotIndex: si,
+						field: f
+					}))
+				).flat()
+			: []
+	);
+	const targetsMissing = $derived(needsTabPicker && revealTargets.length === 0);
 	// double_down asks for a NUMBER rather than a choice from a list — the first
 	// powerup to do so. It travels by the same hidden-input mechanism free_answer's
 	// field picker uses; only the control differs.
@@ -191,7 +266,7 @@
 		};
 	});
 	const needsChallenge = $derived(
-		['time_boost', 'insurance', 'free_answer'].includes(powerupType.id)
+		['time_boost', 'insurance', 'free_answer', 'free_tab'].includes(powerupType.id)
 	);
 	const gated = $derived(needsChallenge && !currentChallengeId);
 	const targetName = $derived(
@@ -214,12 +289,20 @@
 							revealedTags?: string[];
 							revealedTabId?: string;
 							revealedSlotIndex?: number;
+							reveals?: RevealResult[];
+							payload?: Record<string, unknown>;
 							blocked?: boolean;
 					  }
 					| undefined;
 				if (needsTarget) {
 					// Show a caster-side confirmation (blocked vs sent), then close on OK.
 					resultState = data?.blocked ? 'blocked' : 'sent';
+				} else if (showsRoll && data?.payload) {
+					// Hold the modal open on the result instead of closing: the roll IS the
+					// feedback. The number comes from the team_effects payload the server
+					// actually wrote, not from a client-side re-roll.
+					rolled = data.payload as typeof rolled;
+					resultState = 'rolled';
 				} else {
 					// Only hand back a reveal when the server resolved a full address for
 					// it; anything less would be keyed to the wrong tab/slot.
@@ -236,7 +319,17 @@
 									slotIndex: data.revealedSlotIndex
 								}
 							: undefined;
-					onclose(true, reveal);
+					// One shape leaves this modal: a list. free_answer's single reveal
+					// becomes a one-element list; free_tab hands back the list the server
+					// already addressed for it (which may be SHORTER than what was asked
+					// for — unresolvable cells are skipped server-side, see the free_tab
+					// branch in powerups.ts).
+					const reveals: RevealResult[] | undefined = data?.reveals?.length
+						? data.reveals
+						: reveal
+							? [reveal]
+							: undefined;
+					onclose(true, reveals);
 				}
 			} else if (result.type === 'failure') {
 				const data = result.data as { activateError?: string } | undefined;
@@ -264,7 +357,31 @@
 			</div>
 		</div>
 
-		{#if resultState !== 'idle'}
+		{#if resultState === 'rolled'}
+			<!-- lucky_dice: the roll, and the score it already moved. -->
+			<div class="mb-4 rounded-xl border border-amber-600/50 bg-amber-500/10 p-5 text-center">
+				<p class="text-5xl leading-none">🎲</p>
+				<p class="mt-3 text-3xl font-black text-amber-300">You rolled {rolled.value ?? '?'}!</p>
+				<p class="mt-2 text-sm font-semibold text-amber-200">
+					+{rolled.value ?? 0} points, added to your score right now
+				</p>
+				<p class="mt-1 text-xs text-zinc-400">
+					{#if typeof rolled.new_score === 'number'}
+						Your total is now {rolled.new_score}.
+					{/if}
+					{#if typeof rolled.dice_min === 'number' && typeof rolled.dice_max === 'number'}
+						(rolled out of {rolled.dice_min}–{rolled.dice_max})
+					{/if}
+				</p>
+			</div>
+			<button
+				type="button"
+				onclick={() => onclose(true)}
+				class="w-full rounded-xl bg-amber-400 py-2.5 text-sm font-bold text-zinc-950 transition-colors hover:bg-amber-300"
+			>
+				Nice!
+			</button>
+		{:else if resultState !== 'idle'}
 			<!-- Caster-side confirmation for a targeted attack -->
 			<div class="mb-4 rounded-xl border border-zinc-700 bg-zinc-800/60 p-4 text-center">
 				{#if resultState === 'blocked'}
@@ -353,6 +470,36 @@
 				</div>
 			{/if}
 
+			<!-- Tab picker for free_tab: one tab, every answer on it -->
+			{#if needsTabPicker}
+				<div class="mb-4">
+					<label for="free-tab-pick" class="mb-1.5 block text-xs font-semibold text-zinc-400">
+						Choose a tab to reveal
+					</label>
+					{#if revealTabs.length === 0}
+						<p class="rounded-lg bg-zinc-800 px-3 py-2 text-xs text-zinc-500">
+							No tabs available on this challenge.
+						</p>
+					{:else}
+						<select
+							id="free-tab-pick"
+							bind:value={selectedTabId}
+							class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200 outline-none focus:border-amber-500"
+						>
+							{#each revealTabs as t (t.id)}
+								<option value={t.id}>{t.label}</option>
+							{/each}
+						</select>
+						{#if revealTargets.length > 0}
+							<p class="mt-1.5 text-xs text-zinc-500">
+								Reveals {revealTargets.length}
+								{revealTargets.length === 1 ? 'answer' : 'answers'} on this tab.
+							</p>
+						{/if}
+					{/if}
+				</div>
+			{/if}
+
 			<!-- Prediction slider for double_down -->
 			{#if needsPrediction}
 				<div class="mb-4">
@@ -428,9 +575,17 @@
 						{#if needsPrediction}
 							<input type="hidden" name="predicted_pct" value={predictedPct} />
 						{/if}
+						{#if revealTargets.length > 0}
+							<!-- free_tab: the whole address list in one field
+							     (parseRevealTargets on the server). -->
+							<input type="hidden" name="reveal_targets" value={JSON.stringify(revealTargets)} />
+						{/if}
 						<button
 							type="submit"
-							disabled={activating || (needsFieldPicker && !selectedField) || targetMissing}
+							disabled={activating ||
+								(needsFieldPicker && !selectedField) ||
+								targetMissing ||
+								targetsMissing}
 							class="w-full rounded-xl bg-amber-400 py-2.5 text-sm font-bold text-zinc-950 transition-colors hover:bg-amber-300 disabled:opacity-50"
 						>
 							{activating ? 'Activating…' : 'Activate'}

@@ -94,6 +94,45 @@ export function freeAnswerRevealKey(tabId: string, slotIndex: number, field: str
 	return `${tabId}:${slotIndex}:${field}`;
 }
 
+// ─── Multi-reveal powerups (group A) ─────────────────────────────────────────
+//
+// x_ray and free_tab reveal SEVERAL answers from one activation. They are not a
+// second reveal mechanism: every single reveal they produce is one
+// (tab, slot, field) triple resolved by the same server helper free_answer uses
+// (resolveFreeAnswerValue), stored as the same team_effects row, keyed by the
+// same freeAnswerRevealKey, and pre-filled by the same applyRevealToDraft. The
+// only difference is how many addresses go in — one, up to five, or a whole tab.
+export const REVEAL_POWERUP_IDS = ['free_answer', 'x_ray', 'free_tab'] as const;
+
+export function isRevealPowerup(id: string): boolean {
+	return (REVEAL_POWERUP_IDS as readonly string[]).includes(id);
+}
+
+/**
+ * x_ray: how many reveals one activation is worth when the set's config does not
+ * say otherwise. A BUDGET, not a per-activation cap: X-Ray hands the team this
+ * many reveals to spend one field at a time, on any tab, while it plays — no tab
+ * in this game has five fields, so five reveals only make sense spread out.
+ * resolveXrayBudget (src/lib/server/powerups.ts) reads the per-set override and
+ * falls back to this.
+ */
+export const X_RAY_DEFAULT_BUDGET = 5;
+
+/**
+ * free_tab: sanity bound on how many cells one tab may hand over. Not a game
+ * rule — a real tab has at most a handful of slots × fields — but the target list
+ * arrives from the client, so the server needs an upper bound it can refuse
+ * beyond.
+ */
+export const FREE_TAB_MAX_REVEALS = 40;
+
+/** One requested reveal, as posted by the activation modal. */
+export type RevealTarget = {
+	tabId?: string;
+	slotIndex: number;
+	field: string;
+};
+
 /**
  * A free_answer reveal, fully addressed. The server echoes back the tab and slot
  * it actually resolved against, so the page keys the badge on what was revealed

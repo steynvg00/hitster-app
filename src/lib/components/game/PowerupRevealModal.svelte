@@ -65,6 +65,14 @@
 		switch (powerupType.id) {
 			case 'bonus_points':
 				return `+${payload.value ?? 15} bonus points banked for your next challenge!`;
+			case 'lucky_dice':
+				// The rolled number is the whole point of this powerup — show it, and the
+				// range it came out of, straight from the payload the server wrote. The
+				// points are ALREADY on the board (activatePowerup writes teams.score
+				// directly), so this says so rather than promising a future bonus.
+				return `🎲 You rolled ${payload.value ?? '?'} (out of ${payload.dice_min ?? 1}–${payload.dice_max ?? 6}) — ${payload.value ?? 0} points added to your score right now${
+					typeof payload.new_score === 'number' ? ` (${payload.new_score} total)` : ''
+				}!`;
 			case 'hard_gaan':
 				return `×${payload.multiplier ?? 1.5} on challenge points for the next ${payload.window_minutes ?? 15} minutes!`;
 			case 'single_event_mult':

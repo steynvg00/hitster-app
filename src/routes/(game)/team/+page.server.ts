@@ -342,6 +342,8 @@ export const actions: Actions = {
 			...parsePredictedPct(fd)
 		});
 		if (!result.success) return fail(400, { activateError: result.error });
-		return { activated: true, blocked: result.blocked };
+		// `payload` carries lucky_dice's roll — /team is a normal place to fire it
+		// from, so the number has to come back here too.
+		return { activated: true, payload: result.payload, blocked: result.blocked };
 	}
 };

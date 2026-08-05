@@ -35,6 +35,7 @@
 		variantFields = [],
 		tabId,
 		slotIndex = 0,
+		revealTabs = [],
 		setTeams = [],
 		onactivated
 	}: {
@@ -46,8 +47,13 @@
 		variantFields?: string[];
 		tabId?: string;
 		slotIndex?: number;
+		// x_ray / free_tab: the tabs a multi-reveal picker can address. Also passed
+		// straight through.
+		revealTabs?: Array<{ id: string; label: string; fields: string[]; slotCount: number }>;
 		setTeams?: TargetTeam[];
-		onactivated?: (reveal: RevealResult) => void;
+		// A list because x_ray/free_tab reveal several answers at once; free_answer
+		// sends a one-element list through the same callback.
+		onactivated?: (reveals: RevealResult[]) => void;
 	} = $props();
 
 	// The teams a caster can attack — every team in the set except their own.
@@ -60,9 +66,9 @@
 		selectedPowerup = p;
 	}
 
-	function onModalClose(activated?: boolean, reveal?: RevealResult) {
+	function onModalClose(activated?: boolean, reveals?: RevealResult[]) {
 		selectedPowerup = null;
-		if (activated && reveal) onactivated?.(reveal);
+		if (activated && reveals?.length) onactivated?.(reveals);
 	}
 
 	onMount(() => {
@@ -133,6 +139,7 @@
 		{variantFields}
 		{tabId}
 		{slotIndex}
+		{revealTabs}
 		{targetTeams}
 	/>
 {/if}

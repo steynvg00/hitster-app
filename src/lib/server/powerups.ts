@@ -14,6 +14,14 @@ import {
 	type TabSourceTrackRaw,
 	type TrackData
 } from '$lib/server/scoring';
+import { maybeTransferCrown } from '$lib/server/crown';
+import {
+	freeAnswerRevealKey,
+	FREE_TAB_MAX_REVEALS,
+	X_RAY_DEFAULT_BUDGET,
+	type RevealResult,
+	type RevealTarget
+} from '$lib/powerups-meta';
 
 export type PowerupType = Database['public']['Tables']['powerup_types']['Row'];
 export type TeamPowerupRow = Database['public']['Tables']['team_powerups']['Row'];
@@ -104,6 +112,62 @@ export function mergePowerupConfig(
 			? { ...current.categories, ...patch.categories }
 			: current.categories
 	};
+}
+
+// ─── lucky_dice: the roll ─────────────────────────────────────────────────────
+//
+// The range is a SETTING, not a constant: it is read from
+// powerup_config.types.lucky_dice.{dice_min,dice_max} — the same per-type override
+// map the console already writes for enabled/threshold/chance — so a later
+// settings UI can retune it without a code change. These two numbers are only the
+// fallback for a set whose config predates the key (every set today).
+export const LUCKY_DICE_DEFAULT_MIN = 1;
+export const LUCKY_DICE_DEFAULT_MAX = 6;
+
+/**
+ * The dice range for a set, from its parsed powerup_config. Anything missing,
+ * non-numeric, non-integer, below 1 or inverted (min > max) falls back to the
+ * 1–6 default rather than producing a nonsense roll — a mis-typed config must not
+ * be able to award 0 or negative points.
+ */
+export function resolveDiceRange(cfg: PowerupConfigV2): { min: number; max: number } {
+	const ov = cfg.types?.lucky_dice;
+	const rawMin = ov?.dice_min;
+	const rawMax = ov?.dice_max;
+	const ok = (n: unknown): n is number =>
+		typeof n === 'number' && Number.isFinite(n) && Number.isInteger(n) && n >= 1;
+	if (!ok(rawMin) || !ok(rawMax) || rawMin > rawMax) {
+		return { min: LUCKY_DICE_DEFAULT_MIN, max: LUCKY_DICE_DEFAULT_MAX };
+	}
+	return { min: rawMin, max: rawMax };
+}
+
+/**
+ * Roll an integer in [min, max], inclusive at BOTH ends.
+ *
+ * The single place the randomness enters, and `rand` is injectable for exactly
+ * that reason: a test can pin it (rand=()=>0 → min, rand=()=>0.999… → max) and
+ * assert the boundaries instead of sampling and hoping. activatePowerup takes the
+ * same injection point via ActivateOptions.rand, so the whole branch is
+ * deterministic under test (tests/bots/verify-group-a.ts drives both).
+ */
+export function rollDice(min: number, max: number, rand: () => number = Math.random): number {
+	return min + Math.floor(rand() * (max - min + 1));
+}
+
+/**
+ * How many reveals one X-Ray activation is worth, from the set's config. Read the
+ * same way the dice range is (powerup_config.types.x_ray.reveal_budget), so a
+ * later settings UI tunes it like any other per-type setting. Anything missing,
+ * non-integer or below 1 falls back to X_RAY_DEFAULT_BUDGET — a budget of 0 would
+ * hand out a powerup that can never do anything.
+ */
+export function resolveXrayBudget(cfg: PowerupConfigV2): number {
+	const raw = cfg.types?.x_ray?.reveal_budget;
+	if (typeof raw !== 'number' || !Number.isFinite(raw) || !Number.isInteger(raw) || raw < 1) {
+		return X_RAY_DEFAULT_BUDGET;
+	}
+	return raw;
 }
 
 export type EarnedPowerup = {
@@ -501,6 +565,13 @@ export type ActivateOptions = {
 	// Immediate-use types (bonus_points, hard_gaan, single_event_mult) auto-activate
 	// straight from the earn path, before the player ever "holds" them.
 	allowFromPending?: boolean;
+	// lucky_dice: the randomness source, injectable so the roll is assertable in a
+	// test (see rollDice). Defaults to Math.random in production.
+	rand?: () => number;
+	// x_ray / free_tab: the (tab, slot, field) addresses to reveal. Each one is
+	// resolved by the SAME helper free_answer's single `field` goes through — this
+	// is a longer list of the same thing, not a different mechanism.
+	revealTargets?: RevealTarget[];
 };
 
 /**
@@ -518,6 +589,37 @@ export function parsePredictedPct(fd: FormData): { predictedPct?: number } {
 	return Number.isFinite(n) ? { predictedPct: n } : {};
 }
 
+/**
+ * Read x_ray / free_tab's target list out of an activation form post. Same role
+ * as parseRevealAddress (free_answer's single tab/slot pair) and parsePredictedPct
+ * (double_down's number): the form field name lives in ONE place, shared by every
+ * ?/activatePowerup action.
+ *
+ * Posted as JSON because the payload is a list of triples, which url-encoded form
+ * fields express badly. Anything unparseable yields {} — activatePowerup's own
+ * per-powerup caps and the resolver are the authority on what is acceptable, so a
+ * malformed list is refused there with a message rather than silently trimmed here.
+ */
+export function parseRevealTargets(fd: FormData): { revealTargets?: RevealTarget[] } {
+	const raw = (fd.get('reveal_targets') as string | null)?.trim();
+	if (!raw) return {};
+	try {
+		const parsed = JSON.parse(raw) as unknown;
+		if (!Array.isArray(parsed)) return {};
+		const targets = parsed
+			.filter((t): t is Record<string, unknown> => !!t && typeof t === 'object')
+			.map((t) => ({
+				tabId: typeof t.tabId === 'string' && t.tabId ? t.tabId : undefined,
+				slotIndex: typeof t.slotIndex === 'number' ? t.slotIndex : 0,
+				field: typeof t.field === 'string' ? t.field : ''
+			}))
+			.filter((t) => t.field !== '');
+		return targets.length ? { revealTargets: targets } : {};
+	} catch {
+		return {};
+	}
+}
+
 export type ActivateResult = {
 	success: boolean;
 	error?: string;
@@ -526,6 +628,11 @@ export type ActivateResult = {
 	revealedTags?: string[]; // free_answer on `artist`: the scorer's targets, for the tag input
 	revealedTabId?: string; // free_answer: which tab the value belongs to
 	revealedSlotIndex?: number; // free_answer: which answer slot within that tab
+	// x_ray / free_tab: every reveal this activation produced, each fully addressed
+	// exactly like free_answer's single one. free_answer keeps its four singular
+	// fields (its contract is untouched); the client normalises both into the same
+	// RevealResult[] before applying them, so there is one apply path, not two.
+	reveals?: RevealResult[];
 	payload?: Record<string, unknown>; // the team_effects payload that was written
 	blocked?: boolean; // offensive types: the target's shield absorbed the attack
 };
@@ -902,6 +1009,155 @@ export async function resolveFreeAnswerValue(
 	return { value, ...(tags?.length ? { tags } : {}), tabId: tab.id, slotIndex };
 }
 
+// ─── x_ray: spending one reveal from the budget ──────────────────────────────
+
+export type SpendXrayResult =
+	| { success: true; reveal: RevealResult; remaining: number }
+	| { success: false; error: string };
+
+/**
+ * Spend ONE reveal from a team's running X-Ray budget.
+ *
+ * This is the whole of X-Ray's per-field mechanic, and it deliberately owns none
+ * of the reveal itself: `resolveReveal` defaults to resolveFreeAnswerValue — the
+ * same function free_answer, free_tab and the original x_ray all go through — and
+ * the row it writes is the same effect_type='free_answer' row the challenge page
+ * already reads back. What lives here is only the budget: find it, refuse without
+ * it, decrement it, and end the powerup when it runs out.
+ *
+ * Order matters, and it is: resolve FIRST, decrement only on success. A cell that
+ * cannot be revealed (mashup tab with no track, `grouping`, an empty column) must
+ * cost nothing — the same "never charge for nothing" rule free_answer applies by
+ * staying held.
+ *
+ * The decrement is a compare-and-swap on the counter's current value (the same
+ * pattern tryConsumeShield and the cumulative-highwater claim use), so two taps
+ * landing at once cannot both spend the same unit: the second finds the counter
+ * already moved and is told to try again.
+ *
+ * `resolveReveal` is injectable for the same reason rollDice's `rand` is — the
+ * budget behaviour can then be asserted without a database. Production never
+ * passes it.
+ */
+export async function spendXrayReveal(
+	supabase: SupabaseClient<Database>,
+	params: {
+		teamId: string;
+		challengeId: string;
+		field: string;
+		tabId: string | null;
+		slotIndex: number;
+	},
+	deps?: { resolveReveal?: typeof resolveFreeAnswerValue }
+): Promise<SpendXrayResult> {
+	const resolveReveal = deps?.resolveReveal ?? resolveFreeAnswerValue;
+
+	// The running budget. Same criterion the banner shows it by — team_id +
+	// consumed_at IS NULL (loadActiveEffects adds set_id, which only narrows it), so
+	// anything the banner displays is findable here.
+	//
+	// Ordered by activated_at, NOT created_at: team_effects has no created_at column
+	// (0044_powerups_runtime.sql — id, team_id, set_id, effect_type, payload,
+	// activated_at, expires_at, consumed_at, consumed_challenge_id, plus 0047's
+	// source_team_powerup_id). PostgREST rejects the whole query on an unknown sort
+	// column, which returned data=null and read as "no effect" — the banner, which
+	// never sorts, kept showing the very row this could not find.
+	const { data: effect, error: lookupErr } = await supabase
+		.from('team_effects')
+		.select('id, set_id, payload, source_team_powerup_id')
+		.eq('team_id', params.teamId)
+		.eq('effect_type', 'x_ray')
+		.is('consumed_at', null)
+		.order('activated_at', { ascending: false })
+		.limit(1)
+		.maybeSingle();
+	// A failed QUERY is not the same as no budget, and conflating the two is what
+	// made the bug above so hard to read from the UI. Surface it as its own message.
+	if (lookupErr) return { success: false, error: `X-Ray lookup failed: ${lookupErr.message}` };
+	if (!effect) return { success: false, error: 'No X-Ray running' };
+
+	const payload = (effect.payload ?? {}) as Record<string, unknown>;
+	const remaining = typeof payload.reveals_remaining === 'number' ? payload.reveals_remaining : 0;
+	if (remaining <= 0) return { success: false, error: 'No X-Ray reveals left' };
+
+	// Same gate free_answer puts on its reveal: you can only uncover an answer on a
+	// challenge you are actually playing.
+	const { data: attempt } = await supabase
+		.from('challenge_attempts')
+		.select('id')
+		.eq('challenge_id', params.challengeId)
+		.eq('team_id', params.teamId)
+		.is('ended_at', null)
+		.maybeSingle();
+	if (!attempt) return { success: false, error: 'No active attempt for this challenge' };
+
+	const resolved = await resolveReveal(
+		supabase,
+		params.challengeId,
+		params.field,
+		params.tabId,
+		params.slotIndex
+	);
+	// Refused: nothing written, nothing charged, budget untouched.
+	if ('error' in resolved) return { success: false, error: resolved.error };
+
+	// CAS: only decrement if the counter still reads what we resolved against.
+	const { data: claimed } = await supabase
+		.from('team_effects')
+		.update({ payload: { ...payload, reveals_remaining: remaining - 1 } } as never)
+		.eq('id', effect.id)
+		.eq('payload->>reveals_remaining', String(remaining))
+		.select('id');
+	if (!claimed?.length) return { success: false, error: 'X-Ray busy — try that again' };
+
+	const reveal: RevealResult = {
+		value: resolved.value,
+		...(resolved.tags?.length ? { tags: resolved.tags } : {}),
+		field: params.field,
+		tabId: resolved.tabId,
+		slotIndex: resolved.slotIndex
+	};
+
+	// The reveal itself, stored exactly as free_answer stores one — which is what
+	// makes it survive a refresh (the challenge load rebuilds every consumed
+	// free_answer row for this challenge) with no extra persistence.
+	await supabase.from('team_effects').insert({
+		team_id: params.teamId,
+		set_id: effect.set_id,
+		effect_type: 'free_answer',
+		payload: {
+			field: params.field,
+			value: resolved.value,
+			challenge_id: params.challengeId,
+			tab_id: resolved.tabId,
+			slot_index: resolved.slotIndex,
+			source: 'x_ray'
+		},
+		consumed_at: new Date().toISOString(),
+		consumed_challenge_id: params.challengeId,
+		source_team_powerup_id: effect.source_team_powerup_id
+	} as never);
+
+	const nowRemaining = remaining - 1;
+	// Spent out: the budget row closes and the powerup is finally consumed — NOT
+	// after the first reveal, which is what the previous version did.
+	if (nowRemaining === 0) {
+		await supabase
+			.from('team_effects')
+			.update({ consumed_at: new Date().toISOString() } as never)
+			.eq('id', effect.id)
+			.is('consumed_at', null);
+		if (effect.source_team_powerup_id) {
+			await supabase
+				.from('team_powerups')
+				.update({ status: 'consumed' } as never)
+				.eq('id', effect.source_team_powerup_id);
+		}
+	}
+
+	return { success: true, reveal, remaining: nowRemaining };
+}
+
 /**
  * Activate a held powerup. Creates a team_effects row and transitions status.
  * Commit 1 handles: bonus_points, single_event_mult, hard_gaan, shield.
@@ -936,7 +1192,7 @@ export async function activatePowerup(
 	// 2. Validate set is active
 	const { data: gameSet } = await supabase
 		.from('game_sets')
-		.select('status, play_state, hard_gaan_window_minutes')
+		.select('status, play_state, hard_gaan_window_minutes, powerup_config')
 		.eq('id', tpu.set_id)
 		.maybeSingle();
 
@@ -966,6 +1222,74 @@ export async function activatePowerup(
 				.update({ status: 'active' } as never)
 				.eq('id', teamPowerupId);
 			return { success: true, effectId: eff.id, payload };
+		}
+
+		case 'lucky_dice': {
+			// INSTANT, not a pending effect. The roll lands on teams.score the moment it
+			// is rolled — no team_effects row waiting for the next submission (which is
+			// what the first version did, and what made the modal promise "+N next
+			// submission" instead of points the team could already see).
+			//
+			// The direct-score path is the one the other non-scoring point mutations
+			// use: read the current score, write score + delta, log the mutation to
+			// activity_log. Same three steps as awardCrownPayout (src/lib/server/crown.ts)
+			// and the host's manual adjustment (src/routes/admin/teams/+page.server.ts,
+			// ?/adjustScore). /team and /leaderboard already subscribe to teams UPDATEs,
+			// so the new total appears there without anything extra here.
+			//
+			// Range from the set's config (never hardcoded here); randomness from the
+			// one injectable roll function, so a test can pin both ends.
+			const { min, max } = resolveDiceRange(
+				parseConfig((gameSet as unknown as { powerup_config?: unknown }).powerup_config)
+			);
+			const roll = rollDice(min, max, options?.rand);
+
+			const { data: team } = await supabase
+				.from('teams')
+				.select('score')
+				.eq('id', tpu.team_id)
+				.maybeSingle();
+			if (!team) return { success: false, error: 'Team not found' };
+			const oldScore = team.score ?? 0;
+			const newScore = oldScore + roll;
+
+			const { error: scoreErr } = await supabase
+				.from('teams')
+				.update({ score: newScore })
+				.eq('id', tpu.team_id);
+			if (scoreErr) return { success: false, error: scoreErr.message };
+
+			await supabase.from('activity_log').insert({
+				team_id: tpu.team_id,
+				event_type: 'lucky_dice',
+				payload: {
+					roll,
+					dice_min: min,
+					dice_max: max,
+					old_score: oldScore,
+					new_score: newScore
+				}
+			} as never);
+
+			// A score that moves in-play has to keep the crown honest — the same call
+			// scoreAndPersistSubmission makes after every submission total
+			// (src/lib/server/submit.ts). Its own guards do the deciding: no-op if this
+			// team already holds the crown, transfer + 1 steal bonus only on a STRICT
+			// overtake. Without this a dice roll could put a team in the lead while the
+			// crown stayed on the wrong team.
+			await maybeTransferCrown(supabase, tpu.set_id, tpu.team_id, newScore);
+
+			await supabase
+				.from('team_powerups')
+				.update({ status: 'consumed' } as never)
+				.eq('id', teamPowerupId);
+
+			// No effect row, so nothing to consume later — `consumed` straight away, the
+			// same terminal status penalty_shot uses for its no-effect-row activation.
+			return {
+				success: true,
+				payload: { value: roll, dice_min: min, dice_max: max, new_score: newScore }
+			};
 		}
 
 		case 'single_event_mult': {
@@ -1273,6 +1597,174 @@ export async function activatePowerup(
 				revealedTabId: resolved.tabId,
 				revealedSlotIndex: resolved.slotIndex
 			};
+		}
+
+		case 'x_ray': {
+			// X-Ray does NOT reveal anything at activation. It opens a BUDGET the team
+			// spends one field at a time, on any tab, while it plays — because no tab in
+			// this game has five fields, so five reveals only make sense spread across
+			// tabs and across time.
+			//
+			// The budget is a live counter in an ACTIVE (non-consumed) team_effects row,
+			// the same "row stays up until something ends it" shape shield and
+			// tap_to_break use; what ends it here is the counter reaching zero rather
+			// than an attack or a tap. Each spend goes through spendXrayReveal(), which
+			// calls free_answer's own resolver per reveal — no reveal work happens here.
+			//
+			// No challenge gate at activation (unlike free_answer / free_tab): opening a
+			// budget mid-lobby is harmless, and the attempt gate that matters lives on
+			// each individual reveal instead.
+			const budget = resolveXrayBudget(
+				parseConfig((gameSet as unknown as { powerup_config?: unknown }).powerup_config)
+			);
+
+			// One X-Ray at a time, same rule (and same powerup-stays-held rejection) as
+			// shield and double_down. Two counters would race over the same reveals.
+			const { data: existingXray } = await supabase
+				.from('team_effects')
+				.select('id')
+				.eq('team_id', tpu.team_id)
+				.eq('set_id', tpu.set_id)
+				.eq('effect_type', 'x_ray')
+				.is('consumed_at', null)
+				.limit(1)
+				.maybeSingle();
+			if (existingXray) return { success: false, error: 'An X-Ray is already running' };
+
+			const payload = { reveals_remaining: budget, reveals_total: budget };
+			const { data: eff, error } = await supabase
+				.from('team_effects')
+				.insert({
+					team_id: tpu.team_id,
+					set_id: tpu.set_id,
+					effect_type: 'x_ray',
+					payload,
+					source_team_powerup_id: teamPowerupId
+				} as never)
+				.select('id')
+				.single();
+			if (error) return { success: false, error: error.message };
+
+			// 'active', not 'consumed' — the powerup is spent only when the last reveal
+			// is (spendXrayReveal flips it then).
+			await supabase
+				.from('team_powerups')
+				.update({ status: 'active' } as never)
+				.eq('id', teamPowerupId);
+			return { success: true, effectId: eff.id, payload };
+		}
+
+		case 'free_tab': {
+			// Every reveal is one (tab, slot, field) address through free_answer's own
+			// resolver — same resolver, same row shape, same addressing as its
+			// single-reveal case, just a whole tab's worth of them. A separate
+			// implementation is exactly how the bugs fixed in the free_answer pass
+			// (tab-1 smearing, tag chips, per-tab keying) would come back.
+			const challengeId = options?.currentChallengeId;
+			if (!challengeId)
+				return { success: false, error: `${powerupType.name} requires an active challenge` };
+
+			// Same gate free_answer uses: a reveal is only meaningful while the team is
+			// actually answering this challenge.
+			const { data: attempt } = await supabase
+				.from('challenge_attempts')
+				.select('id')
+				.eq('challenge_id', challengeId)
+				.eq('team_id', tpu.team_id)
+				.is('ended_at', null)
+				.maybeSingle();
+			if (!attempt) return { success: false, error: 'No active attempt for this challenge' };
+
+			// Dedupe on the SAME address key the page renders badges with, so one cell
+			// asked for twice is revealed once.
+			const seen = new Set<string>();
+			const targets: RevealTarget[] = [];
+			for (const t of options?.revealTargets ?? []) {
+				if (!t || typeof t.field !== 'string' || !t.field.trim()) continue;
+				const slotIndex = Number.isInteger(t.slotIndex) && t.slotIndex >= 0 ? t.slotIndex : 0;
+				const key = freeAnswerRevealKey(t.tabId ?? '', slotIndex, t.field);
+				if (seen.has(key)) continue;
+				seen.add(key);
+				targets.push({ tabId: t.tabId, slotIndex, field: t.field });
+			}
+			if (!targets.length)
+				return { success: false, error: `${powerupType.name} needs at least one answer selected` };
+
+			// The target list comes from the client, so the rule is enforced here rather
+			// than trusted: every address must sit inside ONE tab (a second tab would be
+			// a second Free Tab), with a sanity bound on the list length.
+			const distinctTabs = new Set(targets.map((t) => t.tabId ?? ''));
+			if (distinctTabs.size > 1)
+				return { success: false, error: 'Free Tab reveals one tab, not several' };
+			if (targets.length > FREE_TAB_MAX_REVEALS)
+				return { success: false, error: 'That is more answers than one tab can have' };
+
+			// Resolve each address through free_answer's resolver — the only place that
+			// knows how a (tab, slot, field) becomes an answer.
+			const reveals: RevealResult[] = [];
+			const failures: string[] = [];
+			for (const t of targets) {
+				const resolved = await resolveFreeAnswerValue(
+					supabase,
+					challengeId,
+					t.field,
+					t.tabId ?? null,
+					t.slotIndex
+				);
+				if ('error' in resolved) {
+					failures.push(resolved.error);
+					continue;
+				}
+				reveals.push({
+					value: resolved.value,
+					...(resolved.tags?.length ? { tags: resolved.tags } : {}),
+					field: t.field,
+					tabId: resolved.tabId,
+					slotIndex: resolved.slotIndex
+				});
+			}
+
+			// Refusal posture, extended from free_answer's rather than reinvented.
+			// free_answer has one reveal, so "nothing resolved" and "the activation
+			// fails" are the same event: nothing is written and the powerup stays HELD.
+			// With several reveals that splits in two, and the same principle decides
+			// both: never burn a one-shot for zero answers, never withhold answers that
+			// did resolve. So a cell that cannot be resolved (a field this tab does not
+			// have, a track with an empty column, `grouping`) is SKIPPED, and only a
+			// run in which every cell failed fails the activation.
+			if (!reveals.length)
+				return { success: false, error: failures[0] ?? 'Nothing could be revealed' };
+
+			// One row per revealed cell — the shape the challenge page's reveal load
+			// already reads back (effect_type='free_answer', keyed by tab/slot/field).
+			// `source` is additive and ignored by that reader; it records which powerup
+			// produced the row without a join back through source_team_powerup_id.
+			const nowIso = new Date().toISOString();
+			await supabase.from('team_effects').insert(
+				reveals.map((r) => ({
+					team_id: tpu.team_id,
+					set_id: tpu.set_id,
+					effect_type: 'free_answer',
+					payload: {
+						field: r.field,
+						value: r.value,
+						challenge_id: challengeId,
+						tab_id: r.tabId,
+						slot_index: r.slotIndex,
+						source: typeId
+					},
+					consumed_at: nowIso,
+					consumed_challenge_id: challengeId,
+					source_team_powerup_id: teamPowerupId
+				})) as never
+			);
+
+			await supabase
+				.from('team_powerups')
+				.update({ status: 'consumed' } as never)
+				.eq('id', teamPowerupId);
+
+			return { success: true, reveals };
 		}
 
 		case 'penalty_shot': {
