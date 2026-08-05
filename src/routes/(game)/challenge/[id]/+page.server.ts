@@ -29,6 +29,23 @@ import {
 	type ClipRaw
 } from '$lib/server/scoring.js';
 import { thresholdOfFields } from '$lib/threshold';
+import { freeAnswerRevealKey } from '$lib/powerups-meta';
+
+/**
+ * The (tab, slot) a free_answer activation is addressed to, as posted by the
+ * activation modal. Absent or unparseable → undefined, which the resolver only
+ * accepts on a single-tab challenge (it refuses to guess tab 1 otherwise).
+ */
+function parseRevealAddress(fd: FormData): { tabId?: string; slotIndex?: number } {
+	const tabId = (fd.get('tab_id') as string | null)?.trim() || undefined;
+	const rawSlot = (fd.get('slot_index') as string | null)?.trim();
+	const slot = rawSlot ? Number(rawSlot) : NaN;
+	const slotIndex = Number.isInteger(slot) && slot >= 0 ? slot : undefined;
+	return {
+		...(tabId ? { tabId } : {}),
+		...(slotIndex !== undefined ? { slotIndex } : {})
+	};
+}
 
 // ─── Load ────────────────────────────────────────────────────────────────────
 
@@ -570,7 +587,15 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 				typeof p.field === 'string' &&
 				typeof p.value === 'string'
 			) {
-				freeAnswerReveal[p.field] = p.value;
+				// Pre-fix rows carry no tab_id/slot_index. They were always the first
+				// tab's first source track, so that is where they are pinned — faithful
+				// to what was actually revealed, and no longer smeared across every tab
+				// the way the field-only key used to do.
+				const revealTabId = typeof p.tab_id === 'string' ? p.tab_id : tabs[0]?.id;
+				const slotIdx = typeof p.slot_index === 'number' ? p.slot_index : 0;
+				if (revealTabId) {
+					freeAnswerReveal[freeAnswerRevealKey(revealTabId, slotIdx, p.field)] = p.value;
+				}
 			}
 		}
 	}
@@ -735,10 +760,19 @@ export const actions: Actions = {
 		const result = await activatePowerup(admin, teamPowerupId, {
 			currentChallengeId: params.id,
 			targetTeamId,
+			field: (fd.get('field') as string | null)?.trim() || undefined,
+			...parseRevealAddress(fd),
 			allowFromPending: true
 		});
 		if (!result.success) return fail(400, { activateError: result.error });
-		return { activated: true, blocked: result.blocked };
+		return {
+			activated: true,
+			revealedValue: result.revealedValue,
+			revealedTags: result.revealedTags,
+			revealedTabId: result.revealedTabId,
+			revealedSlotIndex: result.revealedSlotIndex,
+			blocked: result.blocked
+		};
 	},
 
 	activatePowerup: async ({ request, params }) => {
@@ -751,10 +785,18 @@ export const actions: Actions = {
 		const result = await activatePowerup(admin, teamPowerupId, {
 			currentChallengeId: params.id,
 			field,
-			targetTeamId
+			targetTeamId,
+			...parseRevealAddress(fd)
 		});
 		if (!result.success) return fail(400, { activateError: result.error });
-		return { activated: true, revealedValue: result.revealedValue, blocked: result.blocked };
+		return {
+			activated: true,
+			revealedValue: result.revealedValue,
+			revealedTags: result.revealedTags,
+			revealedTabId: result.revealedTabId,
+			revealedSlotIndex: result.revealedSlotIndex,
+			blocked: result.blocked
+		};
 	},
 
 	startChallenge: async ({ params, locals }) => {

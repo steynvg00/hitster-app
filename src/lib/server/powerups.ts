@@ -1,7 +1,19 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/types/database';
-import type { PowerupConfigV2, ThresholdMode, BandMode, PowerupTypeOverride } from '$lib/types';
-import { computeSetMaxScore } from '$lib/server/scoring';
+import type { AnswerField, PowerupConfigV2, ThresholdMode, BandMode, PowerupTypeOverride } from '$lib/types';
+import {
+	artistTargets,
+	computeSetMaxScore,
+	correctValueForField,
+	fieldMapsFromResolved,
+	getSourceTracksForTab,
+	resolveTabFields,
+	type ClipRaw,
+	type MashupSourceRaw,
+	type TabClipData,
+	type TabSourceTrackRaw,
+	type TrackData
+} from '$lib/server/scoring';
 
 export type PowerupType = Database['public']['Tables']['powerup_types']['Row'];
 export type TeamPowerupRow = Database['public']['Tables']['team_powerups']['Row'];
@@ -452,6 +464,12 @@ export async function consumeEffects(
 
 export type ActivateOptions = {
 	field?: string; // free_answer: which field to reveal
+	// free_answer: WHICH answer to reveal. A field name alone is not an address —
+	// a multi-tab challenge has one track per tab, a mashup/fragments tab one per
+	// answer slot. Omitted → only resolvable on a single-tab challenge.
+	// By uuid, not position: positions are not unique (see freeAnswerRevealKey).
+	tabId?: string; // challenge_tabs.id of the tab being answered
+	slotIndex?: number; // answer slot within that tab (0 for single-source tabs)
 	currentChallengeId?: string; // free_answer / time_boost / insurance gating
 	targetTeamId?: string; // offensive types (give_a_shot, …): the team being attacked
 	// Immediate-use types (bonus_points, hard_gaan, single_event_mult) auto-activate
@@ -464,6 +482,9 @@ export type ActivateResult = {
 	error?: string;
 	effectId?: string;
 	revealedValue?: string; // free_answer only
+	revealedTags?: string[]; // free_answer on `artist`: the scorer's targets, for the tag input
+	revealedTabId?: string; // free_answer: which tab the value belongs to
+	revealedSlotIndex?: number; // free_answer: which answer slot within that tab
 	payload?: Record<string, unknown>; // the team_effects payload that was written
 	blocked?: boolean; // offensive types: the target's shield absorbed the attack
 };
@@ -665,6 +686,179 @@ async function hasActiveTapLock(
 		.is('consumed_at', null)
 		.limit(1);
 	return (data?.length ?? 0) > 0;
+}
+
+/**
+ * Resolve the correct answer for ONE (tab, slot, field) triple — the free_answer
+ * reveal.
+ *
+ * Replaces a hardcoded lookup that read the challenge's FIRST tab and that tab's
+ * FIRST source track through a five-entry field→column map. That predated the
+ * challenge-tabs model, so on a multi-tab challenge every tab revealed tab 1's
+ * answer; on a multi-source tab (mashup / fragments) every slot revealed slot 1's;
+ * `vocal_source` and any per-tab custom field revealed the empty string; and
+ * mashup/fragments tabs (which have no challenge_tab_source_tracks row at all)
+ * revealed nothing while still consuming the powerup.
+ *
+ * Both questions are now answered by the SAME resolvers the scoring pipeline uses:
+ *   - resolveTabFields  → does this tab actually have this field (C3b overrides)
+ *   - getSourceTracksForTab → which track sits behind slot N of this tab, with the
+ *     mashup (via mashup_sources) and fragments (derived from ordered clips) cases
+ *     already handled inside it
+ *   - correctValueForField → the exact string the results screen calls `correct`
+ * so a reveal cannot disagree with what the scorer accepts.
+ *
+ * Returns an `error` rather than a value whenever the answer would be ambiguous,
+ * absent or empty. The caller then FAILS the activation and leaves the powerup
+ * held — burning a one-shot powerup on a blank reveal is the worse outcome, and
+ * showing a confidently wrong answer is worse still.
+ *
+ * Loads only the requested tab's rows (not the whole challenge like the submit
+ * pipeline does) — a reveal needs exactly one track.
+ *
+ * Exported for verification: it performs SELECTs only, so a read-only probe can
+ * drive it against real challenges (see scripts/probe-free-answer.ts style usage
+ * in the report) without writing anything.
+ */
+export async function resolveFreeAnswerValue(
+	supabase: SupabaseClient<Database>,
+	challengeId: string,
+	field: string,
+	tabId: string | null,
+	slotIndex: number
+): Promise<
+	{ value: string; tags?: string[]; tabId: string; slotIndex: number } | { error: string }
+> {
+	const fieldLabel = field.replace(/_/g, ' ');
+
+	const { data: challenge } = await supabase
+		.from('challenges')
+		.select('variant, points_config')
+		.eq('id', challengeId)
+		.maybeSingle();
+	if (!challenge) return { error: 'Challenge not found' };
+	const variant = challenge.variant as string;
+
+	const { data: tabRows } = await supabase
+		.from('challenge_tabs')
+		.select('*')
+		.eq('challenge_id', challengeId)
+		.order('position');
+	const tabs = (tabRows ?? []) as Array<{
+		id: string;
+		position: number;
+		mashup_id?: string | null;
+		fields?: unknown;
+	}>;
+	if (!tabs.length) return { error: 'This challenge has no tabs configured' };
+
+	// No tab supplied → only unambiguous on a single-tab challenge. With more tabs
+	// we refuse instead of silently falling back to tab 1 (exactly the old bug).
+	if (tabId === null && tabs.length > 1)
+		return { error: 'Open the tab you want revealed, then activate again' };
+	// Matched by uuid, so a challenge with repeated `position` values (they exist)
+	// still resolves to the exact tab the player is on.
+	const tab = tabId === null ? tabs[0] : tabs.find((t) => t.id === tabId);
+	if (!tab) return { error: 'That tab is no longer part of this challenge' };
+
+	// grouping is scored across the whole tab by scoreTabGrouping, not per track —
+	// there is no single value to hand back.
+	if (field === 'grouping')
+		return { error: 'Grouping has no single answer to reveal — pick another field' };
+
+	const { data: vdRow } = await supabase
+		.from('variant_defaults')
+		.select('points_config')
+		.eq('variant', variant)
+		.maybeSingle();
+	const variantDefaultPoints = ((vdRow?.points_config as Record<string, unknown> | null)
+		?.field_points ?? {}) as Record<string, number>;
+
+	const { fields: tabFields } = fieldMapsFromResolved(
+		resolveTabFields(tab, { variant, points_config: challenge.points_config }, variantDefaultPoints)
+	);
+	if (!tabFields.includes(field as AnswerField))
+		return { error: `This tab has no ${fieldLabel} field` };
+
+	const [srcRes, tabClipRes] = await Promise.all([
+		supabase.from('challenge_tab_source_tracks').select('*').eq('tab_id', tab.id).order('sort_order'),
+		supabase.from('challenge_tab_clips').select('*').eq('tab_id', tab.id).order('sort_order')
+	]);
+	const sourceTrackRows = (srcRes.data ?? []) as TabSourceTrackRaw[];
+	const tabClipRows = tabClipRes.data ?? [];
+
+	// Fragments derives its source tracks from the clips, so clips load first.
+	const clipIds = [...new Set(tabClipRows.map((c) => c.clip_id))];
+	const clipsRes = await (clipIds.length
+		? supabase.from('clips').select('id, track_id').in('id', clipIds)
+		: Promise.resolve({ data: [] as { id: string; track_id: string }[] }));
+	const clips: ClipRaw[] = (clipsRes.data ?? []).map((c) => ({ id: c.id, track_id: c.track_id }));
+
+	const mashupId = tab.mashup_id ?? null;
+	const mashupRes = await (variant === 'mashup' && mashupId
+		? supabase.from('mashup_sources').select('*').eq('mashup_id', mashupId).order('sort_order')
+		: Promise.resolve({ data: [] as MashupSourceRaw[] }));
+	const mashupSources: MashupSourceRaw[] = (mashupRes.data ?? []).map((r) => ({
+		id: r.id,
+		mashup_id: r.mashup_id,
+		track_id: r.track_id,
+		sort_order: r.sort_order
+	}));
+
+	const trackIds = [
+		...new Set(
+			[
+				...sourceTrackRows.map((s) => s.track_id),
+				...mashupSources.map((s) => s.track_id),
+				...clips.map((c) => c.track_id)
+			].filter(Boolean)
+		)
+	];
+	const tracksRes = await (trackIds.length
+		? supabase.from('tracks').select('*').in('id', trackIds)
+		: Promise.resolve({ data: [] as unknown[] }));
+	const trackMap = new Map(
+		((tracksRes.data ?? []) as unknown as TrackData[]).map((t) => [t.id, t])
+	);
+
+	const tabClipData: TabClipData[] = tabClipRows.map((c) => ({
+		id: c.id,
+		tabId: c.tab_id,
+		clipId: c.clip_id,
+		fragmentNumber: c.fragment_number,
+		sortOrder: c.sort_order,
+		trackId: clips.find((cl) => cl.id === c.clip_id)?.track_id
+	}));
+
+	const sources = getSourceTracksForTab(
+		variant,
+		{ id: tab.id, mashup_id: mashupId },
+		sourceTrackRows,
+		mashupSources,
+		tabClipData,
+		clips,
+		trackMap
+	);
+	if (!sources.length) return { error: 'This tab has no track behind it yet — nothing to reveal' };
+
+	const slot = sources[slotIndex];
+	if (!slot) return { error: 'That answer slot no longer exists on this tab' };
+
+	const value = correctValueForField(field as AnswerField, slot.track);
+	// A misconfigured track (empty column) would otherwise reveal '' and still burn
+	// the powerup — the exact silent failure the old lookup had for vocal_source.
+	if (!value.trim()) return { error: `This track has no ${fieldLabel} on file — nothing to reveal` };
+
+	// The artist answer is a TAG LIST, not a string, and the client cannot derive
+	// the tags from `value`: artistTargets joins with ' & ', and a track whose
+	// artists[] is ['D-Block & S-te-Fan'] produces a string byte-identical in shape
+	// to one whose artists[] is ['Rooler','Sefa']. Splitting client-side would be
+	// right for the second and wrong for the first — the exact trap $lib/artist-tags
+	// documents. So the targets travel alongside the display string; `value` itself
+	// is unchanged, and every caller that only wants text keeps working.
+	const tags = field === 'artist' ? artistTargets(slot.track) : undefined;
+
+	return { value, ...(tags?.length ? { tags } : {}), tabId: tab.id, slotIndex };
 }
 
 /**
@@ -906,51 +1100,33 @@ export async function activatePowerup(
 
 			if (!attempt) return { success: false, error: 'No active attempt for this challenge' };
 
-			// Get the correct answer for the requested field from the challenge's first track
-			const { data: tabs } = await supabase
-				.from('challenge_tabs')
-				.select('id')
-				.eq('challenge_id', challengeId)
-				.order('position')
-				.limit(1);
-
-			const firstTabId = tabs?.[0]?.id;
-			let revealedValue: string | undefined;
-
-			if (firstTabId) {
-				const { data: src } = await supabase
-					.from('challenge_tab_source_tracks')
-					.select('track_id')
-					.eq('tab_id', firstTabId)
-					.order('sort_order')
-					.limit(1)
-					.maybeSingle();
-
-				if (src?.track_id) {
-					const { data: track } = await supabase
-						.from('tracks')
-						.select('*')
-						.eq('id', src.track_id)
-						.maybeSingle();
-
-					if (track) {
-						const fieldMap: Record<string, string> = {
-							artist: track.artist ?? '',
-							title: track.title ?? '',
-							year: String(track.year ?? ''),
-							label: (track as unknown as { record_label?: string }).record_label ?? '',
-							festival: (track as unknown as { festival?: string }).festival ?? ''
-						};
-						revealedValue = fieldMap[field] ?? '';
-					}
-				}
-			}
+			// Which (tab, slot) the team is looking at. The challenge page sends both;
+			// a caller that sends neither is only honoured on a single-tab challenge
+			// (resolveFreeAnswerValue refuses otherwise rather than guessing tab 1).
+			const resolved = await resolveFreeAnswerValue(
+				supabase,
+				challengeId,
+				field,
+				options?.tabId ?? null,
+				options?.slotIndex ?? 0
+			);
+			// Nothing is written and the powerup stays HELD: the team keeps its
+			// one-shot and can retry on a tab/field that does have an answer.
+			if ('error' in resolved) return { success: false, error: resolved.error };
 
 			await supabase.from('team_effects').insert({
 				team_id: tpu.team_id,
 				set_id: tpu.set_id,
 				effect_type: 'free_answer',
-				payload: { field, value: revealedValue ?? '', challenge_id: challengeId },
+				// tab_id + slot_index address the reveal (see freeAnswerRevealKey); a
+				// payload without them is a pre-fix row, read back as tab 1 / slot 0.
+				payload: {
+					field,
+					value: resolved.value,
+					challenge_id: challengeId,
+					tab_id: resolved.tabId,
+					slot_index: resolved.slotIndex
+				},
 				consumed_at: new Date().toISOString(),
 				consumed_challenge_id: challengeId,
 				source_team_powerup_id: teamPowerupId
@@ -961,7 +1137,13 @@ export async function activatePowerup(
 				.update({ status: 'consumed' } as never)
 				.eq('id', teamPowerupId);
 
-			return { success: true, revealedValue };
+			return {
+				success: true,
+				revealedValue: resolved.value,
+				revealedTags: resolved.tags,
+				revealedTabId: resolved.tabId,
+				revealedSlotIndex: resolved.slotIndex
+			};
 		}
 
 		case 'penalty_shot': {

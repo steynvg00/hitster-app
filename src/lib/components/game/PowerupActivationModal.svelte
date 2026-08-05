@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import type { SubmitFunction } from '@sveltejs/kit';
-	import { isTargetedPowerup, isTimerPowerup } from '$lib/powerups-meta';
+	import { isTargetedPowerup, isTimerPowerup, type RevealResult } from '$lib/powerups-meta';
 	import { supabaseBrowser } from '$lib/supabase-browser';
 
 	type PowerupType = {
@@ -20,20 +20,28 @@
 		hasActiveTimedAttempt?: boolean;
 	};
 
+
 	let {
 		teamPowerupId,
 		type: powerupType,
 		onclose,
 		currentChallengeId,
 		variantFields = [],
+		tabId,
+		slotIndex = 0,
 		targetTeams = [],
 		activateAction = '?/activatePowerup'
 	}: {
 		teamPowerupId: string;
 		type: PowerupType;
-		onclose: (activated?: boolean, revealedValue?: string, revealedField?: string) => void;
+		onclose: (activated?: boolean, reveal?: RevealResult) => void;
 		currentChallengeId?: string;
+		// free_answer: the fields of the tab being answered, and the (tab, slot) the
+		// reveal is addressed to. A field name alone does not identify an answer on a
+		// multi-tab challenge or a multi-source (mashup / fragments) tab.
 		variantFields?: string[];
+		tabId?: string;
+		slotIndex?: number;
 		targetTeams?: TargetTeam[];
 		// The form action to POST to. Defaults to the held-powerup activation path
 		// (?/activatePowerup, requires status='held'). The reveal modal's "Use now"
@@ -44,7 +52,10 @@
 
 	let activating = $state(false);
 	let activateError = $state('');
-	let selectedField = $state(variantFields[0] ?? '');
+	// `grouping` (fragments) is scored across the whole tab, not per track, so it
+	// has no single value to reveal — the server refuses it and it is not offered.
+	const revealableFields = $derived(variantFields.filter((f) => f !== 'grouping'));
+	let selectedField = $state(variantFields.filter((f) => f !== 'grouping')[0] ?? '');
 	let selectedTargetId = $state('');
 	// After a targeted attack resolves, show a confirmation instead of auto-closing.
 	let resultState = $state<'idle' | 'sent' | 'blocked'>('idle');
@@ -176,13 +187,35 @@
 			activating = false;
 			if (result.type === 'success') {
 				const data = result.data as
-					| { activated?: boolean; revealedValue?: string; blocked?: boolean }
+					| {
+							activated?: boolean;
+							revealedValue?: string;
+							revealedTags?: string[];
+							revealedTabId?: string;
+							revealedSlotIndex?: number;
+							blocked?: boolean;
+					  }
 					| undefined;
 				if (needsTarget) {
 					// Show a caster-side confirmation (blocked vs sent), then close on OK.
 					resultState = data?.blocked ? 'blocked' : 'sent';
 				} else {
-					onclose(true, data?.revealedValue, needsFieldPicker ? selectedField : undefined);
+					// Only hand back a reveal when the server resolved a full address for
+					// it; anything less would be keyed to the wrong tab/slot.
+					const reveal: RevealResult | undefined =
+						needsFieldPicker &&
+						data?.revealedValue &&
+						data.revealedTabId &&
+						typeof data.revealedSlotIndex === 'number'
+							? {
+									value: data.revealedValue,
+									...(data.revealedTags?.length ? { tags: data.revealedTags } : {}),
+									field: selectedField,
+									tabId: data.revealedTabId,
+									slotIndex: data.revealedSlotIndex
+								}
+							: undefined;
+					onclose(true, reveal);
 				}
 			} else if (result.type === 'failure') {
 				const data = result.data as { activateError?: string } | undefined;
@@ -283,7 +316,7 @@
 			{/if}
 
 			<!-- Field picker for free_answer -->
-			{#if needsFieldPicker && variantFields.length > 0}
+			{#if needsFieldPicker && revealableFields.length > 0}
 				<div class="mb-4">
 					<label class="mb-1.5 block text-xs font-semibold text-zinc-400"
 						>Choose field to reveal</label
@@ -292,7 +325,7 @@
 						bind:value={selectedField}
 						class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200 outline-none focus:border-amber-500"
 					>
-						{#each variantFields as f}
+						{#each revealableFields as f}
 							<option value={f}>{f.replace('_', ' ')}</option>
 						{/each}
 					</select>
@@ -321,6 +354,12 @@
 						{/if}
 						{#if needsFieldPicker && selectedField}
 							<input type="hidden" name="field" value={selectedField} />
+							<!-- Addresses the reveal to the tab/slot being answered. Without
+							     these the server only resolves a single-tab challenge. -->
+							{#if tabId}
+								<input type="hidden" name="tab_id" value={tabId} />
+							{/if}
+							<input type="hidden" name="slot_index" value={slotIndex} />
 						{/if}
 						{#if needsTarget && selectedTargetId}
 							<input type="hidden" name="target_team_id" value={selectedTargetId} />

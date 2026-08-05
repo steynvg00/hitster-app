@@ -11,6 +11,7 @@
 	import ArtistTagInput from '$lib/components/ui/ArtistTagInput.svelte';
 	import { parseArtistTags, joinArtistTags } from '$lib/artist-tags';
 	import { thresholdOfFields } from '$lib/threshold';
+	import { freeAnswerRevealKey, type RevealResult } from '$lib/powerups-meta';
 	import { supabaseBrowser } from '$lib/supabase-browser';
 	import Waveform from '$lib/components/ui/Waveform.svelte';
 	import BonusTracker from '$lib/components/game/BonusTracker.svelte';
@@ -107,10 +108,14 @@
 		})
 	);
 
-	// The value allYearValues holds for a tab/slot the team has never touched. A year
-	// field has no "empty" representation — it is always a number — so the fill-status
-	// indicator below reads "still on the seed" as "not answered". Named once so that
-	// rule cannot drift from the initialiser that produces it.
+	// The value allYearValues holds for a tab/slot the team has never touched.
+	//
+	// Deliberately OUT of YearInput's own range (min 2000) so an untouched year can
+	// never accidentally score. That also means it must never be used to decide
+	// "did the team answer this?": the browser clamps an out-of-range value to `min`
+	// and Svelte's input binding writes that clamped number straight back into state
+	// during hydration, so the seed is already gone by the time anything can read it.
+	// Answeredness is tracked explicitly in yearTouched instead.
 	const YEAR_SEED = 1990;
 
 	// Year values: per-tab, per-slot
@@ -133,6 +138,86 @@
 		const tabDraft = savedDraft[String(tabPosition)] ?? [];
 		return (tabDraft[si]?.fieldValues?.['year'] ?? '').trim() !== '';
 	}
+
+	// Did the team actually operate this tab/slot's year input in THIS session?
+	// Seeded from the saved draft, which (see the persist effect) now only carries a
+	// year once it has really been answered. Set from YearInput's ontouched — a real
+	// DOM event — and by a free_answer reveal, never from comparing the value: the
+	// hydration clamp described at YEAR_SEED makes any value comparison read
+	// "answered" for the tab that happens to be rendered.
+	// Sparse object keyed `tabIdx:slotIdx`, the same shape (and for the same reason)
+	// as doubtTabs below: nothing has to read data.tabs at init, a missing key is
+	// simply falsy, and $state's proxy tracks reads of keys that don't exist yet.
+	let yearTouched = $state<Record<string, boolean>>({});
+
+	function markYearTouched(ti: number, si: number) {
+		yearTouched[`${ti}:${si}`] = true;
+	}
+
+	/** The numeric year this tab/slot carried in the saved draft, if any. */
+	function draftedYearFor(tabPosition: number, si: number): number | null {
+		const raw = (savedDraft[String(tabPosition)] ?? [])[si]?.fieldValues?.['year'] ?? '';
+		if (!raw.trim()) return null;
+		const n = parseInt(raw, 10);
+		return isNaN(n) ? null : n;
+	}
+
+	/**
+	 * The year a free_answer reveal handed this tab/slot, if any. Read from the
+	 * SERVER's reveal map — the exact data that renders the 💡 badge — so the badge
+	 * and the input cannot disagree about what was revealed. Only meaningful while
+	 * the year renders as a number input; in open_text mode a revealed year lives in
+	 * allDrafts like any other text field and is persisted with it.
+	 */
+	function revealedYearFor(ti: number, si: number): number | null {
+		if (!yearIsNumericMode) return null;
+		const tabId = data.tabs[ti]?.id;
+		if (!tabId) return null;
+		const raw = data.freeAnswerReveal[freeAnswerRevealKey(tabId, si, 'year')];
+		if (!raw) return null;
+		const n = parseInt(raw, 10);
+		return isNaN(n) ? null : n;
+	}
+
+	/** The single rule for "this tab/slot's year counts as answered". */
+	function yearIsAnswered(ti: number, tabPosition: number, si: number): boolean {
+		return (
+			wasYearDrafted(tabPosition, si) ||
+			yearTouched[`${ti}:${si}`] === true ||
+			// A revealed year is answered by definition — the team was given it. This
+			// keeps the dot correct even on a device whose localStorage never held the
+			// draft, from the same server data the badge uses.
+			revealedYearFor(ti, si) !== null
+		);
+	}
+
+	// Re-assert the year AFTER hydration.
+	//
+	// The server has no localStorage, so the SSR'd markup always carries YEAR_SEED.
+	// That is below YearInput's min, so the browser clamps the rendered input and
+	// Svelte's binding writes the clamped number back into state while hydrating
+	// (see YEAR_SEED). That read-back happens AFTER this component's initialiser and
+	// therefore silently overwrote whatever the initialiser had restored — a revealed
+	// year, or a year the team set before reloading. The badge survived a refresh
+	// because it is server-rendered from server data; the slider did not.
+	//
+	// onMount runs once the children have hydrated, which is the first moment a write
+	// here sticks. Deliberately assigns values only: nothing is marked touched, so a
+	// tab with no draft and no reveal keeps its untouched state and its "empty" dot.
+	onMount(() => {
+		for (let ti = 0; ti < data.tabs.length; ti++) {
+			const tab = data.tabs[ti];
+			const slotCount = Math.max(tab.sourceTracks.length, 1);
+			for (let si = 0; si < slotCount; si++) {
+				// The team's own draft wins over the reveal: they may have moved the
+				// slider off the revealed year, and that is still their answer.
+				const authoritative = draftedYearFor(tab.position, si) ?? revealedYearFor(ti, si);
+				if (authoritative !== null && allYearValues[ti]?.[si] !== authoritative) {
+					allYearValues[ti][si] = authoritative;
+				}
+			}
+		}
+	});
 
 	// ── Multi-artist tags: per-tab, per-slot (C1 stuk 2) ──────────────────────
 	// Replaces the old collab UI, which joined its inputs with ' & '. That format
@@ -202,8 +287,15 @@
 					fieldValues: {
 						...allDrafts[ti]?.[si]?.fieldValues,
 						...(artistIsTagged ? { artist: artistVal } : {}),
-						...(hasYear && yearIsNumericMode
-							? { year: String(allYearValues[ti]?.[si] ?? 1990) }
+						// Only persist a year the team actually set. Writing it
+						// unconditionally made the draft claim every tab had a year
+						// answered — including the untouched seed — so after any reload
+						// wasYearDrafted() was true everywhere and every tab's fill dot
+						// showed "partly filled in" on a completely blank challenge.
+						// The SUBMIT payload still always carries a year; that is
+						// buildAnswersForSubmit's job, not this one.
+						...(hasYear && yearIsNumericMode && yearIsAnswered(ti, tab.position, si)
+							? { year: String(allYearValues[ti]?.[si] ?? YEAR_SEED) }
 							: {})
 					},
 					fragments: allDrafts[ti]?.[si]?.fragments
@@ -260,6 +352,17 @@
 	// Answer slot tabs (mashup + fragments only)
 	let activeSlotIndex = $state(0);
 
+	// The answer slot the player is actually on. Only multi-source tabs (mashup /
+	// fragments) have more than one; every other tab is slot 0. Clamped because
+	// activeSlotIndex survives a tab switch and the new tab may have fewer slots.
+	// Used both to render and to address a free_answer reveal, so the badge and
+	// the powerup can't disagree about which slot is meant.
+	const activeSlotEffective = $derived(
+		isMultiSource && activeTab
+			? Math.min(activeSlotIndex, Math.max(activeTab.sourceTracks.length, 1) - 1)
+			: 0
+	);
+
 	// ── Per-tab fill status + doubt marker (session-only) ─────────────────────
 	// Both are pure client state. Nothing here is persisted, submitted, or read by
 	// the scorer — the fill status is a live read of the same draft signals the
@@ -270,12 +373,11 @@
 	// "Answered" per field, defined per input type. Strict throughout: whitespace is
 	// not an answer (eis 3).
 	//   artist (tagged modes) → at least one tag
-	//   year   (numeric modes)→ drafted earlier, or moved off YEAR_SEED. A year input
-	//                           always holds a number, so "untouched" is the only
-	//                           available notion of empty. Deliberate edge case: in
-	//                           typeable_number mode a team that types exactly
-	//                           YEAR_SEED reads as unanswered (unreachable in slider
-	//                           mode, whose min is 2000).
+	//   year   (numeric modes)→ drafted earlier, or operated this session
+	//                           (yearIsAnswered). A year input always holds a number,
+	//                           so this can only be tracked, never derived — see
+	//                           YEAR_SEED. Any year the team sets counts, including
+	//                           one they land back on the seed with.
 	//   grouping              → at least one fragment chip picked for that slot
 	//   everything else       → non-blank string in the draft
 	// Modes come from the challenge-wide data.fieldModes on purpose: they are what
@@ -284,9 +386,7 @@
 	// the form wrote to allDrafts.
 	function isFieldAnswered(field: string, ti: number, tabPosition: number, si: number): boolean {
 		if (field === 'artist' && artistIsTagged) return (artistTags[ti]?.[si]?.length ?? 0) > 0;
-		if (field === 'year' && yearIsNumericMode) {
-			return wasYearDrafted(tabPosition, si) || allYearValues[ti]?.[si] !== YEAR_SEED;
-		}
+		if (field === 'year' && yearIsNumericMode) return yearIsAnswered(ti, tabPosition, si);
 		if (field === 'grouping') return (allDrafts[ti]?.[si]?.fragments?.length ?? 0) > 0;
 		return (allDrafts[ti]?.[si]?.fieldValues?.[field] ?? '').trim() !== '';
 	}
@@ -409,18 +509,74 @@
 		return () => clearInterval(iv);
 	});
 
-	function onPowerupActivated(revealedValue?: string, revealedField?: string) {
-		if (!revealedField || !revealedValue) return;
-		freeAnswerReveals = { ...freeAnswerReveals, [revealedField]: revealedValue };
-		// Pre-fill the draft for all tabs/slots
-		for (let ti = 0; ti < data.tabs.length; ti++) {
-			const slotCount = allDrafts[ti]?.length ?? 1;
-			for (let si = 0; si < slotCount; si++) {
-				if (allDrafts[ti]?.[si]) {
-					allDrafts[ti][si].fieldValues[revealedField] = revealedValue;
-				}
-			}
+	/**
+	 * Write a revealed answer into the draft the way THAT field's input reads it.
+	 *
+	 * Every field type keeps its answer somewhere different, so a single
+	 * "string into allDrafts" write only ever worked for the plain text inputs —
+	 * on a tagged artist field the value landed in a draft key nothing renders,
+	 * which is why the badge appeared but the chip never did. The dispatch below
+	 * deliberately mirrors isFieldAnswered()'s, so "prefilled" and "answered"
+	 * cannot disagree.
+	 *
+	 * Returns false when the field's input cannot take the value, in which case the
+	 * badge stays as the only surface — better than a half-written draft.
+	 */
+	function applyRevealToDraft(reveal: RevealResult, ti: number): boolean {
+		const { value, tags, field, slotIndex: si } = reveal;
+
+		// artist in a tagged mode → artistTags[ti][si], one chip per scorer target.
+		// `tags` comes from the server precisely because the ' & '-joined string is
+		// not re-splittable (see RevealResult.tags); the single-chip fallback is the
+		// pre-tag shape, still correct for a single-artist track.
+		if (field === 'artist' && artistIsTagged) {
+			if (!artistTags[ti]?.[si]) return false;
+			artistTags[ti][si] = tags?.length ? [...tags] : [value];
+			return true;
 		}
+
+		// year in a numeric mode → allYearValues[ti][si], a number, plus the touch
+		// flag so the tab's fill dot updates immediately.
+		if (field === 'year' && yearIsNumericMode) {
+			const n = parseInt(value, 10);
+			if (isNaN(n) || !allYearValues[ti]) return false;
+			allYearValues[ti][si] = n;
+			markYearTouched(ti, si);
+			return true;
+		}
+
+		// grouping is the one field with no revealable answer — it is a per-slot
+		// fragment assignment, not a track property. The server refuses to reveal it
+		// at all, so this is a guard, not a path anyone reaches.
+		if (field === 'grouping') return false;
+
+		// open_text / combobox / multiple_choice all bind straight to the draft's
+		// fieldValues, so one write serves all three. A multiple_choice value that
+		// isn't among the host's options simply highlights nothing — the draft still
+		// carries the correct answer and still scores.
+		if (!allDrafts[ti]?.[si]) return false;
+		allDrafts[ti][si].fieldValues[field] = value;
+		return true;
+	}
+
+	function onPowerupActivated(reveal: RevealResult) {
+		const { value, field, tabId, slotIndex } = reveal;
+		freeAnswerReveals = {
+			...freeAnswerReveals,
+			[freeAnswerRevealKey(tabId, slotIndex, field)]: value
+		};
+		// Pre-fill ONLY the slot the answer belongs to. This used to write the value
+		// into every tab and every slot, which handed a mashup team three "free"
+		// artists from one powerup and put tab 1's answer under tab 2's inputs.
+		const ti = data.tabs.findIndex((t) => t.id === tabId);
+		if (ti >= 0) applyRevealToDraft(reveal, ti);
+	}
+
+	// A reveal belongs to one (tab, slot, field); the badge shows only there.
+	function revealFor(field: string, slot: number): string | undefined {
+		const id = activeTab?.id;
+		if (!id) return undefined;
+		return freeAnswerReveals[freeAnswerRevealKey(id, slot, field)];
 	}
 
 	// ── Timer ─────────────────────────────────────────────────────────────────
@@ -1335,7 +1491,9 @@
 					setId={data.activeSetId}
 					powerups={data.heldPowerups}
 					currentChallengeId={data.challenge.id}
-					variantFields={variantFields.map((f) => String(f))}
+					variantFields={activeTab?.fields ?? variantFields.map((f) => String(f))}
+					tabId={activeTab?.id}
+					slotIndex={activeSlotEffective}
 					setTeams={data.setTeams}
 					onactivated={onPowerupActivated}
 				/>
@@ -1584,10 +1742,8 @@
 							{/each}
 						</div>
 					{/if}
-					{@const slotIdx = Math.min(
-						activeSlotIndex,
-						Math.max(activeTab.sourceTracks.length, 1) - 1
-					)}
+					<!-- Same clamped slot the free_answer reveal is addressed to. -->
+					{@const slotIdx = activeSlotEffective}
 					<div class="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
 						{#each variantFields.filter((f) => f !== 'grouping') as field (field)}
 							{@const mode = data.fieldModes[field] as InputMode}
@@ -1601,12 +1757,12 @@
 										>
 									{/if}
 								</label>
-								{#if freeAnswerReveals[String(field)]}
+								{#if revealFor(String(field), slotIdx)}
 									<div
 										class="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-amber-300"
 									>
 										<span>💡</span>
-										<span>Revealed: {freeAnswerReveals[String(field)]}</span>
+										<span>Revealed: {revealFor(String(field), slotIdx)}</span>
 									</div>
 								{/if}
 
@@ -1649,6 +1805,7 @@
 										mode="slider"
 										{teamHex}
 										bind:value={allYearValues[activeTabIndex][slotIdx]}
+										ontouched={() => markYearTouched(activeTabIndex, slotIdx)}
 									/>
 								{:else if mode === 'typeable_number'}
 									<YearInput
@@ -1656,6 +1813,7 @@
 										mode="typeable_number"
 										{teamHex}
 										bind:value={allYearValues[activeTabIndex][slotIdx]}
+										ontouched={() => markYearTouched(activeTabIndex, slotIdx)}
 									/>
 								{/if}
 							</div>
@@ -1702,10 +1860,11 @@
 									>
 								{/if}
 							</label>
-							{#if freeAnswerReveals[String(field)]}
+							<!-- Single-slot layout: always slot 0 of the active tab. -->
+							{#if revealFor(String(field), 0)}
 								<div class="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-amber-300">
 									<span>💡</span>
-									<span>Revealed: {freeAnswerReveals[String(field)]}</span>
+									<span>Revealed: {revealFor(String(field), 0)}</span>
 								</div>
 							{/if}
 
@@ -1748,6 +1907,7 @@
 									mode="slider"
 									{teamHex}
 									bind:value={allYearValues[activeTabIndex][0]}
+									ontouched={() => markYearTouched(activeTabIndex, 0)}
 								/>
 							{:else if mode === 'typeable_number'}
 								<YearInput
@@ -1755,6 +1915,7 @@
 									mode="typeable_number"
 									{teamHex}
 									bind:value={allYearValues[activeTabIndex][0]}
+									ontouched={() => markYearTouched(activeTabIndex, 0)}
 								/>
 							{/if}
 						</div>

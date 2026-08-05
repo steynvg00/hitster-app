@@ -317,6 +317,25 @@ export function artistTargets(track: TrackData): string[] {
 	return raw.filter((a) => normalizeAnswer(a ?? '') !== '');
 }
 
+/**
+ * The canonical "correct answer for this field on this track" string — exactly
+ * the value buildFieldResults puts in FieldResult.correct (the results screen's
+ * green answer). Extracted verbatim from that call site so the free_answer
+ * powerup can reveal THE SAME string instead of maintaining a second field→column
+ * map, which is how the old reveal drifted (it knew five fields and no per-tab
+ * resolution). One definition, so a reveal can never disagree with the results
+ * screen or with what the scorer accepts.
+ *
+ * `grouping` has no per-track answer (scoreTabGrouping scores it across the whole
+ * tab) → '' , which callers treat as "not revealable".
+ */
+export function correctValueForField(field: AnswerField, track: TrackData): string {
+	if (field === 'year') return String(track.year);
+	if (field === 'artist') return artistTargets(track).join(' & ');
+	if (field === 'grouping') return '';
+	return String(track[field === 'label' ? 'record_label' : (field as keyof TrackData)] ?? '');
+}
+
 // The tag wire format lives in $lib/artist-tags (client-safe, pure) so the
 // player's multi-select input (C1 stuk 2) and this scorer share ONE definition —
 // this module is server-only and a .svelte component cannot import it, so a
@@ -754,12 +773,7 @@ export function buildFieldResults(
 			// Bonus was ALREADY out of thresholdMax in stuk 1 — that part was right and
 			// is unchanged, so powerup earning % does not move.
 			const maxScore = fieldMax;
-			const correct =
-				field === 'year'
-					? String(track.year)
-					: field === 'artist'
-						? artistTargets(track).join(' & ')
-						: String(track[field === 'label' ? 'record_label' : (field as keyof TrackData)] ?? '');
+			const correct = correctValueForField(field, track);
 			return {
 				field,
 				submitted,
