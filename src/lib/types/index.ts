@@ -403,6 +403,13 @@ export interface PowerupTypeOverride {
 	// range — a setting rather than a constant, with resolveXrayBudget()
 	// (src/lib/server/powerups.ts) supplying X_RAY_DEFAULT_BUDGET when absent.
 	reveal_budget?: number;
+	// all_seeing_eye only: whether the panel also shows each finished team's total
+	// score beside their answers. Defaults to FALSE because a score is a
+	// correctness signal — "45 of 45" says all three answers are right, which is
+	// precisely what the Eye is built not to tell you. Resolved by
+	// resolveEyeShowScores() (src/lib/server/powerups.ts), which treats anything
+	// that is not exactly `true` as false.
+	show_scores?: boolean;
 	// power_spin only: how often the wheel reaches for Tier S instead of Tier A,
 	// as a probability in [0,1]. Third instance of the same pattern as the dice
 	// range and the reveal budget — a per-set dial, resolved by

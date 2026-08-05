@@ -175,6 +175,12 @@
 			action:
 				'Reveals a masked hint — first letter of every word — for every answer you have not got right yet. You still type them yourself.',
 			warning: 'Unlocks halfway through a timed challenge you have started.'
+		},
+		all_seeing_eye: {
+			action:
+				'Opens the Eye on every team that has already finished this challenge — you see all of their answers, exactly as they typed them. You are NOT told which of them are right.',
+			warning:
+				'Needs at least one other team to have finished. If nobody has, the Eye stays in your storage — nothing is spent.'
 		}
 	};
 

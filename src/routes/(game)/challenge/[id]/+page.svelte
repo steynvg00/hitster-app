@@ -11,7 +11,12 @@
 	import ArtistTagInput from '$lib/components/ui/ArtistTagInput.svelte';
 	import { parseArtistTags, joinArtistTags } from '$lib/artist-tags';
 	import { thresholdOfFields } from '$lib/threshold';
-	import { freeAnswerRevealKey, type LifelineHint, type RevealResult } from '$lib/powerups-meta';
+	import {
+		freeAnswerRevealKey,
+		type LifelineHint,
+		type RevealResult,
+		type EyeTeam
+	} from '$lib/powerups-meta';
 	import { supabaseBrowser } from '$lib/supabase-browser';
 	import Waveform from '$lib/components/ui/Waveform.svelte';
 	import BonusTracker from '$lib/components/game/BonusTracker.svelte';
@@ -21,6 +26,7 @@
 	import IncomingEffectsListener from '$lib/components/game/IncomingEffectsListener.svelte';
 	import PowerupRevealModal from '$lib/components/game/PowerupRevealModal.svelte';
 	import TapToBreakOverlay from '$lib/components/game/TapToBreakOverlay.svelte';
+	import AllSeeingEyeModal from '$lib/components/game/AllSeeingEyeModal.svelte';
 	import { getTypeIcon, getTypeColor } from '$lib/variants';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -1045,6 +1051,31 @@
 	// ── Hint modal ────────────────────────────────────────────────────────────
 	let showHintModal = $state(data.showHint && !!data.challenge.hint_text);
 
+	// ── All Seeing Eye ────────────────────────────────────────────────────────
+	// The finished teams' answers, ALREADY STRIPPED server-side (stripAnswersForEye
+	// ran once at activation). This page never derives anything from them — it has
+	// no correct answer to compare against, which is what makes "no right/wrong
+	// marking" a property of the data rather than a rendering choice that could be
+	// undone later.
+	//
+	// Seeded from the load (the stored snapshot, so it survives a refresh) and
+	// replaced when an activation returns a fresh one. Same two-source pattern the
+	// reveals use.
+	// Derived rather than seeded state: the load's stored snapshot is the baseline,
+	// and a fresh activation overrides it. That way a re-run load stays authoritative
+	// without an effect having to copy it across.
+	let eyeFromActivation = $state<EyeTeam[] | null>(null);
+	const eyeTeams = $derived(eyeFromActivation ?? data.allSeeingEye ?? []);
+	let showEyeModal = $state(false);
+
+	$effect(() => {
+		const eye = f?.allSeeingEye;
+		if (eye && eye.challengeId === data.challenge.id) {
+			eyeFromActivation = eye.teams;
+			showEyeModal = true;
+		}
+	});
+
 	// ── Tutorial overlay ──────────────────────────────────────────────────────
 	let showTutorial = $state(false);
 	const tutorialEntry = $derived(
@@ -1186,6 +1217,14 @@
 			onclose={() => (earnedQueue = earnedQueue.slice(1))}
 		/>
 	{/key}
+{/if}
+
+{#if showEyeModal && eyeTeams.length}
+	<AllSeeingEyeModal
+		teams={eyeTeams}
+		fields={data.variantFields}
+		onclose={() => (showEyeModal = false)}
+	/>
 {/if}
 
 {#if showHintModal && data.challenge.hint_text}
@@ -1727,6 +1766,16 @@
 						class="rounded-full px-3 py-1 text-xs font-semibold transition-colors"
 						style="background-color: {teamHex}22; color: {teamHex}; border: 1px solid {teamHex}44;"
 						>💡 Hint</button
+					>
+				{/if}
+				<!-- Persistent re-open, the same shape the Hint button uses: once the Eye
+				     has been opened on this challenge the snapshot stays available for the
+				     rest of it, rather than being a one-shot the player can lose. -->
+				{#if eyeTeams.length}
+					<button
+						onclick={() => (showEyeModal = true)}
+						class="rounded-full border border-purple-500/40 bg-purple-500/10 px-3 py-1 text-xs font-semibold text-purple-300 transition-colors hover:bg-purple-500/20"
+						>👁️ Eye</button
 					>
 				{/if}
 			</div>
