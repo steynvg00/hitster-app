@@ -773,6 +773,7 @@ export const actions: Actions = {
 			revealedTags: result.revealedTags,
 			revealedTabId: result.revealedTabId,
 			revealedSlotIndex: result.revealedSlotIndex,
+			payload: result.payload,
 			blocked: result.blocked
 		};
 	},
@@ -802,6 +803,11 @@ export const actions: Actions = {
 			// x_ray / free_tab: the whole list. free_answer leaves this undefined and
 			// keeps using the four singular fields above — untouched contract.
 			reveals: result.reveals,
+			// The team_effects payload the activation wrote. lucky_dice's roll travels
+			// in here (value / dice_min / dice_max / new_score) — without it the number
+			// the team just rolled never leaves the server, which is why the activation
+			// modal had nothing to show.
+			payload: result.payload,
 			blocked: result.blocked
 		};
 	},

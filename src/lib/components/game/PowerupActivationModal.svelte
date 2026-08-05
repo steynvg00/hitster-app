@@ -82,7 +82,18 @@
 	let selectedField = $state(variantFields.filter((f) => f !== 'grouping')[0] ?? '');
 	let selectedTargetId = $state('');
 	// After a targeted attack resolves, show a confirmation instead of auto-closing.
-	let resultState = $state<'idle' | 'sent' | 'blocked'>('idle');
+	// 'rolled' is the same idea for lucky_dice: an activation with an OUTCOME the
+	// team has to see. Closing straight away — which is what every other self
+	// powerup does, because their effect is a promise about a later submission —
+	// threw the rolled number away, so the points appeared with no explanation.
+	let resultState = $state<'idle' | 'sent' | 'blocked' | 'rolled'>('idle');
+	let rolled = $state<{ value?: number; dice_min?: number; dice_max?: number; new_score?: number }>(
+		{}
+	);
+	// Powerups whose activation resolves to a number the team must be shown. Only
+	// lucky_dice today; the check is on the payload as well, so a type that starts
+	// returning a roll gets the same treatment without another branch here.
+	const showsRoll = $derived(powerupType.id === 'lucky_dice');
 
 	const TEAM_HEX: Record<string, string> = {
 		blue: '#3b82f6',
@@ -279,12 +290,19 @@
 							revealedTabId?: string;
 							revealedSlotIndex?: number;
 							reveals?: RevealResult[];
+							payload?: Record<string, unknown>;
 							blocked?: boolean;
 					  }
 					| undefined;
 				if (needsTarget) {
 					// Show a caster-side confirmation (blocked vs sent), then close on OK.
 					resultState = data?.blocked ? 'blocked' : 'sent';
+				} else if (showsRoll && data?.payload) {
+					// Hold the modal open on the result instead of closing: the roll IS the
+					// feedback. The number comes from the team_effects payload the server
+					// actually wrote, not from a client-side re-roll.
+					rolled = data.payload as typeof rolled;
+					resultState = 'rolled';
 				} else {
 					// Only hand back a reveal when the server resolved a full address for
 					// it; anything less would be keyed to the wrong tab/slot.
@@ -339,7 +357,31 @@
 			</div>
 		</div>
 
-		{#if resultState !== 'idle'}
+		{#if resultState === 'rolled'}
+			<!-- lucky_dice: the roll, and the score it already moved. -->
+			<div class="mb-4 rounded-xl border border-amber-600/50 bg-amber-500/10 p-5 text-center">
+				<p class="text-5xl leading-none">🎲</p>
+				<p class="mt-3 text-3xl font-black text-amber-300">You rolled {rolled.value ?? '?'}!</p>
+				<p class="mt-2 text-sm font-semibold text-amber-200">
+					+{rolled.value ?? 0} points, added to your score right now
+				</p>
+				<p class="mt-1 text-xs text-zinc-400">
+					{#if typeof rolled.new_score === 'number'}
+						Your total is now {rolled.new_score}.
+					{/if}
+					{#if typeof rolled.dice_min === 'number' && typeof rolled.dice_max === 'number'}
+						(rolled out of {rolled.dice_min}–{rolled.dice_max})
+					{/if}
+				</p>
+			</div>
+			<button
+				type="button"
+				onclick={() => onclose(true)}
+				class="w-full rounded-xl bg-amber-400 py-2.5 text-sm font-bold text-zinc-950 transition-colors hover:bg-amber-300"
+			>
+				Nice!
+			</button>
+		{:else if resultState !== 'idle'}
 			<!-- Caster-side confirmation for a targeted attack -->
 			<div class="mb-4 rounded-xl border border-zinc-700 bg-zinc-800/60 p-4 text-center">
 				{#if resultState === 'blocked'}
