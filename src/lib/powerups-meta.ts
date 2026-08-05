@@ -243,3 +243,59 @@ export type RevealResult = {
 	tabId: string;
 	slotIndex: number;
 };
+
+// ─── Powerup tiers + power_spin's roll ───────────────────────────────────────
+//
+// Tier is a power band, stored on the type row (powerup_types.tier, migration
+// 0072) next to `category` and `holdable` because it is a fixed trait of the
+// type, not a per-set dial. Nothing in the EARNING path reads it — planAwards
+// builds its pool from coming_soon/enabled/category/score bounds and is
+// untouched by tiers. Today its only reader is power_spin's roll pool.
+export const POWERUP_TIERS = ['S', 'A', 'B', 'C', 'D'] as const;
+export type PowerupTier = (typeof POWERUP_TIERS)[number];
+
+// The tiers Power Spin draws from, best first. Order matters: it IS the fallback
+// chain — an empty tier hands off to the next one (see rollSpinTier /
+// pickSpinType in src/lib/server/powerups.ts).
+export const SPIN_TIERS: readonly PowerupTier[] = ['S', 'A'];
+
+/**
+ * Types Power Spin must NEVER roll, because awarding them would award another
+ * powerup and the spin could chain.
+ *
+ * `power_spin` itself is the obvious one — it is Tier A, so without this filter
+ * the wheel could land on itself and loop. The list is a NAMED SET rather than a
+ * single `!== 'power_spin'` check because the rule is broader than one id: ANY
+ * type whose activation hands out a powerup belongs here, and the next such type
+ * needs a place to register itself.
+ *
+ * No other type qualifies today. Every existing activation branch was checked
+ * one by one: the ones that look like they give something away — give_a_shot,
+ * penalty_shot, freeze, time_drain, tap_to_break — all write `team_effects`
+ * rows, never `team_powerups`. materializeAward (src/lib/server/powerups.ts) is
+ * the single spel-side writer of team_powerups, and power_spin will be its only
+ * caller outside the earning ladder.
+ *
+ * With this filter the call chain is bounded at:
+ *   materializeAward(power_spin)
+ *     -> activatePowerup(power_spin)
+ *       -> materializeAward(rolled)
+ *         -> activatePowerup(rolled)   [only if the rolled type is immediate_use]
+ *           -> terminates
+ */
+export const SPIN_EXCLUDED_TYPE_IDS = ['power_spin'] as const;
+
+export function isSpinExcluded(id: string): boolean {
+	return (SPIN_EXCLUDED_TYPE_IDS as readonly string[]).includes(id);
+}
+
+/**
+ * How often the wheel reaches for Tier S. The per-set override lives at
+ * powerup_config.types.power_spin.tier_s_chance (seeded by migration 0072) and is
+ * resolved by resolveSpinTierSChance() — the same setting-not-constant shape as
+ * lucky_dice's dice range and x_ray's reveal budget. This is only the fallback
+ * for a set whose config predates the key.
+ *
+ * 0.15 = the designed 85% A / 15% S split.
+ */
+export const POWER_SPIN_DEFAULT_TIER_S_CHANCE = 0.15;
