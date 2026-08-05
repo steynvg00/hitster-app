@@ -107,17 +107,32 @@
 		})
 	);
 
+	// The value allYearValues holds for a tab/slot the team has never touched. A year
+	// field has no "empty" representation — it is always a number — so the fill-status
+	// indicator below reads "still on the seed" as "not answered". Named once so that
+	// rule cannot drift from the initialiser that produces it.
+	const YEAR_SEED = 1990;
+
 	// Year values: per-tab, per-slot
 	let allYearValues = $state<number[][]>(
 		data.tabs.map((tab) => {
 			const tabDraft = savedDraft[String(tab.position)] ?? [];
 			const slotCount = Math.max(tab.sourceTracks.length, 1);
 			return Array.from({ length: slotCount }, (_, si) => {
-				const y = parseInt(tabDraft[si]?.fieldValues?.['year'] ?? '1990', 10);
-				return isNaN(y) ? 1990 : y;
+				const y = parseInt(tabDraft[si]?.fieldValues?.['year'] ?? String(YEAR_SEED), 10);
+				return isNaN(y) ? YEAR_SEED : y;
 			});
 		})
 	);
+
+	// Did this tab/slot already carry a drafted year when the page mounted? Without
+	// this, rehydrating a draft whose year happens to equal YEAR_SEED — or simply
+	// reloading after answering — would read as "untouched". Reads the immutable
+	// savedDraft snapshot taken at load, so it needs no reactive state of its own.
+	function wasYearDrafted(tabPosition: number, si: number): boolean {
+		const tabDraft = savedDraft[String(tabPosition)] ?? [];
+		return (tabDraft[si]?.fieldValues?.['year'] ?? '').trim() !== '';
+	}
 
 	// ── Multi-artist tags: per-tab, per-slot (C1 stuk 2) ──────────────────────
 	// Replaces the old collab UI, which joined its inputs with ' & '. That format
@@ -244,6 +259,75 @@
 	}
 	// Answer slot tabs (mashup + fragments only)
 	let activeSlotIndex = $state(0);
+
+	// ── Per-tab fill status + doubt marker (session-only) ─────────────────────
+	// Both are pure client state. Nothing here is persisted, submitted, or read by
+	// the scorer — the fill status is a live read of the same draft signals the
+	// inputs write to, and the doubt marker is a scratch flag that dies with the
+	// page.
+	type FillStatus = 'empty' | 'partial' | 'full';
+
+	// "Answered" per field, defined per input type. Strict throughout: whitespace is
+	// not an answer (eis 3).
+	//   artist (tagged modes) → at least one tag
+	//   year   (numeric modes)→ drafted earlier, or moved off YEAR_SEED. A year input
+	//                           always holds a number, so "untouched" is the only
+	//                           available notion of empty. Deliberate edge case: in
+	//                           typeable_number mode a team that types exactly
+	//                           YEAR_SEED reads as unanswered (unreachable in slider
+	//                           mode, whose min is 2000).
+	//   grouping              → at least one fragment chip picked for that slot
+	//   everything else       → non-blank string in the draft
+	// Modes come from the challenge-wide data.fieldModes on purpose: they are what
+	// actually decides which input renders and therefore which state that input
+	// writes to. Using a per-tab mode here would let the check read artistTags while
+	// the form wrote to allDrafts.
+	function isFieldAnswered(field: string, ti: number, tabPosition: number, si: number): boolean {
+		if (field === 'artist' && artistIsTagged) return (artistTags[ti]?.[si]?.length ?? 0) > 0;
+		if (field === 'year' && yearIsNumericMode) {
+			return wasYearDrafted(tabPosition, si) || allYearValues[ti]?.[si] !== YEAR_SEED;
+		}
+		if (field === 'grouping') return (allDrafts[ti]?.[si]?.fragments?.length ?? 0) > 0;
+		return (allDrafts[ti]?.[si]?.fieldValues?.[field] ?? '').trim() !== '';
+	}
+
+	// $derived.by, not a snapshot: it re-reads allDrafts / allYearValues / artistTags,
+	// so a keystroke moves the strip without a tab switch (eis 2).
+	//
+	// Fields are THIS tab's resolved C3b fields (data.tabs[i].fields, produced by
+	// resolveTabFields in the load — see +page.server.ts), not the challenge-wide
+	// variantFields. Bonus fields are excluded, also per tab. A multi-slot tab
+	// (mashup / fragments) counts every slot's fields: full means every non-bonus
+	// field of every slot is answered.
+	const tabFillStatus = $derived.by<FillStatus[]>(() =>
+		data.tabs.map((tab, ti) => {
+			const bonus = new Set(tab.bonusFields ?? []);
+			const scored = (tab.fields ?? []).filter((f) => !bonus.has(f));
+			const slotCount = Math.max(tab.sourceTracks.length, 1);
+			let answered = 0;
+			let total = 0;
+			for (let si = 0; si < slotCount; si++) {
+				for (const f of scored) {
+					total++;
+					if (isFieldAnswered(f, ti, tab.position, si)) answered++;
+				}
+			}
+			// A tab with no non-bonus fields at all has nothing to fill; calling it
+			// 'full' keeps it from sitting permanently on the "you missed this" colour.
+			if (total === 0) return 'full';
+			return answered === 0 ? 'empty' : answered === total ? 'full' : 'partial';
+		})
+	);
+
+	// Session-only doubt flags, keyed by tab index. No localStorage, no DB: they are
+	// gone on reload, and after submit the results screen replaces this template
+	// entirely. Sparse object rather than a pre-sized array so nothing has to read
+	// data.tabs at init — a missing key is simply falsy, and $state's proxy tracks
+	// reads of keys that don't exist yet.
+	let doubtTabs = $state<Record<number, boolean>>({});
+	function toggleDoubt(i: number) {
+		doubtTabs[i] = !doubtTabs[i];
+	}
 
 	// ── Audio player ──────────────────────────────────────────────────────────
 	let waveformRef = $state<Waveform | undefined>(undefined);
@@ -1280,21 +1364,71 @@
 			</div>
 		</div>
 
-		<!-- Tab strip (multi-tab) -->
+		<!--
+			Tab strip (multi-tab). Stays behind isMultiTab: on a single-tab challenge
+			the strip does not exist today, and a fill dot there would only restate
+			what the one visible form already shows, while a per-tab doubt flag has
+			nothing to distinguish. Adding chrome where there is none is the only way
+			this could get worse for the single-tab case, so it doesn't.
+
+			Each entry is a wrapper holding TWO sibling buttons — the tab pill and the
+			doubt toggle. They cannot nest (a button inside a button is invalid), and
+			the pill must keep its exact goToTab(i) behaviour.
+		-->
 		{#if isMultiTab}
-			<div class="mb-4 flex gap-1 overflow-x-auto pb-1">
+			<div class="mb-4 flex gap-1.5 overflow-x-auto pb-1">
 				{#each data.tabs as _tab, i}
-					<button
-						type="button"
-						onclick={() => goToTab(i)}
-						class="shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors {activeTabIndex ===
-						i
-							? 'text-white'
-							: 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}"
-						style={activeTabIndex === i ? `background-color: ${teamHex};` : ''}
-					>
-						Tab {i + 1}
-					</button>
+					{@const status = tabFillStatus[i]}
+					<div class="flex shrink-0 items-center gap-0.5">
+						<button
+							type="button"
+							onclick={() => goToTab(i)}
+							class="flex shrink-0 items-center gap-1.5 rounded-l-lg rounded-r-sm px-3 py-1.5 text-sm font-semibold transition-colors {activeTabIndex ===
+							i
+								? 'text-white'
+								: 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}"
+							style={activeTabIndex === i ? `background-color: ${teamHex};` : ''}
+						>
+							<!--
+								Fill dot. Outline = empty, solid yellow = partial, solid cyan =
+								full — colour AND fill differ, so the three read apart without
+								relying on hue alone. Both colours are existing festival tokens.
+							-->
+							<span
+								class="h-2 w-2 shrink-0 rounded-full {status === 'full'
+									? 'bg-mixup-cyan'
+									: status === 'partial'
+										? 'bg-mixup-yellow'
+										: 'border border-zinc-500 bg-transparent'}"
+								aria-hidden="true"
+							></span>
+							Tab {i + 1}
+							<span class="sr-only">
+								{status === 'full'
+									? '— all answers filled in'
+									: status === 'partial'
+										? '— partly filled in'
+										: '— nothing filled in'}{doubtTabs[i] ? ', marked as unsure' : ''}
+							</span>
+						</button>
+						<!--
+							Doubt toggle — a SECOND layer next to the fill dot, never a
+							replacement for it. Session-only (see doubtTabs).
+						-->
+						<button
+							type="button"
+							onclick={() => toggleDoubt(i)}
+							aria-pressed={doubtTabs[i]}
+							title={doubtTabs[i] ? `Tab ${i + 1}: unsure — tap to clear` : `Mark tab ${i + 1} as unsure`}
+							class="flex h-[30px] w-6 shrink-0 items-center justify-center rounded-l-sm rounded-r-lg text-sm font-black transition-colors {doubtTabs[
+								i
+							]
+								? 'bg-mixup-magenta text-white'
+								: 'bg-zinc-800 text-zinc-600 hover:text-zinc-300'}"
+						>
+							?
+						</button>
+					</div>
 				{/each}
 			</div>
 		{/if}
