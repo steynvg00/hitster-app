@@ -234,10 +234,29 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 			sortOrder: s.sortOrder
 		}));
 
+		// C3b fields for THIS tab, resolved with the same resolver the submit path and
+		// the priorResult rebuild use — so "which fields does this tab actually have"
+		// has exactly one definition. resolveTabFields lives in $lib/server and must
+		// stay there (the client never resolves fields itself), hence the resolution
+		// happens here and only the flattened result crosses to the browser.
+		//
+		// Consumed by the per-tab fill-status indicator in +page.svelte. The FORM
+		// still renders the challenge-wide field set (the player-render callsite C3b
+		// deliberately left alone — see C3c on the roadmap), so on a tab that
+		// overrides its fields the indicator counts the tab's resolved fields, not
+		// the rendered inputs. Every tab row is fields=NULL today, which makes the
+		// two identical; the split only becomes visible once per-tab overrides can
+		// be authored.
+		const { fields: tabFieldNames, bonusFields: tabBonusFields } = fieldMapsFromResolved(
+			resolveTabFields(tab, { variant, points_config: pcRaw }, variantDefaultPoints)
+		);
+
 		return {
 			id: tab.id,
 			position: tab.position,
 			tabIndex: tabs.indexOf(tab),
+			fields: tabFieldNames as string[],
+			bonusFields: [...tabBonusFields],
 			clips: clipItems,
 			sourceTracks: sourceTrackItems,
 			// For mashup tabs the audio comes from the mashup file itself (not a clip).
