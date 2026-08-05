@@ -48,6 +48,7 @@
 		shield: '🛡 Shield ready',
 		insurance: '🪙 Insurance ready',
 		free_answer: '💡 Free answer',
+		x_ray: '🔎 X-Ray',
 		time_boost: '⏱ Time boost',
 		double_down: '🎰 Double Down',
 		// tap_to_break (stuk 3) is the one offensive attack that ISN'T pre-consumed,
@@ -68,6 +69,15 @@
 		if (e.effect_type === 'bonus_points') {
 			const v = (e.payload.value as number | undefined) ?? 15;
 			return `+${v} next submission`;
+		}
+		if (e.effect_type === 'x_ray') {
+			// The remaining budget IS the pill's information — an X-Ray with 3 reveals
+			// left and one with 1 are different situations to a team mid-challenge. The
+			// counter is UPDATEd in place on every spend and this banner already
+			// refetches on any team_effects change, so it counts down live.
+			const n = e.payload.reveals_remaining as number | undefined;
+			if (typeof n !== 'number') return base;
+			return `${base} — ${n} reveal${n === 1 ? '' : 's'} left`;
 		}
 		if (e.effect_type === 'double_down') {
 			// The prediction is the whole point of the pill: a team that has bet must be

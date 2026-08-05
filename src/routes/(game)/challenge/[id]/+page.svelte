@@ -591,6 +591,67 @@
 		freeAnswerReveals = { ...freeAnswerReveals, ...added };
 	}
 
+	// ── X-Ray budget ──────────────────────────────────────────────────────────
+	//
+	// X-Ray is not a one-shot: activating it opens a counter of reveals the team
+	// spends one field at a time, on any tab. The counter lives server-side in the
+	// x_ray team_effects row (loadActiveEffects hands it over on every load, so it
+	// survives a refresh); this is the local mirror that drives the buttons.
+	//
+	// Each spend posts to /api/powerups/xray-reveal, which runs free_answer's own
+	// resolver and returns a RevealResult — handed to the SAME onPowerupActivated
+	// the powerup modal uses, so the badge, the per-tab keying and the per-field
+	// pre-fill are one implementation, not one per powerup.
+	function readXrayRemaining(): number {
+		const row = data.activeEffects?.find((e) => e.effect_type === 'x_ray');
+		const n = (row?.payload as { reveals_remaining?: number } | undefined)?.reveals_remaining;
+		return typeof n === 'number' ? n : 0;
+	}
+	let xrayRemaining = $state(readXrayRemaining());
+	let xraySpending = $state<string | null>(null);
+	let xrayError = $state('');
+	let xrayErrorTimer: ReturnType<typeof setTimeout> | undefined;
+
+	async function spendXrayReveal(field: string, slot: number) {
+		const tabId = activeTab?.id;
+		if (!tabId || xrayRemaining <= 0 || xraySpending) return;
+		const key = freeAnswerRevealKey(tabId, slot, field);
+		xraySpending = key;
+		xrayError = '';
+		try {
+			const res = await fetch('/api/powerups/xray-reveal', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					challenge_id: data.challenge.id,
+					tab_id: tabId,
+					slot_index: slot,
+					field
+				})
+			});
+			const body = (await res.json().catch(() => null)) as {
+				reveal?: RevealResult;
+				remaining?: number;
+				error?: string;
+			} | null;
+			if (!res.ok || !body?.reveal) {
+				// A refused cell costs no budget — the count is left exactly as it was.
+				xrayError = body?.error ?? 'Reveal failed';
+				clearTimeout(xrayErrorTimer);
+				xrayErrorTimer = setTimeout(() => (xrayError = ''), 5000);
+				return;
+			}
+			onPowerupActivated([body.reveal]);
+			if (typeof body.remaining === 'number') xrayRemaining = body.remaining;
+		} catch {
+			xrayError = 'Network hiccup — try again';
+			clearTimeout(xrayErrorTimer);
+			xrayErrorTimer = setTimeout(() => (xrayError = ''), 5000);
+		} finally {
+			xraySpending = null;
+		}
+	}
+
 	// A reveal belongs to one (tab, slot, field); the badge shows only there.
 	function revealFor(field: string, slot: number): string | undefined {
 		const id = activeTab?.id;
@@ -689,6 +750,11 @@
 							if (drainToastTimer) clearTimeout(drainToastTimer);
 							drainToastTimer = setTimeout(() => (drainToast = null), 4000);
 						}
+					} else if (row.effect_type === 'x_ray') {
+						// A teammate on a second phone activated X-Ray — surface the fresh
+						// budget here too, so the reveal buttons appear without a reload.
+						const p = row.payload as { reveals_remaining?: number };
+						if (typeof p.reveals_remaining === 'number') xrayRemaining = p.reveals_remaining;
 					} else if (row.effect_type === 'tap_to_break') {
 						// Unlike freeze/time_drain this doesn't touch timerBoostMs — it mounts
 						// the lock, it doesn't move the deadline.
@@ -705,6 +771,29 @@
 							};
 						}
 					}
+				}
+			)
+			// X-Ray's counter is UPDATEd in place on every spend, so the budget needs an
+			// UPDATE handler as well as the INSERT one above — this is what keeps a
+			// second phone on the same team from showing a stale count (and running into
+			// the server's compare-and-swap) after a teammate spends a reveal.
+			.on(
+				'postgres_changes',
+				{
+					event: 'UPDATE',
+					schema: 'public',
+					table: 'team_effects',
+					filter: `team_id=eq.${data.team.id}`
+				},
+				(payload) => {
+					const row = payload.new as {
+						effect_type: string;
+						payload: Record<string, unknown>;
+						consumed_at: string | null;
+					};
+					if (row.effect_type !== 'x_ray') return;
+					const p = row.payload as { reveals_remaining?: number };
+					xrayRemaining = row.consumed_at ? 0 : (p.reveals_remaining ?? 0);
 				}
 			)
 			.subscribe();
@@ -1517,6 +1606,12 @@
 					setTeams={data.setTeams}
 					onactivated={onPowerupActivated}
 				/>
+				{#if xrayError}
+					<!-- A refused X-Ray reveal (no track behind this tab, no open attempt, …).
+					     Shown once here rather than under every field: the budget is one
+					     thing, and a refusal costs none of it. -->
+					<p class="text-xs font-semibold text-red-400">🔎 {xrayError}</p>
+				{/if}
 			</div>
 		{/if}
 
@@ -1768,15 +1863,36 @@
 						{#each variantFields.filter((f) => f !== 'grouping') as field (field)}
 							{@const mode = data.fieldModes[field] as InputMode}
 							<div class="mb-4">
-								<label class="mb-1.5 flex items-center gap-1.5 text-sm font-semibold text-zinc-400">
-									{fieldLabel(field)}
-									{#if isBonusField(field)}
-										<span
-											class="rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-amber-300 uppercase"
-											>Bonus</span
+								<!-- Label row: the field's own label, plus X-Ray's reveal button while a
+								     budget is running. The button sits BESIDE the label, not inside it
+								     (a button in a <label> hijacks the label's click), and is
+								     type="button" — so the answer form is untouched: no nested form,
+								     no accidental submit, and the tab dots / Next / Previous are
+								     unaffected. -->
+								<div class="mb-1.5 flex items-center justify-between gap-2">
+									<label class="flex items-center gap-1.5 text-sm font-semibold text-zinc-400">
+										{fieldLabel(field)}
+										{#if isBonusField(field)}
+											<span
+												class="rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-amber-300 uppercase"
+												>Bonus</span
+											>
+										{/if}
+									</label>
+									{#if xrayRemaining > 0 && !revealFor(String(field), slotIdx)}
+										<button
+											type="button"
+											onclick={() => spendXrayReveal(String(field), slotIdx)}
+											disabled={!!xraySpending}
+											class="shrink-0 rounded-lg border border-amber-600/50 bg-amber-500/10 px-2 py-0.5 text-[11px] font-bold text-amber-300 transition-colors hover:bg-amber-500/20 disabled:opacity-40"
 										>
+											{xraySpending ===
+											freeAnswerRevealKey(activeTab?.id ?? '', slotIdx, String(field))
+												? '…'
+												: `🔎 Reveal (${xrayRemaining})`}
+										</button>
 									{/if}
-								</label>
+								</div>
 								{#if revealFor(String(field), slotIdx)}
 									<div
 										class="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-amber-300"
@@ -1871,15 +1987,30 @@
 					{#each variantFields as field (field)}
 						{@const mode = data.fieldModes[field] as InputMode}
 						<div>
-							<label class="mb-1.5 flex items-center gap-1.5 text-sm font-semibold text-zinc-400">
-								{fieldLabel(field)}
-								{#if isBonusField(field)}
-									<span
-										class="rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-amber-300 uppercase"
-										>Bonus</span
+							<!-- Same label row as the multi-slot layout above, always slot 0. -->
+							<div class="mb-1.5 flex items-center justify-between gap-2">
+								<label class="flex items-center gap-1.5 text-sm font-semibold text-zinc-400">
+									{fieldLabel(field)}
+									{#if isBonusField(field)}
+										<span
+											class="rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-amber-300 uppercase"
+											>Bonus</span
+										>
+									{/if}
+								</label>
+								{#if xrayRemaining > 0 && !revealFor(String(field), 0)}
+									<button
+										type="button"
+										onclick={() => spendXrayReveal(String(field), 0)}
+										disabled={!!xraySpending}
+										class="shrink-0 rounded-lg border border-amber-600/50 bg-amber-500/10 px-2 py-0.5 text-[11px] font-bold text-amber-300 transition-colors hover:bg-amber-500/20 disabled:opacity-40"
 									>
+										{xraySpending === freeAnswerRevealKey(activeTab?.id ?? '', 0, String(field))
+											? '…'
+											: `🔎 Reveal (${xrayRemaining})`}
+									</button>
 								{/if}
-							</label>
+							</div>
 							<!-- Single-slot layout: always slot 0 of the active tab. -->
 							{#if revealFor(String(field), 0)}
 								<div class="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-amber-300">

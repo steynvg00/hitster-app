@@ -43,7 +43,7 @@ import {
 	type ClipRaw,
 	type TrackData
 } from '../../src/lib/server/scoring';
-import { X_RAY_MAX_REVEALS } from '../../src/lib/powerups-meta';
+import { X_RAY_DEFAULT_BUDGET } from '../../src/lib/powerups-meta';
 
 // ── .env loader (only sets keys not already in the environment) ───────────────
 function loadEnv() {
@@ -290,9 +290,8 @@ async function verifyReveals(db: SupabaseClient) {
 				variantDefaultPoints
 			);
 			// free_tab posts EVERY cell of the tab; x_ray posts at most five of them.
-			const xRayCells = cells.slice(0, X_RAY_MAX_REVEALS);
 			console.log(
-				`    tab ${tab.position} (${(tab.id as string).slice(0, 8)}): free_tab would request ${cells.length} cells, x_ray up to ${xRayCells.length}`
+				`    tab ${tab.position} (${(tab.id as string).slice(0, 8)}): free_tab would request ${cells.length} cells; x_ray can spend a reveal on any of them`
 			);
 
 			for (const c of cells) {

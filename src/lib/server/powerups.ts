@@ -18,7 +18,7 @@ import { maybeTransferCrown } from '$lib/server/crown';
 import {
 	freeAnswerRevealKey,
 	FREE_TAB_MAX_REVEALS,
-	X_RAY_MAX_REVEALS,
+	X_RAY_DEFAULT_BUDGET,
 	type RevealResult,
 	type RevealTarget
 } from '$lib/powerups-meta';
@@ -153,6 +153,21 @@ export function resolveDiceRange(cfg: PowerupConfigV2): { min: number; max: numb
  */
 export function rollDice(min: number, max: number, rand: () => number = Math.random): number {
 	return min + Math.floor(rand() * (max - min + 1));
+}
+
+/**
+ * How many reveals one X-Ray activation is worth, from the set's config. Read the
+ * same way the dice range is (powerup_config.types.x_ray.reveal_budget), so a
+ * later settings UI tunes it like any other per-type setting. Anything missing,
+ * non-integer or below 1 falls back to X_RAY_DEFAULT_BUDGET — a budget of 0 would
+ * hand out a powerup that can never do anything.
+ */
+export function resolveXrayBudget(cfg: PowerupConfigV2): number {
+	const raw = cfg.types?.x_ray?.reveal_budget;
+	if (typeof raw !== 'number' || !Number.isFinite(raw) || !Number.isInteger(raw) || raw < 1) {
+		return X_RAY_DEFAULT_BUDGET;
+	}
+	return raw;
 }
 
 export type EarnedPowerup = {
@@ -994,6 +1009,145 @@ export async function resolveFreeAnswerValue(
 	return { value, ...(tags?.length ? { tags } : {}), tabId: tab.id, slotIndex };
 }
 
+// ─── x_ray: spending one reveal from the budget ──────────────────────────────
+
+export type SpendXrayResult =
+	| { success: true; reveal: RevealResult; remaining: number }
+	| { success: false; error: string };
+
+/**
+ * Spend ONE reveal from a team's running X-Ray budget.
+ *
+ * This is the whole of X-Ray's per-field mechanic, and it deliberately owns none
+ * of the reveal itself: `resolveReveal` defaults to resolveFreeAnswerValue — the
+ * same function free_answer, free_tab and the original x_ray all go through — and
+ * the row it writes is the same effect_type='free_answer' row the challenge page
+ * already reads back. What lives here is only the budget: find it, refuse without
+ * it, decrement it, and end the powerup when it runs out.
+ *
+ * Order matters, and it is: resolve FIRST, decrement only on success. A cell that
+ * cannot be revealed (mashup tab with no track, `grouping`, an empty column) must
+ * cost nothing — the same "never charge for nothing" rule free_answer applies by
+ * staying held.
+ *
+ * The decrement is a compare-and-swap on the counter's current value (the same
+ * pattern tryConsumeShield and the cumulative-highwater claim use), so two taps
+ * landing at once cannot both spend the same unit: the second finds the counter
+ * already moved and is told to try again.
+ *
+ * `resolveReveal` is injectable for the same reason rollDice's `rand` is — the
+ * budget behaviour can then be asserted without a database. Production never
+ * passes it.
+ */
+export async function spendXrayReveal(
+	supabase: SupabaseClient<Database>,
+	params: {
+		teamId: string;
+		challengeId: string;
+		field: string;
+		tabId: string | null;
+		slotIndex: number;
+	},
+	deps?: { resolveReveal?: typeof resolveFreeAnswerValue }
+): Promise<SpendXrayResult> {
+	const resolveReveal = deps?.resolveReveal ?? resolveFreeAnswerValue;
+
+	// The running budget. Scoped by team + effect type; a team is in one set at a
+	// time and the reset SQL clears team_effects, so no set filter is needed to
+	// find the right one.
+	const { data: effect } = await supabase
+		.from('team_effects')
+		.select('id, set_id, payload, source_team_powerup_id')
+		.eq('team_id', params.teamId)
+		.eq('effect_type', 'x_ray')
+		.is('consumed_at', null)
+		.order('created_at', { ascending: false })
+		.limit(1)
+		.maybeSingle();
+	if (!effect) return { success: false, error: 'No X-Ray running' };
+
+	const payload = (effect.payload ?? {}) as Record<string, unknown>;
+	const remaining = typeof payload.reveals_remaining === 'number' ? payload.reveals_remaining : 0;
+	if (remaining <= 0) return { success: false, error: 'No X-Ray reveals left' };
+
+	// Same gate free_answer puts on its reveal: you can only uncover an answer on a
+	// challenge you are actually playing.
+	const { data: attempt } = await supabase
+		.from('challenge_attempts')
+		.select('id')
+		.eq('challenge_id', params.challengeId)
+		.eq('team_id', params.teamId)
+		.is('ended_at', null)
+		.maybeSingle();
+	if (!attempt) return { success: false, error: 'No active attempt for this challenge' };
+
+	const resolved = await resolveReveal(
+		supabase,
+		params.challengeId,
+		params.field,
+		params.tabId,
+		params.slotIndex
+	);
+	// Refused: nothing written, nothing charged, budget untouched.
+	if ('error' in resolved) return { success: false, error: resolved.error };
+
+	// CAS: only decrement if the counter still reads what we resolved against.
+	const { data: claimed } = await supabase
+		.from('team_effects')
+		.update({ payload: { ...payload, reveals_remaining: remaining - 1 } } as never)
+		.eq('id', effect.id)
+		.eq('payload->>reveals_remaining', String(remaining))
+		.select('id');
+	if (!claimed?.length) return { success: false, error: 'X-Ray busy — try that again' };
+
+	const reveal: RevealResult = {
+		value: resolved.value,
+		...(resolved.tags?.length ? { tags: resolved.tags } : {}),
+		field: params.field,
+		tabId: resolved.tabId,
+		slotIndex: resolved.slotIndex
+	};
+
+	// The reveal itself, stored exactly as free_answer stores one — which is what
+	// makes it survive a refresh (the challenge load rebuilds every consumed
+	// free_answer row for this challenge) with no extra persistence.
+	await supabase.from('team_effects').insert({
+		team_id: params.teamId,
+		set_id: effect.set_id,
+		effect_type: 'free_answer',
+		payload: {
+			field: params.field,
+			value: resolved.value,
+			challenge_id: params.challengeId,
+			tab_id: resolved.tabId,
+			slot_index: resolved.slotIndex,
+			source: 'x_ray'
+		},
+		consumed_at: new Date().toISOString(),
+		consumed_challenge_id: params.challengeId,
+		source_team_powerup_id: effect.source_team_powerup_id
+	} as never);
+
+	const nowRemaining = remaining - 1;
+	// Spent out: the budget row closes and the powerup is finally consumed — NOT
+	// after the first reveal, which is what the previous version did.
+	if (nowRemaining === 0) {
+		await supabase
+			.from('team_effects')
+			.update({ consumed_at: new Date().toISOString() } as never)
+			.eq('id', effect.id)
+			.is('consumed_at', null);
+		if (effect.source_team_powerup_id) {
+			await supabase
+				.from('team_powerups')
+				.update({ status: 'consumed' } as never)
+				.eq('id', effect.source_team_powerup_id);
+		}
+	}
+
+	return { success: true, reveal, remaining: nowRemaining };
+}
+
 /**
  * Activate a held powerup. Creates a team_effects row and transitions status.
  * Commit 1 handles: bonus_points, single_event_mult, hard_gaan, shield.
@@ -1435,15 +1589,67 @@ export async function activatePowerup(
 			};
 		}
 
-		case 'x_ray':
+		case 'x_ray': {
+			// X-Ray does NOT reveal anything at activation. It opens a BUDGET the team
+			// spends one field at a time, on any tab, while it plays — because no tab in
+			// this game has five fields, so five reveals only make sense spread across
+			// tabs and across time.
+			//
+			// The budget is a live counter in an ACTIVE (non-consumed) team_effects row,
+			// the same "row stays up until something ends it" shape shield and
+			// tap_to_break use; what ends it here is the counter reaching zero rather
+			// than an attack or a tap. Each spend goes through spendXrayReveal(), which
+			// calls free_answer's own resolver per reveal — no reveal work happens here.
+			//
+			// No challenge gate at activation (unlike free_answer / free_tab): opening a
+			// budget mid-lobby is harmless, and the attempt gate that matters lives on
+			// each individual reveal instead.
+			const budget = resolveXrayBudget(
+				parseConfig((gameSet as unknown as { powerup_config?: unknown }).powerup_config)
+			);
+
+			// One X-Ray at a time, same rule (and same powerup-stays-held rejection) as
+			// shield and double_down. Two counters would race over the same reveals.
+			const { data: existingXray } = await supabase
+				.from('team_effects')
+				.select('id')
+				.eq('team_id', tpu.team_id)
+				.eq('set_id', tpu.set_id)
+				.eq('effect_type', 'x_ray')
+				.is('consumed_at', null)
+				.limit(1)
+				.maybeSingle();
+			if (existingXray) return { success: false, error: 'An X-Ray is already running' };
+
+			const payload = { reveals_remaining: budget, reveals_total: budget };
+			const { data: eff, error } = await supabase
+				.from('team_effects')
+				.insert({
+					team_id: tpu.team_id,
+					set_id: tpu.set_id,
+					effect_type: 'x_ray',
+					payload,
+					source_team_powerup_id: teamPowerupId
+				} as never)
+				.select('id')
+				.single();
+			if (error) return { success: false, error: error.message };
+
+			// 'active', not 'consumed' — the powerup is spent only when the last reveal
+			// is (spendXrayReveal flips it then).
+			await supabase
+				.from('team_powerups')
+				.update({ status: 'active' } as never)
+				.eq('id', teamPowerupId);
+			return { success: true, effectId: eff.id, payload };
+		}
+
 		case 'free_tab': {
-			// ONE branch for both: they differ only in how the target list is bounded —
-			// x_ray takes up to five cells the team hand-picks, free_tab takes every
-			// cell of a single tab. Everything after that is identical, and identical
-			// to free_answer's single-reveal case: same resolver, same row shape, same
-			// address. A separate implementation per powerup is exactly how the bugs
-			// fixed in the free_answer pass (tab-1 smearing, tag chips, per-tab keying)
-			// would come back.
+			// Every reveal is one (tab, slot, field) address through free_answer's own
+			// resolver — same resolver, same row shape, same addressing as its
+			// single-reveal case, just a whole tab's worth of them. A separate
+			// implementation is exactly how the bugs fixed in the free_answer pass
+			// (tab-1 smearing, tag chips, per-tab keying) would come back.
 			const challengeId = options?.currentChallengeId;
 			if (!challengeId)
 				return { success: false, error: `${powerupType.name} requires an active challenge` };
@@ -1459,8 +1665,8 @@ export async function activatePowerup(
 				.maybeSingle();
 			if (!attempt) return { success: false, error: 'No active attempt for this challenge' };
 
-			// Dedupe on the SAME address key the page renders badges with, so asking
-			// for one cell twice costs one of the five rather than two.
+			// Dedupe on the SAME address key the page renders badges with, so one cell
+			// asked for twice is revealed once.
 			const seen = new Set<string>();
 			const targets: RevealTarget[] = [];
 			for (const t of options?.revealTargets ?? []) {
@@ -1474,19 +1680,14 @@ export async function activatePowerup(
 			if (!targets.length)
 				return { success: false, error: `${powerupType.name} needs at least one answer selected` };
 
-			// The target list comes from the client, so the per-powerup rule is enforced
-			// here rather than trusted: x_ray is capped at five cells, free_tab must
-			// stay inside ONE tab (its whole point — a second tab would be a second
-			// free_tab) with a sanity bound on top.
-			if (typeId === 'x_ray' && targets.length > X_RAY_MAX_REVEALS)
-				return { success: false, error: `X-Ray reveals at most ${X_RAY_MAX_REVEALS} answers` };
-			if (typeId === 'free_tab') {
-				const distinctTabs = new Set(targets.map((t) => t.tabId ?? ''));
-				if (distinctTabs.size > 1)
-					return { success: false, error: 'Free Tab reveals one tab, not several' };
-				if (targets.length > FREE_TAB_MAX_REVEALS)
-					return { success: false, error: 'That is more answers than one tab can have' };
-			}
+			// The target list comes from the client, so the rule is enforced here rather
+			// than trusted: every address must sit inside ONE tab (a second tab would be
+			// a second Free Tab), with a sanity bound on the list length.
+			const distinctTabs = new Set(targets.map((t) => t.tabId ?? ''));
+			if (distinctTabs.size > 1)
+				return { success: false, error: 'Free Tab reveals one tab, not several' };
+			if (targets.length > FREE_TAB_MAX_REVEALS)
+				return { success: false, error: 'That is more answers than one tab can have' };
 
 			// Resolve each address through free_answer's resolver — the only place that
 			// knows how a (tab, slot, field) becomes an answer.

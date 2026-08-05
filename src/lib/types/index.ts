@@ -394,6 +394,10 @@ export interface PowerupTypeOverride {
 	// 1–6 default whenever these are absent or invalid.
 	dice_min?: number;
 	dice_max?: number;
+	// x_ray only: how many reveals one activation is worth. Same story as the dice
+	// range — a setting rather than a constant, with resolveXrayBudget()
+	// (src/lib/server/powerups.ts) supplying X_RAY_DEFAULT_BUDGET when absent.
+	reveal_budget?: number;
 }
 
 export interface PowerupConfigV2 {

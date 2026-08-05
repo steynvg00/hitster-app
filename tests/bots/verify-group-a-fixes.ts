@@ -1,19 +1,29 @@
-// Lucky Dice verification — the roll lands on teams.score INSTANTLY.
+// Group A fixes verification — Lucky Dice's INSTANT score and X-Ray's BUDGET.
 //
 //   npm run bots:verify-group-a-fixes
 //
-// NO database, NO app, NO mutation. The fix is about what the server *writes*,
-// which the live read-only probe (verify-group-a.ts) cannot see: it would take an
-// actual activation to observe. So this drives the REAL activatePowerup() out of
-// src/lib/server/powerups.ts against a recording fake Supabase client and asserts
-// the writes it issues — teams.score directly (old value + roll) plus an
-// activity_log entry, and NO team_effects row any more. A leftover
-// "+N next submission" effect row would show up in the recorded writes at once.
+// NO database, NO app, NO mutation. Both fixes are about what the server *writes*
+// and in what order, which the live read-only probe (verify-group-a.ts) cannot
+// see: it would take an actual activation to observe. So this drives the REAL
+// functions — activatePowerup() and spendXrayReveal() out of
+// src/lib/server/powerups.ts — against a recording fake Supabase client, and
+// asserts the writes they issue.
+//
+// What that buys, concretely:
+//   * Lucky Dice: proves teams.score is written directly (old value + roll) with
+//     an activity_log entry, and that NO team_effects row is created any more —
+//     the whole point of the fix. A "+N next submission" effect row would show up
+//     in the recorded writes immediately.
+//   * X-Ray: proves a budget of 5 permits exactly 5 reveals, that the powerup is
+//     consumed on the 5th and not before, and that a refused cell writes nothing
+//     and costs no budget.
 //
 // The fake is deliberately dumb: it records every operation and answers reads
-// from a small mutable world. It is not a Postgres emulator.
+// from a small mutable world. It is not a Postgres emulator — the CAS filter, for
+// instance, is asserted structurally (the update carries
+// payload->>reveals_remaining = the value that was read) rather than raced.
 
-import { activatePowerup } from '../../src/lib/server/powerups';
+import { activatePowerup, spendXrayReveal } from '../../src/lib/server/powerups';
 
 // ── tiny assert harness ───────────────────────────────────────────────────────
 type Check = { name: string; pass: boolean; detail: string };
@@ -101,7 +111,7 @@ function makeFake(respond: Responder) {
 const opsOn = (log: Op[], table: string, kind?: Op['kind']) =>
 	log.filter((o) => o.table === table && (!kind || o.kind === kind));
 
-// ── Lucky Dice: instant score, no waiting effect ──────────────────────────────
+// ── 1. Lucky Dice: instant score, no waiting effect ───────────────────────────
 function luckyDiceWorld(opts: {
 	score: number;
 	crownHolder: string | null;
@@ -211,8 +221,172 @@ async function verifyLuckyDice() {
 	}
 }
 
+// ── 2. X-Ray: a budget of N, spent one reveal at a time ───────────────────────
+function xrayWorld(budget: number) {
+	const world = {
+		effect: {
+			id: 'eff1',
+			set_id: 'set1',
+			payload: { reveals_remaining: budget, reveals_total: budget } as Record<string, unknown>,
+			source_team_powerup_id: 'tp1',
+			consumed_at: null as string | null
+		}
+	};
+	const respond: Responder = (op) => {
+		if (op.table === 'team_effects' && op.kind === 'select') {
+			if (op.filters.effect_type !== 'x_ray') return null;
+			return world.effect.consumed_at ? null : world.effect;
+		}
+		if (op.table === 'challenge_attempts') return { id: 'attempt1' };
+		if (op.table === 'team_effects' && op.kind === 'update') {
+			const values = op.values as Record<string, unknown>;
+			if (values.payload) {
+				// Compare-and-swap: only applies when the counter still reads what the
+				// caller resolved against.
+				const expected = op.filters['payload->>reveals_remaining'];
+				if (String(world.effect.payload.reveals_remaining) !== expected) return [];
+				world.effect.payload = values.payload as Record<string, unknown>;
+				return [{ id: 'eff1' }];
+			}
+			if (values.consumed_at) {
+				world.effect.consumed_at = values.consumed_at as string;
+				return [{ id: 'eff1' }];
+			}
+		}
+		return null;
+	};
+	return { world, ...makeFake(respond) };
+}
+
+const okResolver = async () => ({
+	value: 'Angerfist',
+	tags: ['Angerfist'],
+	tabId: 'tab1',
+	slotIndex: 0
+});
+const refusingResolver = async () => ({
+	error: 'This tab has no track behind it yet — nothing to reveal'
+});
+
+async function verifyXray() {
+	console.log('\n── X-Ray: budget of 5, spent one field at a time ─────────────────');
+
+	{
+		const { world, db, log } = xrayWorld(5);
+		const remainings: number[] = [];
+		for (let i = 0; i < 5; i++) {
+			const r = await spendXrayReveal(
+				db,
+				{ teamId: 'team1', challengeId: 'ch1', field: 'artist', tabId: 'tab1', slotIndex: i },
+				{ resolveReveal: okResolver as never }
+			);
+			if (!r.success) {
+				assert(`spend ${i + 1} succeeds`, r.error, 'success');
+				break;
+			}
+			remainings.push(r.remaining);
+		}
+		assert('five spends count down 4→0', remainings, [4, 3, 2, 1, 0]);
+		assert('one reveal row written per spend', opsOn(log, 'team_effects', 'insert').length, 5);
+		assert(
+			'…each stored as a free_answer row',
+			[...new Set(opsOn(log, 'team_effects', 'insert').map(
+				(o) => (o.values as { effect_type?: string }).effect_type
+			))],
+			['free_answer']
+		);
+		assert(
+			'…tagged with its source powerup',
+			[...new Set(opsOn(log, 'team_effects', 'insert').map(
+				(o) => ((o.values as { payload?: Record<string, unknown> }).payload as { source?: string })?.source
+			))],
+			['x_ray']
+		);
+		assert('budget row consumed only at 0', !!world.effect.consumed_at, true);
+		const tpu = opsOn(log, 'team_powerups', 'update');
+		assert('powerup consumed exactly once', tpu.length, 1);
+		assert('…and only on the last spend', (tpu[0].values as { status?: string }).status, 'consumed');
+
+		// The sixth attempt has nothing left to spend.
+		const sixth = await spendXrayReveal(
+			db,
+			{ teamId: 'team1', challengeId: 'ch1', field: 'title', tabId: 'tab1', slotIndex: 0 },
+			{ resolveReveal: okResolver as never }
+		);
+		assert('a sixth reveal is refused', sixth.success === false && sixth.error, 'No X-Ray running');
+	}
+
+	// Consumption timing, stated as its own check: after four of five spends the
+	// powerup must still be alive.
+	{
+		const { world, db, log } = xrayWorld(5);
+		for (let i = 0; i < 4; i++) {
+			await spendXrayReveal(
+				db,
+				{ teamId: 'team1', challengeId: 'ch1', field: 'artist', tabId: 'tab1', slotIndex: i },
+				{ resolveReveal: okResolver as never }
+			);
+		}
+		assert('after 4 of 5: budget row still active', world.effect.consumed_at, null);
+		assert('after 4 of 5: powerup NOT consumed', opsOn(log, 'team_powerups', 'update').length, 0);
+		assert('after 4 of 5: 1 reveal left', world.effect.payload.reveals_remaining, 1);
+	}
+
+	console.log('\n── X-Ray: a refused cell costs nothing ───────────────────────────');
+	{
+		const { world, db, log } = xrayWorld(5);
+		const r = await spendXrayReveal(
+			db,
+			{ teamId: 'team1', challengeId: 'ch1', field: 'artist', tabId: 'tabX', slotIndex: 0 },
+			{ resolveReveal: refusingResolver as never }
+		);
+		assert(
+			'refusal is reported verbatim',
+			r.success === false && r.error,
+			'This tab has no track behind it yet — nothing to reveal'
+		);
+		assert('budget untouched', world.effect.payload.reveals_remaining, 5);
+		assert('no counter UPDATE issued', opsOn(log, 'team_effects', 'update').length, 0);
+		assert('no reveal row written', opsOn(log, 'team_effects', 'insert').length, 0);
+		assert('powerup not consumed', opsOn(log, 'team_powerups', 'update').length, 0);
+	}
+
+	console.log('\n── X-Ray: the decrement is a compare-and-swap ────────────────────');
+	{
+		const { db, log } = xrayWorld(3);
+		await spendXrayReveal(
+			db,
+			{ teamId: 'team1', challengeId: 'ch1', field: 'year', tabId: 'tab1', slotIndex: 0 },
+			{ resolveReveal: okResolver as never }
+		);
+		const upd = opsOn(log, 'team_effects', 'update')[0];
+		assert(
+			'update is guarded on the value that was read',
+			upd.filters['payload->>reveals_remaining'],
+			'3'
+		);
+		assert(
+			'…and writes exactly one less',
+			(upd.values as { payload?: { reveals_remaining?: number } }).payload?.reveals_remaining,
+			2
+		);
+	}
+
+	console.log('\n── X-Ray: no budget at all ───────────────────────────────────────');
+	{
+		const { db } = makeFake(() => null);
+		const r = await spendXrayReveal(
+			db,
+			{ teamId: 'team1', challengeId: 'ch1', field: 'artist', tabId: 'tab1', slotIndex: 0 },
+			{ resolveReveal: okResolver as never }
+		);
+		assert('refused without an active X-Ray', r.success === false && r.error, 'No X-Ray running');
+	}
+}
+
 async function main() {
 	await verifyLuckyDice();
+	await verifyXray();
 
 	const failed = checks.filter((c) => !c.pass);
 	console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);

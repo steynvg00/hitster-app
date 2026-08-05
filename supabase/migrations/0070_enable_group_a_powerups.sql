@@ -4,8 +4,8 @@
 --
 --   lucky_dice  (self, IMMEDIATE-USE)  — roll an integer in a configured range and
 --                                        add it to teams.score immediately.
---   x_ray       (information, holdable) — the team picks up to 5 answer cells of
---                                        the tab it is on; each is revealed.
+--   x_ray       (information, holdable) — grants a BUDGET of reveals the team spends
+--                                        one field at a time, across any tab.
 --   free_tab    (information, holdable) — the team picks ONE tab; every field of
 --                                        every slot of that tab is revealed.
 --
@@ -32,6 +32,10 @@
 -- lucky_dice writes no effect row at all: it updates teams.score directly and logs
 -- an activity_log row, the same direct-mutation path awardCrownPayout and the
 -- host's manual score adjustment use — no scoring change, no new column.
+--
+-- x_ray stores its remaining budget in team_effects.payload ({reveals_remaining}),
+-- an ACTIVE row that is only consumed when the counter reaches zero. jsonb again,
+-- so again no schema change.
 --
 -- ── Dice range lives in powerup_config, not in code ─────────────────────────
 -- Stored per set at powerup_config.types.lucky_dice.{dice_min,dice_max}, the same
@@ -64,18 +68,20 @@ UPDATE powerup_types
 
 -- ── 2. x_ray + free_tab: new information powerups ───────────────────────────
 -- Both holdable (the team must choose WHAT to reveal, so they cannot fire on
--- earn), both gated behind a running challenge attempt at activation time — the
--- same gate free_answer uses, enforced in code, not here.
+-- earn). free_tab is gated behind a running challenge attempt at activation time
+-- (the same gate free_answer uses); x_ray is not — activating it only opens a
+-- budget, and each individual reveal carries the attempt gate instead. Both rules
+-- are enforced in code, not here.
 --
 -- Thresholds sit ABOVE free_answer's 80 because both reveal strictly more than it
--- does: x_ray up to 5 cells (85), free_tab an entire tab (90).
+-- does: x_ray five reveals (85), free_tab an entire tab (90).
 INSERT INTO powerup_types
   (id, name, category, description, immediate_use, holdable,
    default_min_score_pct, default_max_score_pct, icon, sort_order,
    enabled_by_default, coming_soon)
 VALUES
   ('x_ray',    'X-Ray',    'information',
-   'Pick up to 5 answers on the tab you are playing — all of them are revealed and filled in for you.',
+   'Activate to get 5 reveals. Spend them one answer at a time, on any tab, while you play.',
    false, true, 85, 100, '🔎', 160, true, false),
   ('free_tab', 'Free Tab', 'information',
    'Pick one tab — every field of every track on that tab is revealed and filled in for you.',
