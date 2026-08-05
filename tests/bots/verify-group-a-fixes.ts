@@ -23,13 +23,37 @@
 // instance, is asserted structurally (the update carries
 // payload->>reveals_remaining = the value that was read) rather than raced.
 //
-// It DOES validate sort columns, and that is not decoration. The first version of
+// It DOES validate column names, and that is not decoration. The first version of
 // this fake treated .order() as a no-op returning `this`, so spendXrayReveal's
 // `.order('created_at')` sailed through all 34 checks — while against the real
 // database team_effects has no created_at (it has activated_at), PostgREST
 // rejected the entire query, and every reveal came back "No X-Ray running" with a
 // budget of 5 sitting right there in the banner. A fake that accepts any column
 // name cannot catch a wrong column name, so the real column lists live below.
+//
+// That guard originally covered .order() and nothing else, which left the far
+// busier query parts blind: filters (.eq is 108 calls in powerups.ts and carries
+// the CAS), select lists, and the keys of every insert/update. Measured against
+// the pre-hardening fake, all four of these returned data with error:null —
+//
+//   .eq('team_effects.nonexistent_col')   → {"data":{"id":"x"},"error":null}
+//   .select('id, totally_bogus_column')   → {"data":{"id":"x"},"error":null}
+//   .update({ bogus_key: 1 })             → {"data":{"id":"x"},"error":null}
+//   .insert({ nope_not_a_column: 1 })     → {"data":{"id":"x"},"error":null}
+//
+// — and .in/.neq/.gte/.delete/.upsert did not exist on the class at all, so the
+// real code paths that use them (13 .in calls, the resurrection upsert, the
+// ticket delete) could not be driven through this fake without a TypeError.
+//
+// So the guard now runs on EVERY query part that names a column, the missing
+// methods exist, and verifySchemaGuard() below pins both halves: the four
+// blind spots now error, and a jsonb path filter still does not.
+//
+// The line this fake does NOT cross: it validates SCHEMA (does the column
+// exist), never SEMANTICS. No RLS, no constraints, no races, no type checking of
+// values. Those belong to the real-database harnesses (verify-earning,
+// verify-regression, verify-battle-integration) and putting them here would make
+// a fake that lies in a more sophisticated way.
 
 import { activatePowerup, spendXrayReveal } from '../../src/lib/server/powerups';
 
@@ -49,7 +73,7 @@ function assert(name: string, got: unknown, want: unknown) {
 // ── recording fake Supabase client ────────────────────────────────────────────
 type Op = {
 	table: string;
-	kind: 'select' | 'insert' | 'update';
+	kind: 'select' | 'insert' | 'update' | 'upsert' | 'delete';
 	cols?: string;
 	values?: Record<string, unknown> | Record<string, unknown>[];
 	filters: Record<string, unknown>;
@@ -57,11 +81,25 @@ type Op = {
 };
 
 type Responder = (op: Op) => unknown;
+type Settled = { data: unknown; error: { message: string } | null };
 
-// Real column lists, copied from the migrations that create these tables
-// (0044_powerups_runtime.sql + 0047_powerups_p3b.sql). Anything sorted or filtered
-// by a name outside this list is answered the way PostgREST answers it: an error,
-// not an empty result.
+// Real column lists, read from the live database's own PostgREST schema
+// (GET /rest/v1/ → definitions.<table>.properties) rather than transcribed from
+// the migrations. The spec is what PostgREST itself will accept, which is the
+// exact thing this fake imitates; a migration transcript is one copy further from
+// that and drifts silently.
+//
+// It had drifted. Three of the four original lists were short against the live
+// schema — team_powerups was missing used_at and payload, teams was missing
+// created_at/photo_url/token_balance/held_powerups, challenge_attempts was
+// missing created_at/timer_override_seconds. Harmless while only .order()
+// consulted them; a source of FALSE failures the moment filters and written keys
+// are validated too, which is what made refreshing them a precondition for the
+// rest of this hardening rather than a tidy-up.
+//
+// A table absent from this map is NOT validated. That keeps the guard opt-in per
+// table: an unlisted table can never produce a false positive, and adding one is
+// a deliberate act (read its real column list first — do not hand-write it).
 const TABLE_COLUMNS: Record<string, string[]> = {
 	team_effects: [
 		'id',
@@ -80,13 +118,139 @@ const TABLE_COLUMNS: Record<string, string[]> = {
 		'team_id',
 		'set_id',
 		'powerup_type_id',
-		'status',
 		'granted_at',
-		'granted_from_challenge_id'
+		'granted_from_challenge_id',
+		'used_at',
+		'status',
+		'payload'
 	],
-	teams: ['id', 'color', 'label', 'display_name', 'score', 'current_streak', 'last_threshold_crossed'],
-	challenge_attempts: ['id', 'challenge_id', 'team_id', 'started_at', 'ended_at']
+	teams: [
+		'id',
+		'color',
+		'label',
+		'score',
+		'created_at',
+		'display_name',
+		'current_streak',
+		'photo_url',
+		'token_balance',
+		'held_powerups',
+		'last_threshold_crossed'
+	],
+	challenge_attempts: [
+		'id',
+		'challenge_id',
+		'team_id',
+		'started_at',
+		'ended_at',
+		'created_at',
+		'timer_override_seconds'
+	],
+	// Added for the activation coverage this fake is the instrument for: every
+	// table an activatePowerup() branch reads or writes.
+	game_sets: [
+		'id',
+		'name',
+		'description',
+		'team_count',
+		'total_timer_seconds',
+		'status',
+		'started_at',
+		'ended_at',
+		'created_at',
+		'expected_player_count',
+		'assignment_slots',
+		'assignment_index',
+		'recap_state',
+		'recap_ranking',
+		'recap_reveal_index',
+		'created_by',
+		'play_state',
+		'scores_hidden',
+		'nfc_lock_enabled',
+		'last_results',
+		'powerups_enabled',
+		'powerup_config',
+		'powerup_mode',
+		'preset_slug',
+		'token_earning_config',
+		'challenge_unlock_mode',
+		'team_selection_mode',
+		'crown_holder_team_id',
+		'hard_gaan_window_minutes',
+		'crown_payout_applied',
+		'battle_reveal_index'
+	],
+	powerup_types: [
+		'id',
+		'name',
+		'category',
+		'description',
+		'immediate_use',
+		'holdable',
+		'default_min_score_pct',
+		'default_max_score_pct',
+		'sort_order',
+		'icon',
+		'enabled_by_default',
+		'created_at',
+		'coming_soon',
+		'default_inverse',
+		'tier'
+	],
+	submissions: [
+		'id',
+		'challenge_id',
+		'team_id',
+		'answers',
+		'score',
+		'submitted_at',
+		'created_at',
+		'status',
+		'is_final',
+		'battle_raw_score'
+	],
+	activity_log: ['id', 'event_type', 'team_id', 'challenge_id', 'payload', 'created_at']
 };
+
+// A column reference in a query is not always a bare column name:
+//
+//   'payload'                     → a column
+//   'payload->>reveals_remaining' → column `payload`, then a key INSIDE the jsonb
+//                                   document. This is the X-Ray CAS filter
+//                                   (powerups.ts:1872) and it is perfectly valid —
+//                                   failing it would be the guard lying.
+//   'payload->tab->>id'           → same, deeper path
+//   '*'                           → every column
+//
+// Only the part before the first `->` names a column of this table. Everything
+// after it is jsonb content, which no schema describes and Postgres never
+// rejects, so it is deliberately not looked at. That single split is the whole
+// distinction between a real column mismatch and a json path.
+function columnPart(ref: string): string {
+	return ref.split('->')[0].trim();
+}
+
+// Split a PostgREST select list on top-level commas only, so an embedded select
+// (`tracks(id, title)`) stays one item instead of shattering into columns that
+// belong to another table.
+function splitSelectList(cols: string): string[] {
+	const out: string[] = [];
+	let depth = 0;
+	let cur = '';
+	for (const ch of cols) {
+		if (ch === '(') depth++;
+		else if (ch === ')') depth--;
+		if (ch === ',' && depth === 0) {
+			out.push(cur);
+			cur = '';
+			continue;
+		}
+		cur += ch;
+	}
+	out.push(cur);
+	return out.map((s) => s.trim()).filter(Boolean);
+}
 
 class FakeQuery {
 	op: Op;
@@ -101,67 +265,291 @@ class FakeQuery {
 	) {
 		this.op = { table, kind, cols, values, filters: {} };
 		if (kind !== 'select') this.log.push(this.op);
+		this.checkValues(values);
 	}
+
+	/**
+	 * The one place a column name is judged. Latches a PostgREST-shaped error on
+	 * the FIRST offence (a rejected query has one message, and the later parts
+	 * never run), and stays silent for tables this fake has no list for.
+	 *
+	 * It never throws: PostgREST reports a bad column as a RESULT, and the bug
+	 * class this exists to catch is precisely a query error being read as "no
+	 * rows". Throwing would make it loud in a way the real failure never is.
+	 */
+	private checkColumn(ref: string) {
+		if (this.error) return;
+		const known = TABLE_COLUMNS[this.op.table];
+		if (!known) return;
+		const col = columnPart(ref);
+		if (!col || col === '*') return;
+		if (!known.includes(col)) {
+			this.error = `column ${this.op.table}.${col} does not exist`;
+		}
+	}
+
+	/**
+	 * Validate a select list. Two things are skipped on purpose, and both fail
+	 * SAFE (unchecked, never falsely rejected):
+	 *   - embedded selects `foreign_table(cols)` — they name columns on another
+	 *     table and this fake holds no relationship map to resolve them.
+	 *   - items containing ':' (aliases `alias:col`, casts `col::text`) — no
+	 *     caller in this codebase emits them today.
+	 * If either ever matters, the guard degrades to "not checked" rather than to
+	 * a false failure, which is the direction a measuring instrument must fail in.
+	 */
+	private checkSelect(cols?: string) {
+		if (!cols) return;
+		for (const item of splitSelectList(cols)) {
+			if (item.includes('(') || item.includes(':')) continue;
+			this.checkColumn(item);
+		}
+	}
+
+	/** Every key of an inserted/updated/upserted row is a column name. */
+	private checkValues(values?: Op['values']) {
+		if (!values) return;
+		for (const row of Array.isArray(values) ? values : [values]) {
+			if (!row || typeof row !== 'object') continue;
+			for (const key of Object.keys(row)) this.checkColumn(key);
+		}
+	}
+
+	/** Shared body of every filter method — the column is checked, then recorded. */
+	private addFilter(col: string, val: unknown) {
+		this.checkColumn(col);
+		this.op.filters[col] = val;
+		return this;
+	}
+
 	select(cols?: string) {
 		this.op.cols = cols;
+		this.checkSelect(cols);
 		if (this.op.kind === 'select') this.log.push(this.op);
 		return this;
 	}
 	eq(col: string, val: unknown) {
-		this.op.filters[col] = val;
-		return this;
+		return this.addFilter(col, val);
+	}
+	neq(col: string, val: unknown) {
+		return this.addFilter(col, val);
 	}
 	is(col: string, val: unknown) {
-		this.op.filters[col] = val;
-		return this;
+		return this.addFilter(col, val);
 	}
-	order(col?: string) {
-		// The check the old no-op version did not do.
-		const known = TABLE_COLUMNS[this.op.table];
-		if (col && known && !known.includes(col)) {
-			this.error = `column ${this.op.table}.${col} does not exist`;
-		}
+	in(col: string, vals: unknown[]) {
+		return this.addFilter(col, vals);
+	}
+	gt(col: string, val: unknown) {
+		return this.addFilter(col, val);
+	}
+	gte(col: string, val: unknown) {
+		return this.addFilter(col, val);
+	}
+	lt(col: string, val: unknown) {
+		return this.addFilter(col, val);
+	}
+	lte(col: string, val: unknown) {
+		return this.addFilter(col, val);
+	}
+	/** PostgREST's escape hatch: .filter(col, operator, value). */
+	filter(col: string, _operator: string, val: unknown) {
+		return this.addFilter(col, val);
+	}
+	order(col?: string, _opts?: unknown) {
+		if (col) this.checkColumn(col);
 		this.op.orderBy = col;
 		return this;
 	}
-	limit() {
+	limit(_n?: number) {
 		return this;
 	}
-	private settle() {
+	private settle(): Settled {
 		// PostgREST returns the error and NO data — the shape that made the original
 		// bug look like "there is no effect".
 		if (this.error) return { data: null, error: { message: this.error } };
 		return { data: this.respond(this.op) ?? null, error: null };
 	}
-	async maybeSingle() {
+	async maybeSingle(): Promise<Settled> {
 		return this.settle();
 	}
-	async single() {
+	async single(): Promise<Settled> {
 		return this.settle();
 	}
-	then<T>(onFulfilled: (v: { data: unknown; error: { message: string } | null }) => T) {
+	then<T>(onFulfilled: (v: Settled) => T) {
 		return Promise.resolve(this.settle()).then(onFulfilled);
 	}
 }
 
+type FakeTable = {
+	select: (cols?: string) => FakeQuery;
+	insert: (values: Op['values']) => FakeQuery;
+	update: (values: Op['values']) => FakeQuery;
+	upsert: (values: Op['values'], options?: unknown) => FakeQuery;
+	delete: () => FakeQuery;
+};
+
 function makeFake(respond: Responder) {
 	const log: Op[] = [];
 	const db = {
-		from(table: string) {
+		from(table: string): FakeTable {
 			return {
 				select: (cols?: string) => new FakeQuery(respond, log, table, 'select').select(cols),
 				insert: (values: Op['values']) => new FakeQuery(respond, log, table, 'insert', values),
-				update: (values: Op['values']) => new FakeQuery(respond, log, table, 'update', values)
+				update: (values: Op['values']) => new FakeQuery(respond, log, table, 'update', values),
+				upsert: (values: Op['values']) => new FakeQuery(respond, log, table, 'upsert', values),
+				delete: () => new FakeQuery(respond, log, table, 'delete')
 			};
 		}
 	};
 	// The real signature is SupabaseClient<Database>; the fake implements only the
-	// slice these two functions touch.
-	return { db: db as never, log };
+	// slice the powerup code touches. `raw` is the same object under a type the
+	// self-tests can call directly, so probing the guard needs no casts.
+	return { db: db as never, raw: db, log };
 }
 
 const opsOn = (log: Op[], table: string, kind?: Op['kind']) =>
 	log.filter((o) => o.table === table && (!kind || o.kind === kind));
+
+// ── 0. The instrument checks itself ───────────────────────────────────────────
+//
+// Everything below this file's first section is measured BY the fake, so the fake
+// being right is a precondition for any of it meaning anything. These checks are
+// that precondition, and they are written against the four blind spots the
+// pre-hardening version actually had — each `want` here is a value that version
+// demonstrably produced, recorded by running its own makeFake:
+//
+//   .eq('nonexistent_col')              → {"data":{"id":"x"},"error":null}
+//   .select('id, totally_bogus_column') → {"data":{"id":"x"},"error":null}
+//   .update({ bogus_key: 1 })           → {"data":{"id":"x"},"error":null}
+//   .insert({ nope_not_a_column: 1 })   → {"data":{"id":"x"},"error":null}
+//
+// data present, error null — indistinguishable from a healthy query, which is why
+// a wrong column name could reach production through a green suite. The other
+// half matters just as much: a guard that fires on a jsonb path would be worse
+// than no guard, because the CAS filter would start failing for a reason that
+// isn't real.
+async function verifySchemaGuard() {
+	console.log('\n── 0. Schema guard: the fake catches what it used to wave through ─');
+
+	const { raw } = makeFake(() => ({ id: 'x' }));
+	const settle = (q: FakeQuery) => q.then((v) => v);
+
+	// ── the four blind spots ───────────────────────────────────────────────────
+	const eqBad = await settle(raw.from('team_effects').select('id').eq('nonexistent_col', 1));
+	assert(
+		'.eq on an unknown column errors',
+		eqBad.error?.message,
+		'column team_effects.nonexistent_col does not exist'
+	);
+	assert('…and returns no data (the shape that hid the bug)', eqBad.data, null);
+
+	const selBad = await settle(raw.from('team_effects').select('id, totally_bogus_column'));
+	assert(
+		'.select naming an unknown column errors',
+		selBad.error?.message,
+		'column team_effects.totally_bogus_column does not exist'
+	);
+
+	const updBad = await settle(raw.from('teams').update({ bogus_key: 1 }));
+	assert(
+		'.update writing an unknown key errors',
+		updBad.error?.message,
+		'column teams.bogus_key does not exist'
+	);
+
+	const insBad = await settle(raw.from('team_effects').insert({ nope_not_a_column: 1 }));
+	assert(
+		'.insert writing an unknown key errors',
+		insBad.error?.message,
+		'column team_effects.nope_not_a_column does not exist'
+	);
+
+	// The original guard, still biting — this is the exact bug that started it all
+	// (team_effects has activated_at, not created_at).
+	const ordBad = await settle(raw.from('team_effects').select('id').order('created_at'));
+	assert(
+		'.order on an unknown column still errors',
+		ordBad.error?.message,
+		'column team_effects.created_at does not exist'
+	);
+
+	// ── methods that did not exist before, now present AND guarded ─────────────
+	const inBad = await settle(raw.from('team_powerups').select('id').in('not_a_column', ['a']));
+	assert(
+		'.in exists and is guarded',
+		inBad.error?.message,
+		'column team_powerups.not_a_column does not exist'
+	);
+
+	const neqBad = await settle(raw.from('teams').select('id').neq('missing_col', 1));
+	assert(
+		'.neq exists and is guarded',
+		neqBad.error?.message,
+		'column teams.missing_col does not exist'
+	);
+
+	const gteBad = await settle(raw.from('team_effects').select('id').gte('made_up_at', 'now'));
+	assert(
+		'.gte exists and is guarded',
+		gteBad.error?.message,
+		'column team_effects.made_up_at does not exist'
+	);
+
+	const upsBad = await settle(raw.from('challenge_attempts').upsert({ ghost_column: 1 }));
+	assert(
+		'.upsert exists and is guarded',
+		upsBad.error?.message,
+		'column challenge_attempts.ghost_column does not exist'
+	);
+
+	const delBad = await settle(raw.from('team_effects').delete().eq('phantom_id', 1));
+	assert(
+		'.delete exists and is guarded',
+		delBad.error?.message,
+		'column team_effects.phantom_id does not exist'
+	);
+
+	// ── the other half: valid queries must stay valid ──────────────────────────
+	// The CAS filter, verbatim as powerups.ts:1872 issues it. A guard that fires
+	// here would break the real code for an imaginary reason.
+	const cas = await settle(
+		raw.from('team_effects').update({ payload: {} }).eq('payload->>reveals_remaining', '3')
+	);
+	assert('jsonb path filter does NOT false-fail', cas.error, null);
+	assert('…and still answers with data', cas.data, { id: 'x' });
+
+	const deepJson = await settle(
+		raw.from('team_effects').select('id').eq('payload->tab->>id', 'tab1')
+	);
+	assert('deeper jsonb path does NOT false-fail', deepJson.error, null);
+
+	const star = await settle(raw.from('powerup_types').select('*'));
+	assert('select * does NOT false-fail', star.error, null);
+
+	const realCols = await settle(
+		raw
+			.from('game_sets')
+			.select('status, play_state, hard_gaan_window_minutes, powerup_config')
+			.eq('id', 'set1')
+	);
+	assert('a real multi-column select passes', realCols.error, null);
+
+	const embedded = await settle(raw.from('submissions').select('id, teams(display_name)'));
+	assert('embedded select is skipped, not failed', embedded.error, null);
+
+	// The documented boundary: a table with no column list is not validated at
+	// all, so adding tables stays deliberate and can never false-positive.
+	const unlisted = await settle(raw.from('challenges').select('anything_at_all'));
+	assert('an unlisted table is left unchecked', unlisted.error, null);
+
+	// One rejected query carries ONE message: the first offence wins, later parts
+	// never run — the same way PostgREST reports it.
+	const firstWins = await settle(
+		raw.from('teams').select('id').eq('first_bogus', 1).eq('second_bogus', 2)
+	);
+	assert('first offence wins', firstWins.error?.message, 'column teams.first_bogus does not exist');
+}
 
 // ── 1. Lucky Dice: instant score, no waiting effect ───────────────────────────
 function luckyDiceWorld(opts: {
@@ -184,7 +572,8 @@ function luckyDiceWorld(opts: {
 			return { id: 'lucky_dice', name: 'Lucky Dice', holdable: false, immediate_use: true };
 		if (op.table === 'game_sets' && op.kind === 'select') {
 			// Two different game_sets reads: the activation gate, and the crown lookup.
-			if (op.cols?.includes('crown_holder_team_id')) return { crown_holder_team_id: world.crownHolder };
+			if (op.cols?.includes('crown_holder_team_id'))
+				return { crown_holder_team_id: world.crownHolder };
 			return {
 				status: 'active',
 				play_state: 'playing',
@@ -208,7 +597,11 @@ async function verifyLuckyDice() {
 	// Crown is held by another team far ahead, so maybeTransferCrown is a no-op and
 	// the score movement is purely the dice.
 	{
-		const { world, db, log } = luckyDiceWorld({ score: 40, crownHolder: 'other', holderScore: 999 });
+		const { world, db, log } = luckyDiceWorld({
+			score: 40,
+			crownHolder: 'other',
+			holderScore: 999
+		});
 		const res = await activatePowerup(db, 'tp1', { allowFromPending: true, rand: () => 0 });
 
 		assert('activation succeeds', res.success, true);
@@ -342,22 +735,36 @@ async function verifyXray() {
 		assert('one reveal row written per spend', opsOn(log, 'team_effects', 'insert').length, 5);
 		assert(
 			'…each stored as a free_answer row',
-			[...new Set(opsOn(log, 'team_effects', 'insert').map(
-				(o) => (o.values as { effect_type?: string }).effect_type
-			))],
+			[
+				...new Set(
+					opsOn(log, 'team_effects', 'insert').map(
+						(o) => (o.values as { effect_type?: string }).effect_type
+					)
+				)
+			],
 			['free_answer']
 		);
 		assert(
 			'…tagged with its source powerup',
-			[...new Set(opsOn(log, 'team_effects', 'insert').map(
-				(o) => ((o.values as { payload?: Record<string, unknown> }).payload as { source?: string })?.source
-			))],
+			[
+				...new Set(
+					opsOn(log, 'team_effects', 'insert').map(
+						(o) =>
+							((o.values as { payload?: Record<string, unknown> }).payload as { source?: string })
+								?.source
+					)
+				)
+			],
 			['x_ray']
 		);
 		assert('budget row consumed only at 0', !!world.effect.consumed_at, true);
 		const tpu = opsOn(log, 'team_powerups', 'update');
 		assert('powerup consumed exactly once', tpu.length, 1);
-		assert('…and only on the last spend', (tpu[0].values as { status?: string }).status, 'consumed');
+		assert(
+			'…and only on the last spend',
+			(tpu[0].values as { status?: string }).status,
+			'consumed'
+		);
 
 		// The sixth attempt has nothing left to spend.
 		const sixth = await spendXrayReveal(
@@ -446,13 +853,7 @@ async function verifyXray() {
 		// And prove the guard itself bites: a bogus sort column must produce a
 		// PostgREST-shaped error, not a silent empty result.
 		const probe = makeFake(() => ({ id: 'x' }));
-		const bogus = await (probe.db as unknown as {
-			from: (t: string) => {
-				select: (c?: string) => {
-					order: (c: string) => { limit: (n: number) => { maybeSingle: () => Promise<{ data: unknown; error: { message: string } | null }> } };
-				};
-			};
-		})
+		const bogus = await probe.raw
 			.from('team_effects')
 			.select('id')
 			.order('created_at')
@@ -479,6 +880,7 @@ async function verifyXray() {
 }
 
 async function main() {
+	await verifySchemaGuard();
 	await verifyLuckyDice();
 	await verifyXray();
 
