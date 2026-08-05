@@ -333,7 +333,10 @@
 		{ id: 'give_a_shot', name: 'Give a Shot', icon: '🥂' },
 		{ id: 'freeze', name: 'Freeze', icon: '🧊' },
 		{ id: 'time_drain', name: 'Time Drain', icon: '⏳' },
-		{ id: 'tap_to_break', name: 'Tap to Break', icon: '🔨' }
+		{ id: 'tap_to_break', name: 'Tap to Break', icon: '🔨' },
+		{ id: 'lucky_dice', name: 'Lucky Dice', icon: '🍀' },
+		{ id: 'x_ray', name: 'X-Ray', icon: '🔎' },
+		{ id: 'free_tab', name: 'Free Tab', icon: '🗂️' }
 	];
 
 	const TEAM_COLORS = ['blue', 'yellow', 'green', 'red', 'indigo', 'black'];

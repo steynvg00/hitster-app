@@ -387,6 +387,13 @@ export interface PowerupTypeOverride {
 	threshold?: number;
 	chance?: number;
 	inverse?: boolean;
+	// lucky_dice only: the inclusive range the roll is drawn from. Kept here, in
+	// the per-type override map, rather than as a constant in the activation
+	// branch — a later settings UI edits it the same way it edits `threshold` or
+	// `chance`, and resolveDiceRange() (src/lib/server/powerups.ts) supplies the
+	// 1–6 default whenever these are absent or invalid.
+	dice_min?: number;
+	dice_max?: number;
 }
 
 export interface PowerupConfigV2 {
