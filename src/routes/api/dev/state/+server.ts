@@ -39,6 +39,24 @@ export const GET: RequestHandler = async ({ locals, cookies }) => {
 		.order('created_at', { ascending: false })
 		.limit(10);
 
+	// The powerup catalog, so DevNav's two powerup tools don't have to carry a
+	// hardcoded copy of it. That copy went stale on every new powerup (lifeline was
+	// missing, then power_spin) because nothing links the literal to the catalog —
+	// there is no build step or type that fails when they drift apart, only someone
+	// noticing a gap in a dropdown.
+	//
+	// NO filter on coming_soon. This feeds a TEST tool: being able to force a
+	// half-built powerup is the point, and both dev paths already accept any id
+	// (the award endpoint inserts powerup_type_id verbatim; the force cookie is
+	// looked up with a plain .eq). The UI marks placeholders instead of hiding them.
+	//
+	// `sort_order` is the catalog's own display order, the same one the admin
+	// console lists by, so the dropdown matches what the host sees.
+	const { data: powerupTypesData } = await db
+		.from('powerup_types')
+		.select('id, name, icon, category, coming_soon')
+		.order('sort_order');
+
 	return json({
 		user,
 		team_cookie,
@@ -56,6 +74,13 @@ export const GET: RequestHandler = async ({ locals, cookies }) => {
 			name: c.title,
 			variant: c.variant,
 			status: c.status
+		})),
+		powerup_types: (powerupTypesData ?? []).map((p) => ({
+			id: p.id,
+			name: p.name,
+			icon: p.icon,
+			category: p.category,
+			coming_soon: p.coming_soon
 		}))
 	});
 };
