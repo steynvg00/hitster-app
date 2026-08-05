@@ -190,6 +190,7 @@
 					| {
 							activated?: boolean;
 							revealedValue?: string;
+							revealedTags?: string[];
 							revealedTabId?: string;
 							revealedSlotIndex?: number;
 							blocked?: boolean;
@@ -208,6 +209,7 @@
 						typeof data.revealedSlotIndex === 'number'
 							? {
 									value: data.revealedValue,
+									...(data.revealedTags?.length ? { tags: data.revealedTags } : {}),
 									field: selectedField,
 									tabId: data.revealedTabId,
 									slotIndex: data.revealedSlotIndex

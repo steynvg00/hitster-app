@@ -449,6 +449,56 @@
 		return () => clearInterval(iv);
 	});
 
+	/**
+	 * Write a revealed answer into the draft the way THAT field's input reads it.
+	 *
+	 * Every field type keeps its answer somewhere different, so a single
+	 * "string into allDrafts" write only ever worked for the plain text inputs —
+	 * on a tagged artist field the value landed in a draft key nothing renders,
+	 * which is why the badge appeared but the chip never did. The dispatch below
+	 * deliberately mirrors isFieldAnswered()'s, so "prefilled" and "answered"
+	 * cannot disagree.
+	 *
+	 * Returns false when the field's input cannot take the value, in which case the
+	 * badge stays as the only surface — better than a half-written draft.
+	 */
+	function applyRevealToDraft(reveal: RevealResult, ti: number): boolean {
+		const { value, tags, field, slotIndex: si } = reveal;
+
+		// artist in a tagged mode → artistTags[ti][si], one chip per scorer target.
+		// `tags` comes from the server precisely because the ' & '-joined string is
+		// not re-splittable (see RevealResult.tags); the single-chip fallback is the
+		// pre-tag shape, still correct for a single-artist track.
+		if (field === 'artist' && artistIsTagged) {
+			if (!artistTags[ti]?.[si]) return false;
+			artistTags[ti][si] = tags?.length ? [...tags] : [value];
+			return true;
+		}
+
+		// year in a numeric mode → allYearValues[ti][si], a number, plus the touch
+		// flag so the tab's fill dot updates immediately.
+		if (field === 'year' && yearIsNumericMode) {
+			const n = parseInt(value, 10);
+			if (isNaN(n) || !allYearValues[ti]) return false;
+			allYearValues[ti][si] = n;
+			markYearTouched(ti, si);
+			return true;
+		}
+
+		// grouping is the one field with no revealable answer — it is a per-slot
+		// fragment assignment, not a track property. The server refuses to reveal it
+		// at all, so this is a guard, not a path anyone reaches.
+		if (field === 'grouping') return false;
+
+		// open_text / combobox / multiple_choice all bind straight to the draft's
+		// fieldValues, so one write serves all three. A multiple_choice value that
+		// isn't among the host's options simply highlights nothing — the draft still
+		// carries the correct answer and still scores.
+		if (!allDrafts[ti]?.[si]) return false;
+		allDrafts[ti][si].fieldValues[field] = value;
+		return true;
+	}
+
 	function onPowerupActivated(reveal: RevealResult) {
 		const { value, field, tabId, slotIndex } = reveal;
 		freeAnswerReveals = {
@@ -459,9 +509,7 @@
 		// into every tab and every slot, which handed a mashup team three "free"
 		// artists from one powerup and put tab 1's answer under tab 2's inputs.
 		const ti = data.tabs.findIndex((t) => t.id === tabId);
-		if (ti >= 0 && allDrafts[ti]?.[slotIndex]) {
-			allDrafts[ti][slotIndex].fieldValues[field] = value;
-		}
+		if (ti >= 0) applyRevealToDraft(reveal, ti);
 	}
 
 	// A reveal belongs to one (tab, slot, field); the badge shows only there.

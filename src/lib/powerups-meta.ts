@@ -58,6 +58,11 @@ export function freeAnswerRevealKey(tabId: string, slotIndex: number, field: str
  */
 export type RevealResult = {
 	value: string;
+	// `artist` only: the scorer's individual targets. The display string joins them
+	// with ' & ', which is NOT re-splittable — a track whose artists[] is
+	// ['D-Block & S-te-Fan'] joins to the same shape as one whose artists[] is
+	// ['Rooler','Sefa']. The tag input needs the real list, so the server sends it.
+	tags?: string[];
 	field: string;
 	tabId: string;
 	slotIndex: number;

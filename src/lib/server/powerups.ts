@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/types/database';
 import type { AnswerField, PowerupConfigV2, ThresholdMode, BandMode, PowerupTypeOverride } from '$lib/types';
 import {
+	artistTargets,
 	computeSetMaxScore,
 	correctValueForField,
 	fieldMapsFromResolved,
@@ -481,6 +482,7 @@ export type ActivateResult = {
 	error?: string;
 	effectId?: string;
 	revealedValue?: string; // free_answer only
+	revealedTags?: string[]; // free_answer on `artist`: the scorer's targets, for the tag input
 	revealedTabId?: string; // free_answer: which tab the value belongs to
 	revealedSlotIndex?: number; // free_answer: which answer slot within that tab
 	payload?: Record<string, unknown>; // the team_effects payload that was written
@@ -724,7 +726,9 @@ export async function resolveFreeAnswerValue(
 	field: string,
 	tabId: string | null,
 	slotIndex: number
-): Promise<{ value: string; tabId: string; slotIndex: number } | { error: string }> {
+): Promise<
+	{ value: string; tags?: string[]; tabId: string; slotIndex: number } | { error: string }
+> {
 	const fieldLabel = field.replace(/_/g, ' ');
 
 	const { data: challenge } = await supabase
@@ -845,7 +849,16 @@ export async function resolveFreeAnswerValue(
 	// the powerup — the exact silent failure the old lookup had for vocal_source.
 	if (!value.trim()) return { error: `This track has no ${fieldLabel} on file — nothing to reveal` };
 
-	return { value, tabId: tab.id, slotIndex };
+	// The artist answer is a TAG LIST, not a string, and the client cannot derive
+	// the tags from `value`: artistTargets joins with ' & ', and a track whose
+	// artists[] is ['D-Block & S-te-Fan'] produces a string byte-identical in shape
+	// to one whose artists[] is ['Rooler','Sefa']. Splitting client-side would be
+	// right for the second and wrong for the first — the exact trap $lib/artist-tags
+	// documents. So the targets travel alongside the display string; `value` itself
+	// is unchanged, and every caller that only wants text keeps working.
+	const tags = field === 'artist' ? artistTargets(slot.track) : undefined;
+
+	return { value, ...(tags?.length ? { tags } : {}), tabId: tab.id, slotIndex };
 }
 
 /**
@@ -1127,6 +1140,7 @@ export async function activatePowerup(
 			return {
 				success: true,
 				revealedValue: resolved.value,
+				revealedTags: resolved.tags,
 				revealedTabId: resolved.tabId,
 				revealedSlotIndex: resolved.slotIndex
 			};

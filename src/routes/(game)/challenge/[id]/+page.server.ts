@@ -768,6 +768,7 @@ export const actions: Actions = {
 		return {
 			activated: true,
 			revealedValue: result.revealedValue,
+			revealedTags: result.revealedTags,
 			revealedTabId: result.revealedTabId,
 			revealedSlotIndex: result.revealedSlotIndex,
 			blocked: result.blocked
@@ -791,6 +792,7 @@ export const actions: Actions = {
 		return {
 			activated: true,
 			revealedValue: result.revealedValue,
+			revealedTags: result.revealedTags,
 			revealedTabId: result.revealedTabId,
 			revealedSlotIndex: result.revealedSlotIndex,
 			blocked: result.blocked
