@@ -948,7 +948,13 @@
 			holdable: boolean;
 			immediate_use: boolean;
 		};
-		activation?: { success: boolean; payload?: Record<string, unknown> };
+		activation?: {
+			success: boolean;
+			payload?: Record<string, unknown>;
+			// power_spin only: the powerup the wheel landed on, already awarded
+			// server-side through the same path an earned powerup takes.
+			spun?: EarnedPowerup;
+		};
 	};
 	// A submission can now earn MULTIPLE powerups (x crossed ladder bands + inverse),
 	// so reveals are queued and shown one at a time — the head renders, onclose
@@ -958,11 +964,24 @@
 	let earnedQueue = $state<EarnedPowerup[]>([]);
 	let handledEarnRef: unknown = null;
 
+	// Power Spin awards a SECOND powerup at activation time, so one earned entry can
+	// carry another behind it. Flattening it into the same queue — spin first, prize
+	// straight after — is what makes the outcome behave like any other award: the
+	// player sees "the wheel landed on Free Tab", closes it, and gets Free Tab's own
+	// store/lose card. Nothing here special-cases what was spun; the server already
+	// materialized it, so it renders through the same component as everything else.
+	//
+	// Recursion is bounded server-side (the roll pool excludes every award-generating
+	// type), so this is one level deep by construction, not by a depth check here.
+	function withSpun(list: EarnedPowerup[]): EarnedPowerup[] {
+		return list.flatMap((e) => (e.activation?.spun ? [e, e.activation.spun] : [e]));
+	}
+
 	$effect(() => {
 		const earned = f?.earnedPowerups;
 		if (earned && earned.length && earned !== handledEarnRef) {
 			handledEarnRef = earned;
-			earnedQueue = [...earnedQueue, ...(earned as EarnedPowerup[])];
+			earnedQueue = [...earnedQueue, ...withSpun(earned as EarnedPowerup[])];
 		}
 	});
 
@@ -1240,10 +1259,7 @@
 				{#each result.tabs ?? [] as tr, i}
 					<!-- Base-only, like the field badges: tr.total carries the bonus but
 					     tr.maxTotal is base-only, so the raw pair would read "15/10". -->
-					{@const tabBase = tr.slots.reduce(
-						(s, sl) => s + thresholdOfFields(sl.fields).total,
-						0
-					)}
+					{@const tabBase = tr.slots.reduce((s, sl) => s + thresholdOfFields(sl.fields).total, 0)}
 					<button
 						type="button"
 						onclick={() => (resultTabIndex = i)}
@@ -1755,7 +1771,9 @@
 							type="button"
 							onclick={() => toggleDoubt(i)}
 							aria-pressed={doubtTabs[i]}
-							title={doubtTabs[i] ? `Tab ${i + 1}: unsure — tap to clear` : `Mark tab ${i + 1} as unsure`}
+							title={doubtTabs[i]
+								? `Tab ${i + 1}: unsure — tap to clear`
+								: `Mark tab ${i + 1} as unsure`}
 							class="flex h-[30px] w-6 shrink-0 items-center justify-center rounded-l-sm rounded-r-lg text-sm font-black transition-colors {doubtTabs[
 								i
 							]

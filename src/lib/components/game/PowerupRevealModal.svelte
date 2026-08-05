@@ -79,6 +79,19 @@
 				return `×${payload.multiplier ?? 1.5} on your next challenge!`;
 			case 'penalty_shot':
 				return 'You scored low — penalty shot! 🥃 Bottoms up.';
+			case 'power_spin': {
+				// WHAT the wheel landed on is the entire payoff of this powerup, so the
+				// rolled powerup's own name and icon are the message — read from the
+				// payload the server wrote, the same way lucky_dice shows its number.
+				//
+				// The rolled powerup is NOT resolved here: it was already materialized
+				// through the normal award path and arrives as its own queue entry, so
+				// the very next card is its ordinary store/lose (or immediate-use)
+				// reveal. This line only announces it.
+				if (!payload.rolled_type_id)
+					return 'The wheel came up empty — no powerups were available to win. Unlucky!';
+				return `🎡 The wheel landed on ${payload.rolled_type_icon ?? ''} ${payload.rolled_type_name ?? 'a powerup'} — it's yours!`;
+			}
 			default:
 				return powerupType.description ?? 'Effect applied!';
 		}
