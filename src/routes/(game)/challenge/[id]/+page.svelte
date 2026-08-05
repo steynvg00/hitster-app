@@ -955,6 +955,13 @@
 			// server-side through the same path an earned powerup takes.
 			spun?: EarnedPowerup;
 		};
+		// Client-side annotation set by withSpun(), never sent by the server: this
+		// entry is a Power Spin PRIZE, so its card skips the slot machine. The wheel
+		// on the spin card already rolled and stopped on it; rolling again for a
+		// result the player just watched land is the second animation this flow used
+		// to have. Absent on a powerup earned the normal way, whose reveal is
+		// therefore untouched.
+		fromSpin?: boolean;
 	};
 	// A submission can now earn MULTIPLE powerups (x crossed ladder bands + inverse),
 	// so reveals are queued and shown one at a time — the head renders, onclose
@@ -967,14 +974,22 @@
 	// Power Spin awards a SECOND powerup at activation time, so one earned entry can
 	// carry another behind it. Flattening it into the same queue — spin first, prize
 	// straight after — is what makes the outcome behave like any other award: the
-	// player sees "the wheel landed on Free Tab", closes it, and gets Free Tab's own
-	// store/lose card. Nothing here special-cases what was spun; the server already
-	// materialized it, so it renders through the same component as everything else.
+	// player pulls the wheel, watches it stop on Free Tab, closes it, and gets Free
+	// Tab's own store/lose card. The server already materialized the prize, so it
+	// renders through the same component as everything else.
+	//
+	// The prize is tagged `fromSpin` on the way in. That flag is the ONLY thing that
+	// tells its card apart from the same powerup earned by scoring, and it exists
+	// because this is the one place where the two entries are known to belong
+	// together. Without it the prize card runs its own slot machine — the second
+	// animation, for a result the wheel just landed on in front of the player.
 	//
 	// Recursion is bounded server-side (the roll pool excludes every award-generating
 	// type), so this is one level deep by construction, not by a depth check here.
 	function withSpun(list: EarnedPowerup[]): EarnedPowerup[] {
-		return list.flatMap((e) => (e.activation?.spun ? [e, e.activation.spun] : [e]));
+		return list.flatMap((e) =>
+			e.activation?.spun ? [e, { ...e.activation.spun, fromSpin: true }] : [e]
+		);
 	}
 
 	$effect(() => {
@@ -1167,6 +1182,7 @@
 			activation={earnedQueue[0].activation}
 			teamId={data.team.id}
 			setTeams={data.setTeams}
+			skipRollAnimation={earnedQueue[0].fromSpin === true}
 			onclose={() => (earnedQueue = earnedQueue.slice(1))}
 		/>
 	{/key}

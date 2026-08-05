@@ -27,7 +27,8 @@
 		activation,
 		onclose,
 		teamId,
-		setTeams = []
+		setTeams = [],
+		skipRollAnimation = false
 	}: {
 		teamPowerupId: string;
 		type: PowerupType;
@@ -38,6 +39,12 @@
 		// caster's own team from setTeams.
 		teamId?: string;
 		setTeams?: TargetTeam[];
+		// Render the settled state straight away, no slot machine. Set for a powerup
+		// that arrives as the PRIZE of a Power Spin: the spin's own wheel already
+		// rolled and landed on it, so rolling a second time for a result the player
+		// just watched appear is noise. A powerup earned the normal way never passes
+		// this, so its reveal is unchanged.
+		skipRollAnimation?: boolean;
 	} = $props();
 
 	// A holdable type that ALSO acts on another team gets a third earn-time choice
@@ -118,19 +125,40 @@
 
 	// Slot-machine animation: cycle through random icons for 2 seconds then settle.
 	// penalty_shot is a spontaneous social popup, not a prize roll — skip the roll
-	// and render the settled state immediately.
+	// and render the settled state immediately. skipRollAnimation does the same for
+	// a powerup handed over as a Power Spin prize (its wheel already rolled).
 	const ICONS = ['🎲', '⚡', '🛡️', '🔥', '💡', '✨', '⏱️', '🪙', '🎯', '🌀'];
-	const animate = powerupType.id !== 'penalty_shot';
+
+	// Read once, on purpose. The challenge page keys this modal on teamPowerupId, so
+	// a new queue entry REMOUNTS it rather than swapping props on a live instance —
+	// which makes the roll flags below fixed facts about this card, not signals.
+	// Destructured in one go so the whole block costs a single non-reactive read.
+	const { id: typeId, icon: ownIcon } = powerupType;
+	const animate = typeId !== 'penalty_shot' && !skipRollAnimation;
+
+	// Power Spin is the one powerup whose roll is a MOMENT rather than a transition,
+	// so it does not auto-run: the card opens on a Spin button and the wheel turns
+	// when the player pulls it. Every other powerup keeps the old behaviour of
+	// starting on mount.
+	const isSpin = typeId === 'power_spin';
+	const autoRoll = animate && !isSpin;
 
 	// What the machine comes to rest on. For a spin that is the PRIZE; for
 	// everything else it is the powerup's own icon, exactly as before.
 	const settleIcon = $derived(spinOutcome ? spinOutcome.icon : (powerupType.icon ?? '✦'));
 
-	let displayIcon = $state(animate ? ICONS[0] : (powerupType.icon ?? '✦'));
+	// At rest a spin shows its OWN icon (🎡) — the wheel, not yet turned. Never the
+	// prize: nothing about the outcome may exist on screen before the pull.
+	let displayIcon = $state(autoRoll ? ICONS[0] : (ownIcon ?? '✦'));
 	let settled = $state(!animate);
+	let rollStarted = $state(autoRoll);
 	let resolving = $state(false);
 
-	// Start animation immediately on mount
+	function startSpin() {
+		if (rollStarted) return; // one pull per card
+		rollStarted = true;
+	}
+
 	let animFrame: number;
 	let startTime = 0;
 	const DURATION_MS = 1800;
@@ -154,8 +182,11 @@
 		}
 	}
 
+	// Gated on rollStarted, not on mount. For everything except a spin that is true
+	// from the start, so the effect fires on the first run exactly as it used to;
+	// for a spin it fires when startSpin() flips it, which is the whole gate.
 	$effect(() => {
-		if (!animate) return;
+		if (!animate || !rollStarted) return;
 		animFrame = requestAnimationFrame(runAnimation);
 		return () => cancelAnimationFrame(animFrame);
 	});
@@ -186,11 +217,15 @@
 		aria-modal="true"
 	>
 		<div class="w-full max-w-sm rounded-2xl border border-zinc-700 bg-zinc-900 p-6 shadow-2xl">
-			<!-- Header. A spin says what is happening WITHOUT saying what was won, so
-			     the wheel below stays the only thing that can give the outcome away. -->
+			<!-- Header. A spin narrates the three states WITHOUT naming what was won,
+			     so the wheel below stays the only thing that can reveal it. -->
 			<p class="mb-5 text-center text-xs font-bold tracking-widest text-amber-400 uppercase">
-				{#if spinOutcome}
-					{settled ? 'Power Spin — you won' : 'Spinning the wheel…'}
+				{#if isSpin && !rollStarted}
+					Powerup Earned!
+				{:else if isSpin && !settled}
+					Spinning the wheel…
+				{:else if isSpin}
+					Power Spin — you won
 				{:else}
 					Powerup Earned!
 				{/if}
@@ -204,7 +239,10 @@
 						? 'border-amber-400 bg-amber-400/10 shadow-[0_0_24px_rgba(251,191,36,0.3)]'
 						: 'border-zinc-600 bg-zinc-800'}"
 				>
-					<span class="text-4xl leading-none" class:animate-spin-slow={!settled}>{displayIcon}</span
+					<!-- Spins only while the machine is actually running. A Power Spin
+					     sitting on its gate shows a still 🎡, not a wheel already turning. -->
+					<span class="text-4xl leading-none" class:animate-spin-slow={rollStarted && !settled}
+						>{displayIcon}</span
 					>
 				</div>
 			</div>
@@ -339,8 +377,27 @@
 						Nice!
 					</button>
 				{/if}
+			{:else if isSpin && !rollStarted}
+				<!-- STATE 1 — the gate. Power Spin has been won and nothing else has
+				     happened yet: no wheel turning, and NOTHING about the outcome in the
+				     DOM. spinOutcome is read nowhere in this branch, and the settled
+				     block above (which is where the prize's name and icon live) is not
+				     rendered at all, so there is nothing to read out of the source
+				     either. The pull below is what starts the one and only animation. -->
+				<p class="mb-1 text-center text-lg font-black text-white">{powerupType.name}</p>
+				<p class="mb-6 text-center text-sm text-zinc-400">
+					Pull the wheel to see which powerup you have won.
+				</p>
+				<button
+					type="button"
+					onclick={startSpin}
+					class="w-full rounded-xl bg-amber-400 py-2.5 text-sm font-bold text-zinc-950 transition-colors hover:bg-amber-300"
+				>
+					Spin
+				</button>
 			{:else}
-				<!-- Still animating -->
+				<!-- STATE 2 — the wheel is turning. Same skeleton every other powerup
+				     uses while its slot machine runs. -->
 				<div class="flex justify-center">
 					<div class="h-8 w-32 animate-pulse rounded bg-zinc-800"></div>
 				</div>
