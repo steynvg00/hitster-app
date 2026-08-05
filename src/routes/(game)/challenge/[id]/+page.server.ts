@@ -7,6 +7,7 @@ import {
 	activatePowerup,
 	loadActiveEffects,
 	getTeamsWithActiveTimedAttempt,
+	parsePredictedPct,
 	type EarnedPowerup
 } from '$lib/server/powerups';
 import { scoreAndPersistSubmission } from '$lib/server/submit';
@@ -786,7 +787,8 @@ export const actions: Actions = {
 			currentChallengeId: params.id,
 			field,
 			targetTeamId,
-			...parseRevealAddress(fd)
+			...parseRevealAddress(fd),
+			...parsePredictedPct(fd)
 		});
 		if (!result.success) return fail(400, { activateError: result.error });
 		return {

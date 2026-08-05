@@ -392,12 +392,14 @@ export function deriveEffectModifiers(effects: ActiveEffect[]): {
 	extraMultipliers: number[];
 	insuranceActive: boolean;
 	bonusPoints: number;
+	doubleDownPct: number | null;
 	toConsume: ActiveEffect[];
 } {
 	const now = Date.now();
 	const extraMultipliers: number[] = [];
 	let insuranceActive = false;
 	let bonusPoints = 0;
+	let doubleDownPct: number | null = null;
 	const toConsume: ActiveEffect[] = [];
 
 	for (const e of effects) {
@@ -427,10 +429,29 @@ export function deriveEffectModifiers(effects: ActiveEffect[]): {
 				toConsume.push(e);
 				break;
 			}
+			case 'double_down': {
+				// The only effect whose multiplier is NOT knowable here: it depends on
+				// the percentage this submission scores, which does not exist until
+				// scoreSubmission has folded every tab. So this hands the raw prediction
+				// through to the scorer instead of a number, and computeBreakdown — the
+				// one place with both the prediction and the threshold pair in scope —
+				// resolves it into the same additive-delta sum as the multipliers above.
+				//
+				// Only one can be active (activatePowerup guard 3); if a stale row ever
+				// slipped past, the first wins rather than two bets compounding.
+				const pct = e.payload.predicted_pct as number | undefined;
+				if (typeof pct === 'number' && Number.isFinite(pct) && doubleDownPct === null) {
+					doubleDownPct = pct;
+				}
+				// Consumed win or lose, like single_event_mult: the bet rode this
+				// submission and does not carry over to the next challenge.
+				toConsume.push(e);
+				break;
+			}
 		}
 	}
 
-	return { extraMultipliers, insuranceActive, bonusPoints, toConsume };
+	return { extraMultipliers, insuranceActive, bonusPoints, doubleDownPct, toConsume };
 }
 
 /**
@@ -472,10 +493,30 @@ export type ActivateOptions = {
 	slotIndex?: number; // answer slot within that tab (0 for single-source tabs)
 	currentChallengeId?: string; // free_answer / time_boost / insurance gating
 	targetTeamId?: string; // offensive types (give_a_shot, …): the team being attacked
+	// double_down: the percentage the team predicts it will score on the next
+	// challenge (0–100). The first team-CHOSEN numeric parameter in the powerup
+	// system — free_answer's `field` is the closest precedent, but that picks one
+	// of a fixed list, where this is a free value the scorer reads back later.
+	predictedPct?: number;
 	// Immediate-use types (bonus_points, hard_gaan, single_event_mult) auto-activate
 	// straight from the earn path, before the player ever "holds" them.
 	allowFromPending?: boolean;
 };
+
+/**
+ * Read double_down's prediction out of an activation form post. Shared by every
+ * ?/activatePowerup action (the challenge page and /team) so the field name lives
+ * in one place — the same reason parseRevealAddress exists for free_answer's
+ * tab/slot pair. Returns {} for a missing or non-numeric value; activatePowerup's
+ * own range check is the authority on what is acceptable, so a bad value is
+ * rejected there with a message rather than silently clamped here.
+ */
+export function parsePredictedPct(fd: FormData): { predictedPct?: number } {
+	const raw = (fd.get('predicted_pct') as string | null)?.trim();
+	if (!raw) return {};
+	const n = Number(raw);
+	return Number.isFinite(n) ? { predictedPct: n } : {};
+}
 
 export type ActivateResult = {
 	success: boolean;
@@ -1005,6 +1046,94 @@ export async function activatePowerup(
 				.update({ status: 'active' } as never)
 				.eq('id', teamPowerupId);
 			return { success: true, effectId: eff.id };
+		}
+
+		case 'double_down': {
+			// ── Guard 1: the prediction must be a whole 0–100 percentage ───────────
+			// Everything downstream (the ±g/100 delta, the banner copy, the result
+			// pill) assumes this range, so it is validated at the only door into the
+			// system rather than defended at each read site.
+			const predicted = options?.predictedPct;
+			if (
+				typeof predicted !== 'number' ||
+				!Number.isFinite(predicted) ||
+				!Number.isInteger(predicted) ||
+				predicted < 0 ||
+				predicted > 100
+			) {
+				return { success: false, error: 'Double Down needs a prediction between 0 and 100' };
+			}
+
+			// ── Guard 2: before the challenge starts, never during ─────────────────
+			// The bet has to be blind. Once a team has started an attempt it has heard
+			// the audio and knows roughly how it will score, so a late activation is a
+			// free win. hard_gaan is NOT the precedent for this (it is a time-window
+			// effect with no attempt lookup at all); the shape below is time_boost's
+			// challenge_attempts lookup (case 'time_boost') inverted — it requires an
+			// open attempt, this one requires the absence of one.
+			//
+			// Scoped to the challenges of THIS set: challenge_attempts has no set_id,
+			// and an unscoped query would let an abandoned attempt from an earlier set
+			// block activation forever. Within a set that residual risk remains for an
+			// UNTIMED challenge a team started and never submitted (a timed one is
+			// closed by /api/auto-submit) — the team would have to finish or the host
+			// to clear the attempt.
+			const { data: setChallengeRows } = await supabase
+				.from('set_challenges')
+				.select('challenge_id')
+				.eq('set_id', tpu.set_id);
+			const setChallengeIds = (setChallengeRows ?? []).map((r) => r.challenge_id);
+			if (setChallengeIds.length > 0) {
+				const { data: openAttempt } = await supabase
+					.from('challenge_attempts')
+					.select('id')
+					.eq('team_id', tpu.team_id)
+					.in('challenge_id', setChallengeIds)
+					.is('ended_at', null)
+					.limit(1)
+					.maybeSingle();
+				if (openAttempt)
+					return {
+						success: false,
+						error: 'Double Down must be activated before a challenge starts'
+					};
+			}
+
+			// ── Guard 3: one bet at a time ─────────────────────────────────────────
+			// Two live Double Downs would put two conditional deltas in the same sum
+			// with no way for a team to reason about the outcome. Same one-at-a-time
+			// rule (and same rejection-keeps-it-held behaviour) as shield above.
+			const { data: existingBet } = await supabase
+				.from('team_effects')
+				.select('id')
+				.eq('team_id', tpu.team_id)
+				.eq('set_id', tpu.set_id)
+				.eq('effect_type', 'double_down')
+				.is('consumed_at', null)
+				.limit(1)
+				.maybeSingle();
+			if (existingBet) return { success: false, error: 'A Double Down is already running' };
+
+			// No expires_at: the bet rides until the next submission consumes it, the
+			// same lifetime single_event_mult has.
+			const payload = { predicted_pct: predicted };
+			const { data: eff, error } = await supabase
+				.from('team_effects')
+				.insert({
+					team_id: tpu.team_id,
+					set_id: tpu.set_id,
+					effect_type: 'double_down',
+					payload,
+					source_team_powerup_id: teamPowerupId
+				} as never)
+				.select('id')
+				.single();
+			if (error) return { success: false, error: error.message };
+			await supabase
+				.from('team_powerups')
+				.update({ status: 'active' } as never)
+				.eq('id', teamPowerupId);
+			return { success: true, effectId: eff.id, payload };
 		}
 
 		case 'time_boost': {

@@ -14,8 +14,14 @@
 	const hasComeback = $derived(breakdown.comeback_multiplier > 1);
 	const hasStreak = $derived(breakdown.streak_bonus > 0);
 	const hasSpeed = $derived(breakdown.speed_bonus > 0);
+	// A Double Down is shown whenever one was live — INCLUDING a lost bet, unlike
+	// every other badge here (which only render a positive delta). A team whose
+	// points went DOWN is exactly the team owed an explanation.
+	const dd = $derived(breakdown.double_down);
 
-	const anyBonus = $derived(hasDifficulty || hasRound || hasComeback || hasStreak || hasSpeed);
+	const anyBonus = $derived(
+		hasDifficulty || hasRound || hasComeback || hasStreak || hasSpeed || !!dd
+	);
 </script>
 
 {#if anyBonus}
@@ -57,6 +63,22 @@
 				<span class="text-orange-400">🔥</span>
 				<span class="text-zinc-300">Streak bonus</span>
 				<span class="text-green-400">+{breakdown.streak_bonus}</span>
+			</div>
+		{/if}
+
+		{#if dd}
+			<div
+				class="flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold {dd.hit
+					? 'border-green-700/60 bg-green-950/40'
+					: 'border-red-800/60 bg-red-950/40'}"
+			>
+				<span>🎰</span>
+				<span class="text-zinc-300">
+					Double Down — predicted {dd.predicted_pct}%, scored {dd.score_pct}%
+				</span>
+				<span class={dd.hit ? 'text-green-400' : 'text-red-400'}>
+					{dd.hit ? 'hit' : 'miss'} ×{dd.multiplier}
+				</span>
 			</div>
 		{/if}
 

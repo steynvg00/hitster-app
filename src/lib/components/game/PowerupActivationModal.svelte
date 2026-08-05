@@ -1,7 +1,14 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import type { SubmitFunction } from '@sveltejs/kit';
-	import { isTargetedPowerup, isTimerPowerup, type RevealResult } from '$lib/powerups-meta';
+	import {
+		isTargetedPowerup,
+		isTimerPowerup,
+		doubleDownMultiplier,
+		DOUBLE_DOWN_MIN_PCT,
+		DOUBLE_DOWN_MAX_PCT,
+		type RevealResult
+	} from '$lib/powerups-meta';
 	import { supabaseBrowser } from '$lib/supabase-browser';
 
 	type PowerupType = {
@@ -95,6 +102,11 @@
 			action: 'One field will be revealed for you. Choose which field to unlock.',
 			warning: 'Requires an active challenge.'
 		},
+		double_down: {
+			action:
+				'Predict how much of the next challenge you will score. Hit your prediction and your points go up by that percentage — miss it and they go down by it.',
+			warning: 'Can only be set BEFORE a challenge starts. It applies to your next submission.'
+		},
 		give_a_shot: {
 			action:
 				'Pick a team — they take a real-world shot 🥂. No effect on scores. Blocked if they have a shield up.'
@@ -112,6 +124,15 @@
 
 	const copy = $derived(EFFECT_COPY[powerupType.id] ?? { action: powerupType.description ?? '' });
 	const needsFieldPicker = $derived(powerupType.id === 'free_answer');
+	// double_down asks for a NUMBER rather than a choice from a list — the first
+	// powerup to do so. It travels by the same hidden-input mechanism free_answer's
+	// field picker uses; only the control differs.
+	const needsPrediction = $derived(powerupType.id === 'double_down');
+	let predictedPct = $state(50);
+	// Both outcomes, from the SAME function the scorer runs ($lib/powerups-meta) —
+	// the team sees the exact multipliers it is betting on, not a restated rule.
+	const hitMultiplier = $derived(doubleDownMultiplier(predictedPct, 100));
+	const missMultiplier = $derived(doubleDownMultiplier(predictedPct, 0));
 	const needsTarget = $derived(isTargetedPowerup(powerupType.id));
 	// Timer attacks (freeze/time_drain) can only hit a team currently in a timed
 	// challenge — grey the rest. give_a_shot ignores this (all teams targetable).
@@ -332,6 +353,46 @@
 				</div>
 			{/if}
 
+			<!-- Prediction slider for double_down -->
+			{#if needsPrediction}
+				<div class="mb-4">
+					<div class="mb-1.5 flex items-baseline justify-between">
+						<label for="double-down-pct" class="text-xs font-semibold text-zinc-400">
+							Your prediction
+						</label>
+						<span class="text-2xl font-black text-amber-300">{predictedPct}%</span>
+					</div>
+					<input
+						id="double-down-pct"
+						type="range"
+						min={DOUBLE_DOWN_MIN_PCT}
+						max={DOUBLE_DOWN_MAX_PCT}
+						step="1"
+						bind:value={predictedPct}
+						class="w-full accent-amber-400"
+					/>
+					<div class="mt-3 grid grid-cols-2 gap-2 text-center">
+						<div class="rounded-lg border border-green-700/50 bg-green-950/40 px-2 py-1.5">
+							<p class="text-[10px] font-semibold tracking-wide text-green-300/80 uppercase">
+								Score {predictedPct}% or more
+							</p>
+							<p class="text-sm font-bold text-green-300">×{hitMultiplier.toFixed(2)}</p>
+						</div>
+						<div class="rounded-lg border border-red-800/50 bg-red-950/40 px-2 py-1.5">
+							<p class="text-[10px] font-semibold tracking-wide text-red-300/80 uppercase">
+								Score less
+							</p>
+							<p class="text-sm font-bold text-red-300">×{missMultiplier.toFixed(2)}</p>
+						</div>
+					</div>
+					{#if predictedPct === 0}
+						<p class="mt-2 text-xs text-zinc-500">
+							At 0% the bet does nothing — your score is unchanged either way.
+						</p>
+					{/if}
+				</div>
+			{/if}
+
 			<!-- Gate warning -->
 			{#if gated}
 				<p class="mb-4 rounded-lg bg-red-950/60 px-3 py-2 text-xs text-red-400">
@@ -363,6 +424,9 @@
 						{/if}
 						{#if needsTarget && selectedTargetId}
 							<input type="hidden" name="target_team_id" value={selectedTargetId} />
+						{/if}
+						{#if needsPrediction}
+							<input type="hidden" name="predicted_pct" value={predictedPct} />
 						{/if}
 						<button
 							type="submit"

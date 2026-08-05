@@ -4,7 +4,8 @@ import { createPublicClient, createAdminClient } from '$lib/server/supabase';
 import {
 	activatePowerup,
 	loadActiveEffects,
-	getTeamsWithActiveTimedAttempt
+	getTeamsWithActiveTimedAttempt,
+	parsePredictedPct
 } from '$lib/server/powerups';
 import { TEAM_COLOR_ORDER, getTeamsInSet } from '$lib/server/randomize';
 import { parseBattleConfig } from '$lib/battle-ranking';
@@ -336,7 +337,10 @@ export const actions: Actions = {
 		// in a challenge, only forward the target. (give_a_shot has no attempt gate.)
 		const targetTeamId = (fd.get('target_team_id') as string | null)?.trim() || undefined;
 		if (!teamPowerupId) return fail(400, { activateError: 'Missing powerup ID' });
-		const result = await activatePowerup(admin, teamPowerupId, { targetTeamId });
+		const result = await activatePowerup(admin, teamPowerupId, {
+			targetTeamId,
+			...parsePredictedPct(fd)
+		});
 		if (!result.success) return fail(400, { activateError: result.error });
 		return { activated: true, blocked: result.blocked };
 	}
