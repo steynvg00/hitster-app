@@ -2,8 +2,8 @@
 --
 -- Group A: the three powerups that ride on the free_answer reveal machinery.
 --
---   lucky_dice  (self, IMMEDIATE-USE)  — roll an integer in a configured range,
---                                        award it as flat bonus points.
+--   lucky_dice  (self, IMMEDIATE-USE)  — roll an integer in a configured range and
+--                                        add it to teams.score immediately.
 --   x_ray       (information, holdable) — the team picks up to 5 answer cells of
 --                                        the tab it is on; each is revealed.
 --   free_tab    (information, holdable) — the team picks ONE tab; every field of
@@ -29,9 +29,9 @@
 -- ignores — it exists so a row can be traced back to the powerup that produced it
 -- without a join through source_team_powerup_id.
 --
--- lucky_dice likewise writes an ordinary bonus_points effect row (payload
--- {value: <roll>, source:'lucky_dice', dice_min, dice_max}), so it flows through
--- the scoring path bonus_points already uses — no scoring change, no new column.
+-- lucky_dice writes no effect row at all: it updates teams.score directly and logs
+-- an activity_log row, the same direct-mutation path awardCrownPayout and the
+-- host's manual score adjustment use — no scoring change, no new column.
 --
 -- ── Dice range lives in powerup_config, not in code ─────────────────────────
 -- Stored per set at powerup_config.types.lucky_dice.{dice_min,dice_max}, the same
@@ -59,7 +59,7 @@ UPDATE powerup_types
       icon = '🍀',
       default_min_score_pct = 50,
       default_max_score_pct = 100,
-      description = 'Roll the dice for a random points bonus — the number you roll is the number of points you get on your next submission.'
+      description = 'Roll the dice for a random points bonus — the number you roll is added to your score straight away.'
   WHERE id = 'lucky_dice';
 
 -- ── 2. x_ray + free_tab: new information powerups ───────────────────────────

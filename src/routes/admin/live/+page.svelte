@@ -212,6 +212,11 @@
 		if (a.event_type === 'crown_payout' && payload) {
 			return `👑 ${teamLabel(a.team_id)} held the crown — earned 2 bonus points`;
 		}
+		if (a.event_type === 'lucky_dice' && payload) {
+			// A direct score mutation, so it belongs in the host's activity feed next to
+			// score_adjustment and crown_payout rather than only in the team's modal.
+			return `🍀 ${teamLabel(a.team_id)} rolled ${payload.roll ?? '?'} — +${payload.roll ?? 0} points (now ${payload.new_score ?? '?'})`;
+		}
 		if (a.event_type === 'penalty_shot') {
 			return `🥃 ${teamLabel(a.team_id)} owes a shot`;
 		}

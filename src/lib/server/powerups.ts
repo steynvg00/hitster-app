@@ -14,6 +14,7 @@ import {
 	type TabSourceTrackRaw,
 	type TrackData
 } from '$lib/server/scoring';
+import { maybeTransferCrown } from '$lib/server/crown';
 import {
 	freeAnswerRevealKey,
 	FREE_TAB_MAX_REVEALS,
@@ -1060,12 +1061,17 @@ export async function activatePowerup(
 		}
 
 		case 'lucky_dice': {
-			// The roll decides HOW MANY points, nothing else — so the effect it writes
-			// is an ordinary bonus_points row, the exact path bonus_points already
-			// takes into scoring (deriveEffectModifiers sums payload.value, the
-			// breakdown adds it flat, ActiveEffectsBanner renders "+N next submission"
-			// from the same key). No scoring change, no new effect_type, no second
-			// points mechanism to keep in sync — only the number differs.
+			// INSTANT, not a pending effect. The roll lands on teams.score the moment it
+			// is rolled — no team_effects row waiting for the next submission (which is
+			// what the first version did, and what made the modal promise "+N next
+			// submission" instead of points the team could already see).
+			//
+			// The direct-score path is the one the other non-scoring point mutations
+			// use: read the current score, write score + delta, log the mutation to
+			// activity_log. Same three steps as awardCrownPayout (src/lib/server/crown.ts)
+			// and the host's manual adjustment (src/routes/admin/teams/+page.server.ts,
+			// ?/adjustScore). /team and /leaderboard already subscribe to teams UPDATEs,
+			// so the new total appears there without anything extra here.
 			//
 			// Range from the set's config (never hardcoded here); randomness from the
 			// one injectable roll function, so a test can pin both ends.
@@ -1073,32 +1079,53 @@ export async function activatePowerup(
 				parseConfig((gameSet as unknown as { powerup_config?: unknown }).powerup_config)
 			);
 			const roll = rollDice(min, max, options?.rand);
-			// `source`/`dice_*` are additive keys: the bonus_points reader only looks at
-			// `value`, so they cost nothing and let the reveal modal say what was rolled
-			// and out of what range.
-			const payload = {
-				value: roll,
-				source: 'lucky_dice',
-				dice_min: min,
-				dice_max: max
-			};
-			const { data: eff, error } = await supabase
-				.from('team_effects')
-				.insert({
-					team_id: tpu.team_id,
-					set_id: tpu.set_id,
-					effect_type: 'bonus_points',
-					payload,
-					source_team_powerup_id: teamPowerupId
-				} as never)
-				.select('id')
-				.single();
-			if (error) return { success: false, error: error.message };
+
+			const { data: team } = await supabase
+				.from('teams')
+				.select('score')
+				.eq('id', tpu.team_id)
+				.maybeSingle();
+			if (!team) return { success: false, error: 'Team not found' };
+			const oldScore = team.score ?? 0;
+			const newScore = oldScore + roll;
+
+			const { error: scoreErr } = await supabase
+				.from('teams')
+				.update({ score: newScore })
+				.eq('id', tpu.team_id);
+			if (scoreErr) return { success: false, error: scoreErr.message };
+
+			await supabase.from('activity_log').insert({
+				team_id: tpu.team_id,
+				event_type: 'lucky_dice',
+				payload: {
+					roll,
+					dice_min: min,
+					dice_max: max,
+					old_score: oldScore,
+					new_score: newScore
+				}
+			} as never);
+
+			// A score that moves in-play has to keep the crown honest — the same call
+			// scoreAndPersistSubmission makes after every submission total
+			// (src/lib/server/submit.ts). Its own guards do the deciding: no-op if this
+			// team already holds the crown, transfer + 1 steal bonus only on a STRICT
+			// overtake. Without this a dice roll could put a team in the lead while the
+			// crown stayed on the wrong team.
+			await maybeTransferCrown(supabase, tpu.set_id, tpu.team_id, newScore);
+
 			await supabase
 				.from('team_powerups')
-				.update({ status: 'active' } as never)
+				.update({ status: 'consumed' } as never)
 				.eq('id', teamPowerupId);
-			return { success: true, effectId: eff.id, payload };
+
+			// No effect row, so nothing to consume later — `consumed` straight away, the
+			// same terminal status penalty_shot uses for its no-effect-row activation.
+			return {
+				success: true,
+				payload: { value: roll, dice_min: min, dice_max: max, new_score: newScore }
+			};
 		}
 
 		case 'single_event_mult': {
