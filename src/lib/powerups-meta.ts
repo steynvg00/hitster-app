@@ -29,6 +29,42 @@ export function isTimerPowerup(id: string): boolean {
 	return (TIMER_POWERUP_IDS as readonly string[]).includes(id);
 }
 
+// ─── double_down prediction ──────────────────────────────────────────────────
+//
+// Double Down is the first powerup carrying a team-CHOSEN number from activation
+// into scoring. The team predicts a percentage g before the challenge starts;
+// after scoring, its achieved percentage decides which way the bet swings:
+//
+//   score% >= g  ->  x(1 + g/100)     hit  — the prediction earned its own size
+//   score% <  g  ->  x(1 - g/100)     miss — and cost exactly as much
+//
+// g = 0 resolves to x1.0 on BOTH branches (0% is always >= 0, and 1 - 0 = 1), so
+// "predict nothing" is a genuine no-op rather than a trap. That also disposes of
+// the 0%-score edge: a team that scores nothing having predicted nothing is
+// neither rewarded nor punished.
+//
+// Lives here, in the client-safe module, for the same reason thresholdOfFields
+// lives in $lib/threshold: the scorer (src/lib/server/scoring.ts) and the
+// player-facing activation modal must apply the SAME formula — the modal shows a
+// live hit/miss preview of the very multiplier the scorer will compute — and a
+// second copy in a .svelte file is exactly the drift C3a-2 was written to stop.
+export const DOUBLE_DOWN_MIN_PCT = 0;
+export const DOUBLE_DOWN_MAX_PCT = 100;
+
+/**
+ * Resolve Double Down's multiplier. Both arguments are percentages (0–100).
+ * Pure; the caller decides what counts as score% (the scorer uses the
+ * bonus-excluded threshold pair, the same numerator/denominator that drives
+ * powerup earning).
+ */
+export function doubleDownMultiplier(predictedPct: number, scorePct: number): number {
+	const g = Math.min(
+		DOUBLE_DOWN_MAX_PCT,
+		Math.max(DOUBLE_DOWN_MIN_PCT, Math.round(predictedPct))
+	);
+	return scorePct >= g ? 1 + g / 100 : 1 - g / 100;
+}
+
 // ─── free_answer reveal addressing ───────────────────────────────────────────
 //
 // A revealed answer belongs to ONE (tab, slot, field) triple, never to a field
