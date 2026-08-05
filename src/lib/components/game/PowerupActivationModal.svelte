@@ -13,6 +13,7 @@
 		type RevealTarget
 	} from '$lib/powerups-meta';
 	import { supabaseBrowser } from '$lib/supabase-browser';
+	import { goto } from '$app/navigation';
 
 	type PowerupType = {
 		id: string;
@@ -39,6 +40,17 @@
 		slotCount: number;
 	};
 
+	// One option in the Resurrection picker: a challenge this team has FINISHED.
+	// `oldFinal` is what that submission gave the team score, `retrySeconds` the
+	// clock the retry would run on (null = the challenge is untimed).
+	type ResurrectableChallenge = {
+		id: string;
+		title: string;
+		variant: string;
+		oldFinal: number;
+		retrySeconds: number | null;
+	};
+
 	let {
 		teamPowerupId,
 		type: powerupType,
@@ -49,6 +61,7 @@
 		slotIndex = 0,
 		revealTabs = [],
 		targetTeams = [],
+		resurrectableChallenges = [],
 		draftSnapshot,
 		activateAction = '?/activatePowerup'
 	}: {
@@ -69,6 +82,11 @@
 		// so the picker can address a tab the player is not currently looking at.
 		revealTabs?: RevealTab[];
 		targetTeams?: TargetTeam[];
+		// resurrection only: the team's finished challenges, each with the score a
+		// retry would be measured against and the 1/3 clock it would run on. Both
+		// numbers come from the server (the same reader and the same helper the
+		// activation itself uses), so what this modal promises is what will happen.
+		resurrectableChallenges?: ResurrectableChallenge[];
 		// lifeline only: the team's live draft, as the JSON the submit action already
 		// speaks (Record<tabPosition, SlotDraft[]>). A FUNCTION, not a value, because
 		// it must be read at the moment of activation — the team keeps typing while
@@ -176,6 +194,12 @@
 				'Reveals a masked hint — first letter of every word — for every answer you have not got right yet. You still type them yourself.',
 			warning: 'Unlocks halfway through a timed challenge you have started.'
 		},
+		resurrection: {
+			action:
+				'Brings one challenge you have already finished back from the dead. You play it again on a THIRD of the original clock, and your score moves by the difference between the two attempts.',
+			warning:
+				'Only one challenge at a time, and only one go at it — once you submit, it locks again.'
+		},
 		all_seeing_eye: {
 			action:
 				'Opens the Eye on every team that has already finished this challenge — you see all of their answers, exactly as they typed them. You are NOT told which of them are right.',
@@ -231,6 +255,28 @@
 	// the team sees the exact multipliers it is betting on, not a restated rule.
 	const hitMultiplier = $derived(doubleDownMultiplier(predictedPct, 100));
 	const missMultiplier = $derived(doubleDownMultiplier(predictedPct, 0));
+	// ── resurrection challenge picker ─────────────────────────────────────────
+	//
+	// The only picker that chooses a challenge rather than something INSIDE the
+	// current one. It defaults to the challenge being looked at when that is one of
+	// the options ("or it is the current one"), and otherwise to the first — but the
+	// choice is always visible, because spending a Tier S powerup on the wrong
+	// challenge is not a mistake a player can undo.
+	const needsChallengePicker = $derived(powerupType.id === 'resurrection');
+	let selectedResurrectionId = $state('');
+	$effect(() => {
+		if (!needsChallengePicker || selectedResurrectionId) return;
+		const current = resurrectableChallenges.find((c) => c.id === currentChallengeId);
+		selectedResurrectionId = current?.id ?? resurrectableChallenges[0]?.id ?? '';
+	});
+	const selectedResurrection = $derived(
+		resurrectableChallenges.find((c) => c.id === selectedResurrectionId)
+	);
+	// Nothing finished yet → nothing to bring back. Said here rather than letting
+	// the click fail server-side: the refusal is identical either way, but a team
+	// should not have to spend a click to learn it.
+	const resurrectionEmpty = $derived(needsChallengePicker && resurrectableChallenges.length === 0);
+
 	const needsTarget = $derived(isTargetedPowerup(powerupType.id));
 	// Timer attacks (freeze/time_drain) can only hit a team currently in a timed
 	// challenge — grey the rest. give_a_shot ignores this (all teams targetable).
@@ -323,9 +369,17 @@
 							lifelineHints?: LifelineHint[];
 							payload?: Record<string, unknown>;
 							blocked?: boolean;
+							resurrection?: { challengeId: string };
 					  }
 					| undefined;
-				if (needsTarget) {
+				if (data?.resurrection?.challengeId) {
+					// The challenge is open again — send the team straight to it. It is
+					// usually NOT the page they are on (the normal activation site is
+					// /team), and the short clock is already running, so anything that
+					// asks for a second click is spending their retry for them.
+					onclose(true);
+					await goto(`/challenge/${data.resurrection.challengeId}`, { invalidateAll: true });
+				} else if (needsTarget) {
 					// Show a caster-side confirmation (blocked vs sent), then close on OK.
 					resultState = data?.blocked ? 'blocked' : 'sent';
 				} else if (showsRoll && data?.payload) {
@@ -535,6 +589,48 @@
 				</div>
 			{/if}
 
+			<!-- Challenge picker for resurrection: which finished challenge to re-open -->
+			{#if needsChallengePicker}
+				<div class="mb-4">
+					<label for="resurrect-pick" class="mb-1.5 block text-xs font-semibold text-zinc-400">
+						Which challenge comes back?
+					</label>
+					{#if resurrectionEmpty}
+						<p class="rounded-lg bg-zinc-800 px-3 py-2 text-xs text-zinc-500">
+							You have not finished a challenge yet — there is nothing to bring back. Your
+							Resurrection stays in storage.
+						</p>
+					{:else}
+						<select
+							id="resurrect-pick"
+							bind:value={selectedResurrectionId}
+							class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200 outline-none focus:border-amber-500"
+						>
+							{#each resurrectableChallenges as c (c.id)}
+								<option value={c.id}>{c.title} — scored {c.oldFinal}</option>
+							{/each}
+						</select>
+						{#if selectedResurrection}
+							<!-- The terms, stated before the click: what is at stake and how long
+							     they get. Both numbers come from the server. -->
+							<p class="mt-1.5 text-xs text-zinc-500">
+								You scored <span class="font-bold text-amber-300"
+									>{selectedResurrection.oldFinal}</span
+								>
+								on this one.
+								{#if selectedResurrection.retrySeconds !== null}
+									You get <span class="font-bold text-amber-300"
+										>{selectedResurrection.retrySeconds}s</span
+									> to beat it.
+								{:else}
+									This challenge has no timer — take your time.
+								{/if}
+							</p>
+						{/if}
+					{/if}
+				</div>
+			{/if}
+
 			<!-- Prediction slider for double_down -->
 			{#if needsPrediction}
 				<div class="mb-4">
@@ -615,12 +711,23 @@
 							     (parseRevealTargets on the server). -->
 							<input type="hidden" name="reveal_targets" value={JSON.stringify(revealTargets)} />
 						{/if}
+						{#if needsChallengePicker && selectedResurrectionId}
+							<!-- resurrection: the challenge to bring back. Always sent, even when
+							     it IS the current one — the server's fallback to
+							     currentChallengeId exists for callers without a picker. -->
+							<input
+								type="hidden"
+								name="resurrection_challenge_id"
+								value={selectedResurrectionId}
+							/>
+						{/if}
 						<button
 							type="submit"
 							disabled={activating ||
 								(needsFieldPicker && !selectedField) ||
 								targetMissing ||
-								targetsMissing}
+								targetsMissing ||
+								(needsChallengePicker && !selectedResurrectionId)}
 							class="w-full rounded-xl bg-amber-400 py-2.5 text-sm font-bold text-zinc-950 transition-colors hover:bg-amber-300 disabled:opacity-50"
 						>
 							{activating ? 'Activating…' : 'Activate'}

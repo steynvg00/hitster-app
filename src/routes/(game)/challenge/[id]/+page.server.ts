@@ -10,6 +10,7 @@ import {
 	parsePredictedPct,
 	parseRevealTargets,
 	parseLifelineDraft,
+	parseResurrectionChallengeId,
 	type EarnedPowerup
 } from '$lib/server/powerups';
 import { scoreAndPersistSubmission } from '$lib/server/submit';
@@ -848,7 +849,8 @@ export const actions: Actions = {
 			...parseRevealAddress(fd),
 			...parseRevealTargets(fd),
 			...parsePredictedPct(fd),
-			...parseLifelineDraft(fd)
+			...parseLifelineDraft(fd),
+			...parseResurrectionChallengeId(fd)
 		});
 		if (!result.success) return fail(400, { activateError: result.error });
 		return {
@@ -873,7 +875,11 @@ export const actions: Actions = {
 			// the team just rolled never leaves the server, which is why the activation
 			// modal had nothing to show.
 			payload: result.payload,
-			blocked: result.blocked
+			blocked: result.blocked,
+			// resurrection: which challenge was re-opened and on what terms. The client
+			// navigates to it (it may not be the one being looked at) and states the
+			// score it is now measured against.
+			resurrection: result.resurrection
 		};
 	},
 
