@@ -108,10 +108,14 @@
 		})
 	);
 
-	// The value allYearValues holds for a tab/slot the team has never touched. A year
-	// field has no "empty" representation — it is always a number — so the fill-status
-	// indicator below reads "still on the seed" as "not answered". Named once so that
-	// rule cannot drift from the initialiser that produces it.
+	// The value allYearValues holds for a tab/slot the team has never touched.
+	//
+	// Deliberately OUT of YearInput's own range (min 2000) so an untouched year can
+	// never accidentally score. That also means it must never be used to decide
+	// "did the team answer this?": the browser clamps an out-of-range value to `min`
+	// and Svelte's input binding writes that clamped number straight back into state
+	// during hydration, so the seed is already gone by the time anything can read it.
+	// Answeredness is tracked explicitly in yearTouched instead.
 	const YEAR_SEED = 1990;
 
 	// Year values: per-tab, per-slot
@@ -133,6 +137,26 @@
 	function wasYearDrafted(tabPosition: number, si: number): boolean {
 		const tabDraft = savedDraft[String(tabPosition)] ?? [];
 		return (tabDraft[si]?.fieldValues?.['year'] ?? '').trim() !== '';
+	}
+
+	// Did the team actually operate this tab/slot's year input in THIS session?
+	// Seeded from the saved draft, which (see the persist effect) now only carries a
+	// year once it has really been answered. Set from YearInput's ontouched — a real
+	// DOM event — and by a free_answer reveal, never from comparing the value: the
+	// hydration clamp described at YEAR_SEED makes any value comparison read
+	// "answered" for the tab that happens to be rendered.
+	// Sparse object keyed `tabIdx:slotIdx`, the same shape (and for the same reason)
+	// as doubtTabs below: nothing has to read data.tabs at init, a missing key is
+	// simply falsy, and $state's proxy tracks reads of keys that don't exist yet.
+	let yearTouched = $state<Record<string, boolean>>({});
+
+	function markYearTouched(ti: number, si: number) {
+		yearTouched[`${ti}:${si}`] = true;
+	}
+
+	/** The single rule for "this tab/slot's year counts as answered". */
+	function yearIsAnswered(ti: number, tabPosition: number, si: number): boolean {
+		return wasYearDrafted(tabPosition, si) || yearTouched[`${ti}:${si}`] === true;
 	}
 
 	// ── Multi-artist tags: per-tab, per-slot (C1 stuk 2) ──────────────────────
@@ -203,8 +227,15 @@
 					fieldValues: {
 						...allDrafts[ti]?.[si]?.fieldValues,
 						...(artistIsTagged ? { artist: artistVal } : {}),
-						...(hasYear && yearIsNumericMode
-							? { year: String(allYearValues[ti]?.[si] ?? 1990) }
+						// Only persist a year the team actually set. Writing it
+						// unconditionally made the draft claim every tab had a year
+						// answered — including the untouched seed — so after any reload
+						// wasYearDrafted() was true everywhere and every tab's fill dot
+						// showed "partly filled in" on a completely blank challenge.
+						// The SUBMIT payload still always carries a year; that is
+						// buildAnswersForSubmit's job, not this one.
+						...(hasYear && yearIsNumericMode && yearIsAnswered(ti, tab.position, si)
+							? { year: String(allYearValues[ti]?.[si] ?? YEAR_SEED) }
 							: {})
 					},
 					fragments: allDrafts[ti]?.[si]?.fragments
@@ -282,12 +313,11 @@
 	// "Answered" per field, defined per input type. Strict throughout: whitespace is
 	// not an answer (eis 3).
 	//   artist (tagged modes) → at least one tag
-	//   year   (numeric modes)→ drafted earlier, or moved off YEAR_SEED. A year input
-	//                           always holds a number, so "untouched" is the only
-	//                           available notion of empty. Deliberate edge case: in
-	//                           typeable_number mode a team that types exactly
-	//                           YEAR_SEED reads as unanswered (unreachable in slider
-	//                           mode, whose min is 2000).
+	//   year   (numeric modes)→ drafted earlier, or operated this session
+	//                           (yearIsAnswered). A year input always holds a number,
+	//                           so this can only be tracked, never derived — see
+	//                           YEAR_SEED. Any year the team sets counts, including
+	//                           one they land back on the seed with.
 	//   grouping              → at least one fragment chip picked for that slot
 	//   everything else       → non-blank string in the draft
 	// Modes come from the challenge-wide data.fieldModes on purpose: they are what
@@ -296,9 +326,7 @@
 	// the form wrote to allDrafts.
 	function isFieldAnswered(field: string, ti: number, tabPosition: number, si: number): boolean {
 		if (field === 'artist' && artistIsTagged) return (artistTags[ti]?.[si]?.length ?? 0) > 0;
-		if (field === 'year' && yearIsNumericMode) {
-			return wasYearDrafted(tabPosition, si) || allYearValues[ti]?.[si] !== YEAR_SEED;
-		}
+		if (field === 'year' && yearIsNumericMode) return yearIsAnswered(ti, tabPosition, si);
 		if (field === 'grouping') return (allDrafts[ti]?.[si]?.fragments?.length ?? 0) > 0;
 		return (allDrafts[ti]?.[si]?.fieldValues?.[field] ?? '').trim() !== '';
 	}
@@ -1669,6 +1697,7 @@
 										mode="slider"
 										{teamHex}
 										bind:value={allYearValues[activeTabIndex][slotIdx]}
+										ontouched={() => markYearTouched(activeTabIndex, slotIdx)}
 									/>
 								{:else if mode === 'typeable_number'}
 									<YearInput
@@ -1676,6 +1705,7 @@
 										mode="typeable_number"
 										{teamHex}
 										bind:value={allYearValues[activeTabIndex][slotIdx]}
+										ontouched={() => markYearTouched(activeTabIndex, slotIdx)}
 									/>
 								{/if}
 							</div>
@@ -1769,6 +1799,7 @@
 									mode="slider"
 									{teamHex}
 									bind:value={allYearValues[activeTabIndex][0]}
+									ontouched={() => markYearTouched(activeTabIndex, 0)}
 								/>
 							{:else if mode === 'typeable_number'}
 								<YearInput
@@ -1776,6 +1807,7 @@
 									mode="typeable_number"
 									{teamHex}
 									bind:value={allYearValues[activeTabIndex][0]}
+									ontouched={() => markYearTouched(activeTabIndex, 0)}
 								/>
 							{/if}
 						</div>
