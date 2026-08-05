@@ -24,6 +24,8 @@ import {
 	consumeEffects,
 	type EarnedPowerup
 } from '$lib/server/powerups';
+import { resurrectionDelta } from '$lib/powerups-meta';
+import type { ResurrectionScoreMode } from '$lib/types';
 import { maybeTransferCrown } from '$lib/server/crown';
 import { maybeResolveBattle } from '$lib/server/battle';
 
@@ -49,13 +51,28 @@ export type ScoreAndPersistInput = {
 	elapsedSeconds: number | null;
 	// DEV one-shot powerup force (interactive path passes the cookie value).
 	forcePowerupTypeId?: string;
+	// Present ONLY when this submission is a Resurrection retry: the open ticket
+	// for (teamId, challenge), as returned by loadResurrectionTicket(). Its
+	// presence is what turns the two behaviours below on — the row is UPDATED
+	// instead of inserted, and the team score moves by the DIFFERENCE. Both
+	// callers (the interactive action and the auto-submit backstop) look the
+	// ticket up the same way, so an expired retry settles exactly like a
+	// submitted one.
+	resurrection?: {
+		id: string;
+		oldFinal: number;
+		scoreMode: ResurrectionScoreMode;
+		sourcePowerupId: string | null;
+	};
 };
 
 export type ScoreAndPersistResult =
 	| {
 			ok: true;
 			submissionId: string;
-			scoredResult: Omit<ChallengeResult, 'submissionId' | 'isFinal'> & { status: SubmissionStatus };
+			scoredResult: Omit<ChallengeResult, 'submissionId' | 'isFinal'> & {
+				status: SubmissionStatus;
+			};
 			earnedPowerups: EarnedPowerup[];
 	  }
 	| { ok: false; error: string; code?: string };
@@ -97,7 +114,8 @@ export async function scoreAndPersistSubmission(
 			.eq('challenge_id', challengeId)
 			.eq('set_id', playerSetId)
 			.maybeSingle();
-		challengeMultiplier = (sc as { challenge_multiplier?: number } | null)?.challenge_multiplier ?? 1;
+		challengeMultiplier =
+			(sc as { challenge_multiplier?: number } | null)?.challenge_multiplier ?? 1;
 	}
 
 	const [sourceTracksResult, tabClipsResult] = await Promise.all([
@@ -128,7 +146,10 @@ export async function scoreAndPersistSubmission(
 	const clipsResult = await (clipIds.length
 		? admin.from('clips').select('id, track_id').in('id', clipIds)
 		: Promise.resolve({ data: [] as { id: string; track_id: string }[] }));
-	const clips: ClipRaw[] = (clipsResult.data ?? []).map((c) => ({ id: c.id, track_id: c.track_id }));
+	const clips: ClipRaw[] = (clipsResult.data ?? []).map((c) => ({
+		id: c.id,
+		track_id: c.track_id
+	}));
 
 	const trackIds = [
 		...new Set([
@@ -175,8 +196,12 @@ export async function scoreAndPersistSubmission(
 	// scoreSubmission base params. Per-tab resolution (C3b) is attached below via
 	// resolveTabFields on each TabInput; with every tab NULL the two are identical.
 	const resolvedFields = resolveChallengeFields(variant, pcRaw, variantDefaultPoints);
-	const { fields: variantFields, fieldModes, fieldPoints, bonusFields } =
-		fieldMapsFromResolved(resolvedFields);
+	const {
+		fields: variantFields,
+		fieldModes,
+		fieldPoints,
+		bonusFields
+	} = fieldMapsFromResolved(resolvedFields);
 	// Per-challenge bonus-artist marking (C1 stuk 1) stays challenge-wide. {} for
 	// every challenge that hasn't set one, which is all of them until C1 stuk 2's
 	// editor ships.
@@ -265,22 +290,66 @@ export async function scoreAndPersistSubmission(
 
 	const finalScore = scoredResult.breakdown?.final ?? scoredResult.total;
 
-	const { data: sub, error: subErr } = await admin
-		.from('submissions')
-		.insert({
-			challenge_id: challengeId,
-			team_id: teamId,
-			answers: answersArray as never,
-			score: finalScore,
-			is_final: true,
-			// Ranking key for battle mode: base+bonus (scoredResult.total), PRE any
-			// multiplier / insurance floor / speed / streak. Only set for a battle
-			// challenge — a normal submission never references the column, so normal
-			// play is decoupled from the 0061 migration.
-			...(isBattle ? { battle_raw_score: scoredResult.total } : {})
-		} as never)
-		.select('id')
-		.single();
+	const submissionRow = {
+		challenge_id: challengeId,
+		team_id: teamId,
+		answers: answersArray as never,
+		score: finalScore,
+		is_final: true,
+		// Ranking key for battle mode: base+bonus (scoredResult.total), PRE any
+		// multiplier / insurance floor / speed / streak. Only set for a battle
+		// challenge — a normal submission never references the column, so normal
+		// play is decoupled from the 0061 migration.
+		...(isBattle ? { battle_raw_score: scoredResult.total } : {})
+	};
+
+	// ── The retry claim ───────────────────────────────────────────────────────
+	// A Resurrection retry settles EXACTLY ONCE. The ticket's consumed_at is the
+	// claim, taken by compare-and-swap before a single point moves: a client
+	// submit landing at the same moment as the auto-submit backstop both find the
+	// ticket, but only one wins the UPDATE, and the loser stops here having
+	// changed nothing. This is the guard against booking the difference twice.
+	let resurrectionDeltaPoints: number | null = null;
+	if (input.resurrection) {
+		const { data: claimed } = await admin
+			.from('team_effects')
+			.update({
+				consumed_at: new Date().toISOString(),
+				consumed_challenge_id: challengeId
+			} as never)
+			.eq('id', input.resurrection.id)
+			.is('consumed_at', null)
+			.select('id');
+		if (!claimed?.length) {
+			return { ok: false, error: 'This retry has already been settled', code: '23505' };
+		}
+		resurrectionDeltaPoints = resurrectionDelta(
+			input.resurrection.oldFinal,
+			finalScore,
+			input.resurrection.scoreMode
+		);
+	}
+
+	// A retry UPDATES the row it re-opened; a first attempt inserts. The row must
+	// be reused rather than deleted-and-reinserted because submissions is unique
+	// on (challenge_id, team_id) (0001_initial.sql) — and because
+	// review_requests.submission_id is ON DELETE CASCADE (0009), so a delete would
+	// silently drop a pending review. Writing is_final: true here is what RE-LOCKS
+	// the challenge: one Resurrection buys one retry, and the submit action's 409
+	// guard reads that same flag.
+	const { data: sub, error: subErr } = input.resurrection
+		? await admin
+				.from('submissions')
+				.update(submissionRow as never)
+				.eq('challenge_id', challengeId)
+				.eq('team_id', teamId)
+				.select('id')
+				.single()
+		: await admin
+				.from('submissions')
+				.insert(submissionRow as never)
+				.select('id')
+				.single();
 
 	if (subErr) {
 		return { ok: false, error: subErr.message, code: subErr.code };
@@ -288,6 +357,21 @@ export async function scoreAndPersistSubmission(
 	if (!sub) return { ok: false, error: 'Submission insert returned no data' };
 
 	const newStreak = scoredResult.total > 0 ? (teamRow?.current_streak ?? 0) + 1 : 0;
+
+	// What this submission adds to the team score. A first attempt adds what it
+	// scored. A retry adds the DIFFERENCE against the submission it replaced —
+	// booked as one update on the score that already contains the old points, so
+	// the old points are never removed and never left standing beside the new
+	// ones. There is no rollback anywhere in this path, by construction:
+	//
+	//   replace   score + (new - old)   40 -> 60 = +20   60 -> 40 = -20
+	//   best      score + MAX(0, ...)   40 -> 60 = +20   60 -> 40 =  +0
+	//
+	// Everything downstream — the streak above, maybeTransferCrown below, and any
+	// powerup the retry earns — then reads the corrected total and re-derives
+	// itself from it, which is why none of them needs unwinding either.
+	const scoreDelta = resurrectionDeltaPoints ?? finalScore;
+	const newTeamScore = (teamRow?.score ?? 0) + scoreDelta;
 
 	await Promise.all([
 		admin
@@ -299,15 +383,38 @@ export async function scoreAndPersistSubmission(
 			.update({ ended_at: new Date().toISOString() })
 			.eq('challenge_id', challengeId)
 			.eq('team_id', teamId),
-		admin
-			.from('teams')
-			.update({ score: (teamRow?.score ?? 0) + finalScore, current_streak: newStreak })
-			.eq('id', teamId)
+		admin.from('teams').update({ score: newTeamScore, current_streak: newStreak }).eq('id', teamId)
 	]);
 
-	// Crown: check if this team overtook the current crown holder
+	// The Resurrection powerup is spent only now, when the retry has actually
+	// settled — not at activation, where it went 'active'. consumeEffects does the
+	// same for effects it consumes; this ticket is claimed above by CAS instead, so
+	// its powerup is closed here.
+	if (input.resurrection) {
+		if (input.resurrection.sourcePowerupId) {
+			await admin
+				.from('team_powerups')
+				.update({ status: 'consumed' } as never)
+				.eq('id', input.resurrection.sourcePowerupId);
+		}
+		await admin.from('activity_log').insert({
+			team_id: teamId,
+			challenge_id: challengeId,
+			event_type: 'resurrection_settled',
+			payload: {
+				old_final: input.resurrection.oldFinal,
+				new_final: finalScore,
+				delta: scoreDelta,
+				score_mode: input.resurrection.scoreMode
+			}
+		} as never);
+	}
+
+	// Crown: check if this team overtook the current crown holder. Runs on the
+	// corrected total for a retry, exactly as it runs on the new total for a first
+	// attempt — which is what makes the crown correct itself without being
+	// unwound.
 	if (playerSetId) {
-		const newTeamScore = (teamRow?.score ?? 0) + finalScore;
 		await maybeTransferCrown(admin, playerSetId, teamId, newTeamScore);
 	}
 

@@ -26,6 +26,7 @@
 		"bots:verify-regression": "tsx tests/bots/verify-regression.ts",
 		"bots:verify-power-spin": "tsx tests/bots/verify-power-spin.ts",
 		"bots:verify-all-seeing-eye": "tsx tests/bots/verify-all-seeing-eye.ts",
+		"bots:verify-resurrection": "tsx tests/bots/verify-resurrection.ts",
 		"bots:fixtures": "tsx scripts/gen-fixtures.ts",
 		"seed:mechanics": "tsx scripts/seed-mechanics-set.ts"
 	},

@@ -361,10 +361,15 @@ export async function loadResurrectionTicket(
 	supabase: SupabaseClient<Database>,
 	teamId: string,
 	challengeId: string
-): Promise<{ id: string; oldFinal: number; scoreMode: ResurrectionScoreMode } | null> {
+): Promise<{
+	id: string;
+	oldFinal: number;
+	scoreMode: ResurrectionScoreMode;
+	sourcePowerupId: string | null;
+} | null> {
 	const { data: rows } = await supabase
 		.from('team_effects')
-		.select('id, payload')
+		.select('id, payload, source_team_powerup_id')
 		.eq('team_id', teamId)
 		.eq('effect_type', 'resurrection')
 		.is('consumed_at', null);
@@ -375,7 +380,10 @@ export async function loadResurrectionTicket(
 		return {
 			id: r.id,
 			oldFinal: typeof p.old_final === 'number' ? p.old_final : 0,
-			scoreMode: p.score_mode === 'best' ? 'best' : 'replace'
+			scoreMode: p.score_mode === 'best' ? 'best' : 'replace',
+			// Closed by the settlement (src/lib/server/submit.ts): the powerup goes
+			// 'active' at activation and is only spent when the retry lands.
+			sourcePowerupId: r.source_team_powerup_id
 		};
 	}
 	return null;
