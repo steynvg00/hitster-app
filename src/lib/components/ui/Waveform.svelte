@@ -597,6 +597,10 @@
 			toneSourceNode = null;
 		}
 		audioCtx = null;
+		// WaveSurfer's destroy() skips media.pause() for externally-supplied media
+		// elements (isExternalMedia) — we create that <audio> ourselves (see onMount),
+		// so without this the detached element keeps playing after unmount.
+		ws?.getMediaElement()?.pause();
 		ws?.destroy();
 		ws = null;
 	});
