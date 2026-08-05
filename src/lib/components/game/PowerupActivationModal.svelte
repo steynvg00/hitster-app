@@ -8,6 +8,7 @@
 		DOUBLE_DOWN_MIN_PCT,
 		DOUBLE_DOWN_MAX_PCT,
 		X_RAY_DEFAULT_BUDGET,
+		type LifelineHint,
 		type RevealResult,
 		type RevealTarget
 	} from '$lib/powerups-meta';
@@ -48,6 +49,7 @@
 		slotIndex = 0,
 		revealTabs = [],
 		targetTeams = [],
+		draftSnapshot,
 		activateAction = '?/activatePowerup'
 	}: {
 		teamPowerupId: string;
@@ -55,7 +57,7 @@
 		// `reveals` is a LIST because free_tab produces several at once. free_answer
 		// hands back a one-element list — one apply path on the page, not one per
 		// powerup.
-		onclose: (activated?: boolean, reveals?: RevealResult[]) => void;
+		onclose: (activated?: boolean, reveals?: RevealResult[], hints?: LifelineHint[]) => void;
 		currentChallengeId?: string;
 		// free_answer: the fields of the tab being answered, and the (tab, slot) the
 		// reveal is addressed to. A field name alone does not identify an answer on a
@@ -67,6 +69,16 @@
 		// so the picker can address a tab the player is not currently looking at.
 		revealTabs?: RevealTab[];
 		targetTeams?: TargetTeam[];
+		// lifeline only: the team's live draft, as the JSON the submit action already
+		// speaks (Record<tabPosition, SlotDraft[]>). A FUNCTION, not a value, because
+		// it must be read at the moment of activation — the team keeps typing while
+		// this modal is open, and a snapshot taken at render time would judge answers
+		// that are already stale. The challenge page passes its own
+		// buildAnswersForSubmit, so what Lifeline judges is exactly what would be
+		// scored. Absent (e.g. from /team, where there is no draft) the server treats
+		// it as an empty draft — but lifeline is challenge-gated anyway, so that path
+		// is refused before it matters.
+		draftSnapshot?: () => string;
 		// The form action to POST to. Defaults to the held-powerup activation path
 		// (?/activatePowerup, requires status='held'). The reveal modal's "Use now"
 		// flow (a fresh, still-pending earn) reuses this same component but points it
@@ -158,6 +170,11 @@
 		},
 		tap_to_break: {
 			action: 'Forces a target team to tap through a lock before they can submit.'
+		},
+		lifeline: {
+			action:
+				'Reveals a masked hint — first letter of every word — for every answer you have not got right yet. You still type them yourself.',
+			warning: 'Unlocks halfway through a timed challenge you have started.'
 		}
 	};
 
@@ -266,8 +283,13 @@
 		};
 	});
 	const needsChallenge = $derived(
-		['time_boost', 'insurance', 'free_answer', 'free_tab'].includes(powerupType.id)
+		['time_boost', 'insurance', 'free_answer', 'free_tab', 'lifeline'].includes(powerupType.id)
 	);
+	// lifeline posts the team's draft alongside the activation. Everything else the
+	// modal sends is a CHOICE the team makes here; this is state that lives on the
+	// challenge page, so it is attached in the submit handler rather than bound to a
+	// control.
+	const sendsDraft = $derived(powerupType.id === 'lifeline');
 	const gated = $derived(needsChallenge && !currentChallengeId);
 	const targetName = $derived(
 		targetTeams.find((t) => t.id === selectedTargetId)?.display_name ?? ''
@@ -275,7 +297,9 @@
 	// Can't fire a targeted powerup without a chosen target.
 	const targetMissing = $derived(needsTarget && !selectedTargetId);
 
-	const handleSubmit: SubmitFunction = () => {
+	const handleSubmit: SubmitFunction = ({ formData }) => {
+		// Read the draft at submit time, not at render time — see draftSnapshot.
+		if (sendsDraft && draftSnapshot) formData.set('lifeline_draft', draftSnapshot());
 		activating = true;
 		activateError = '';
 		return async ({ result, update }) => {
@@ -290,6 +314,7 @@
 							revealedTabId?: string;
 							revealedSlotIndex?: number;
 							reveals?: RevealResult[];
+							lifelineHints?: LifelineHint[];
 							payload?: Record<string, unknown>;
 							blocked?: boolean;
 					  }
@@ -329,7 +354,11 @@
 						: reveal
 							? [reveal]
 							: undefined;
-					onclose(true, reveals);
+					// Hints travel in their own argument, never merged into `reveals`: a
+					// reveal gets written into the draft by applyRevealToDraft, and a
+					// Lifeline hint must not be. Two channels is what keeps that impossible
+					// rather than merely unintended.
+					onclose(true, reveals, data?.lifelineHints);
 				}
 			} else if (result.type === 'failure') {
 				const data = result.data as { activateError?: string } | undefined;
