@@ -5,11 +5,14 @@ import {
 	artistTargets,
 	computeSetMaxScore,
 	correctValueForField,
+	fieldIsFullyCorrect,
 	fieldMapsFromResolved,
 	getSourceTracksForTab,
+	resolveArtistBonus,
 	resolveTabFields,
 	type ClipRaw,
 	type MashupSourceRaw,
+	type SlotDraft,
 	type TabClipData,
 	type TabSourceTrackRaw,
 	type TrackData
@@ -18,10 +21,14 @@ import { maybeTransferCrown } from '$lib/server/crown';
 import {
 	freeAnswerRevealKey,
 	FREE_TAB_MAX_REVEALS,
+	LIFELINE_MIN_ELAPSED_FRACTION,
+	maskAnswer,
 	X_RAY_DEFAULT_BUDGET,
+	type LifelineHint,
 	type RevealResult,
 	type RevealTarget
 } from '$lib/powerups-meta';
+import type { InputMode } from '$lib/types';
 
 export type PowerupType = Database['public']['Tables']['powerup_types']['Row'];
 export type TeamPowerupRow = Database['public']['Tables']['team_powerups']['Row'];
@@ -572,6 +579,12 @@ export type ActivateOptions = {
 	// resolved by the SAME helper free_answer's single `field` goes through — this
 	// is a longer list of the same thing, not a different mechanism.
 	revealTargets?: RevealTarget[];
+	// lifeline: the team's CURRENT draft, keyed by String(tab.position) exactly as
+	// the submit path keys it. Lifeline only hints at cells the team has not got
+	// right yet, and the draft lives in the browser's localStorage until submit —
+	// so there is no server-side copy to read and the client must send it. Absent
+	// or unparseable is treated as an empty draft: every field gets a hint.
+	lifelineDraft?: Record<string, SlotDraft[]>;
 };
 
 /**
@@ -620,6 +633,33 @@ export function parseRevealTargets(fd: FormData): { revealTargets?: RevealTarget
 	}
 }
 
+/**
+ * Read lifeline's draft snapshot out of an activation form post. Same role as
+ * parseRevealTargets and parsePredictedPct: the form field name lives in ONE
+ * place, shared by every ?/activatePowerup action.
+ *
+ * Posted as JSON under the same `answers_json` shape the submit action already
+ * parses (Record<tabPosition, SlotDraft[]>) — the page builds it with the very
+ * function it submits with, so what lifeline judges and what the scorer would
+ * score cannot diverge.
+ *
+ * Anything unparseable yields {} rather than an error: an empty draft simply
+ * produces a hint on every field, which is the safe direction to fail in.
+ */
+export function parseLifelineDraft(fd: FormData): {
+	lifelineDraft?: Record<string, SlotDraft[]>;
+} {
+	const raw = (fd.get('lifeline_draft') as string | null)?.trim();
+	if (!raw) return {};
+	try {
+		const parsed = JSON.parse(raw) as unknown;
+		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+		return { lifelineDraft: parsed as Record<string, SlotDraft[]> };
+	} catch {
+		return {};
+	}
+}
+
 export type ActivateResult = {
 	success: boolean;
 	error?: string;
@@ -633,6 +673,9 @@ export type ActivateResult = {
 	// fields (its contract is untouched); the client normalises both into the same
 	// RevealResult[] before applying them, so there is one apply path, not two.
 	reveals?: RevealResult[];
+	// lifeline: the masked hints this activation produced. NOT reveals — nothing
+	// here is written into the draft and no unmasked answer is present.
+	lifelineHints?: LifelineHint[];
 	payload?: Record<string, unknown>; // the team_effects payload that was written
 	blocked?: boolean; // offensive types: the target's shield absorbed the attack
 };
@@ -1007,6 +1050,267 @@ export async function resolveFreeAnswerValue(
 	const tags = field === 'artist' ? artistTargets(slot.track) : undefined;
 
 	return { value, ...(tags?.length ? { tags } : {}), tabId: tab.id, slotIndex };
+}
+
+// ─── lifeline: the time gate ─────────────────────────────────────────────────
+
+/**
+ * How far into its challenge clock is a team's open attempt?
+ *
+ * The first TIME-based activation gate in the powerup system, so it is worth
+ * being explicit about which clock it reads. The deadline a team is actually
+ * racing is not `started_at + timer_seconds`: time_boost, freeze and time_drain
+ * each insert a marker row carrying { added_seconds, challenge_id }, and
+ * /api/auto-submit SUMS those into the deadline it enforces. This function
+ * reproduces that same sum, so "half the clock has gone" means half of the clock
+ * the team is really playing against — not half of a nominal one that a boost
+ * has already made wrong.
+ *
+ * Everything here is server-side and derived from stored timestamps. The client
+ * countdown is never an input: a tampered or merely drifting phone clock cannot
+ * open this gate early.
+ *
+ * Returns null when there is nothing to measure — no open attempt, or an untimed
+ * challenge — and the caller turns that into a refusal, because an untimed
+ * challenge has no halfway point at all (the same reason time_boost refuses one).
+ */
+export async function attemptElapsedFraction(
+	supabase: SupabaseClient<Database>,
+	challengeId: string,
+	teamId: string,
+	now: number = Date.now()
+): Promise<{ fraction: number; totalSeconds: number } | null> {
+	const { data: attempt } = await supabase
+		.from('challenge_attempts')
+		.select('started_at')
+		.eq('challenge_id', challengeId)
+		.eq('team_id', teamId)
+		.is('ended_at', null)
+		.maybeSingle();
+	if (!attempt?.started_at) return null;
+
+	const { data: ch } = await supabase
+		.from('challenges')
+		.select('timer_seconds')
+		.eq('id', challengeId)
+		.maybeSingle();
+	const baseSeconds = ch?.timer_seconds ?? 0;
+	if (baseSeconds <= 0) return null;
+
+	// The same three effect types, the same payload key and the same summation as
+	// /api/auto-submit — a boost that moved the deadline must move this gate too,
+	// or the two would disagree about how long the challenge is.
+	const { data: boostRows } = await supabase
+		.from('team_effects')
+		.select('payload')
+		.eq('team_id', teamId)
+		.in('effect_type', ['time_boost', 'freeze', 'time_drain']);
+	let boost = 0;
+	for (const row of boostRows ?? []) {
+		const p = (row.payload ?? {}) as { added_seconds?: number; challenge_id?: string };
+		if (p.challenge_id !== challengeId) continue;
+		if (typeof p.added_seconds === 'number' && Number.isFinite(p.added_seconds)) {
+			boost += p.added_seconds;
+		}
+	}
+
+	// A drain deep enough to take the total to zero or below leaves no clock to be
+	// halfway through. Refuse rather than divide by it.
+	const totalSeconds = baseSeconds + boost;
+	if (totalSeconds <= 0) return null;
+
+	const elapsedMs = now - new Date(attempt.started_at).getTime();
+	return { fraction: elapsedMs / (totalSeconds * 1000), totalSeconds };
+}
+
+// ─── lifeline: the hints ─────────────────────────────────────────────────────
+
+/**
+ * Build the masked hints for one challenge, given the team's current draft.
+ *
+ * Two things happen per cell, and both delegate:
+ *   - the correct answer comes from correctValueForField (scoring.ts), the same
+ *     function the results screen and every reveal powerup use;
+ *   - "has the team already got this right" comes from fieldIsFullyCorrect
+ *     (scoring.ts), which runs the real scoreField.
+ * Neither notion is re-implemented here. What lives here is only the sweep:
+ * every tab, every slot, every field, and the masking of what comes back.
+ *
+ * WHY THIS LOADS THE CHALLENGE ITSELF instead of calling resolveFreeAnswerValue
+ * per cell like free_tab does: that helper re-loads the challenge, its tabs, the
+ * variant defaults, the sources, the clips and the tracks on EVERY call, which
+ * is fine for one reveal or a handful, and is roughly sixty round trips for a
+ * three-tab challenge swept exhaustively. So the load happens once, whole-
+ * challenge, and mirrors resolveFreeAnswerValue's per-tab load step for step.
+ * The parts that carry meaning — which tracks a tab resolves to, which fields it
+ * has, what the correct value is — are the same shared helpers in both.
+ *
+ * The draft is keyed by String(tab.position), the exact shape the submit path
+ * uses (draftByTab in src/lib/server/submit.ts), so the answers this reads are
+ * the answers that would be scored. It arrives from the client and is therefore
+ * a CLAIM, not a fact — a team that sends an empty draft simply gets hints on
+ * every field, which is strictly less information than the correct/incorrect
+ * split it would otherwise see. Nothing is trusted beyond "this is what you told
+ * us you typed".
+ *
+ * A cell yields no hint when it is already fully correct, when the field has no
+ * revealable answer (grouping), or when the track's column is empty — the same
+ * "nothing to reveal" case resolveFreeAnswerValue refuses on.
+ *
+ * Exported for verification: SELECTs only, no writes.
+ */
+export async function resolveLifelineHints(
+	supabase: SupabaseClient<Database>,
+	challengeId: string,
+	draftByTab: Record<string, SlotDraft[]>
+): Promise<{ hints: LifelineHint[] } | { error: string }> {
+	const { data: challenge } = await supabase
+		.from('challenges')
+		.select('variant, points_config')
+		.eq('id', challengeId)
+		.maybeSingle();
+	if (!challenge) return { error: 'Challenge not found' };
+	const variant = challenge.variant as string;
+	const pointsConfig = challenge.points_config;
+	const artistBonus = resolveArtistBonus(pointsConfig);
+
+	const { data: tabRows } = await supabase
+		.from('challenge_tabs')
+		.select('*')
+		.eq('challenge_id', challengeId)
+		.order('position');
+	const tabs = (tabRows ?? []) as Array<{
+		id: string;
+		position: number;
+		mashup_id?: string | null;
+		fields?: unknown;
+	}>;
+	if (!tabs.length) return { error: 'This challenge has no tabs configured' };
+	const tabIds = tabs.map((t) => t.id);
+
+	const { data: vdRow } = await supabase
+		.from('variant_defaults')
+		.select('points_config')
+		.eq('variant', variant)
+		.maybeSingle();
+	const variantDefaultPoints = ((vdRow?.points_config as Record<string, unknown> | null)
+		?.field_points ?? {}) as Record<string, number>;
+
+	const [srcRes, tabClipRes] = await Promise.all([
+		supabase
+			.from('challenge_tab_source_tracks')
+			.select('*')
+			.in('tab_id', tabIds)
+			.order('sort_order'),
+		supabase.from('challenge_tab_clips').select('*').in('tab_id', tabIds).order('sort_order')
+	]);
+	const sourceTrackRows = (srcRes.data ?? []) as TabSourceTrackRaw[];
+	const tabClipRows = tabClipRes.data ?? [];
+
+	// Fragments derives its source tracks from the clips, so clips load first.
+	const clipIds = [...new Set(tabClipRows.map((c) => c.clip_id))];
+	const clipsRes = await (clipIds.length
+		? supabase.from('clips').select('id, track_id').in('id', clipIds)
+		: Promise.resolve({ data: [] as { id: string; track_id: string }[] }));
+	const clips: ClipRaw[] = (clipsRes.data ?? []).map((c) => ({ id: c.id, track_id: c.track_id }));
+
+	const mashupIds =
+		variant === 'mashup'
+			? [...new Set(tabs.map((t) => t.mashup_id).filter((id): id is string => !!id))]
+			: [];
+	const mashupRes = await (mashupIds.length
+		? supabase.from('mashup_sources').select('*').in('mashup_id', mashupIds).order('sort_order')
+		: Promise.resolve({ data: [] as MashupSourceRaw[] }));
+	const mashupSources: MashupSourceRaw[] = (mashupRes.data ?? []).map((r) => ({
+		id: r.id,
+		mashup_id: r.mashup_id,
+		track_id: r.track_id,
+		sort_order: r.sort_order
+	}));
+
+	const trackIds = [
+		...new Set(
+			[
+				...sourceTrackRows.map((s) => s.track_id),
+				...mashupSources.map((s) => s.track_id),
+				...clips.map((c) => c.track_id)
+			].filter(Boolean)
+		)
+	];
+	const tracksRes = await (trackIds.length
+		? supabase.from('tracks').select('*').in('id', trackIds)
+		: Promise.resolve({ data: [] as unknown[] }));
+	const trackMap = new Map(((tracksRes.data ?? []) as unknown as TrackData[]).map((t) => [t.id, t]));
+
+	const allTabClipData: TabClipData[] = tabClipRows.map((c) => ({
+		id: c.id,
+		tabId: c.tab_id,
+		clipId: c.clip_id,
+		fragmentNumber: c.fragment_number,
+		sortOrder: c.sort_order,
+		trackId: clips.find((cl) => cl.id === c.clip_id)?.track_id
+	}));
+
+	const hints: LifelineHint[] = [];
+
+	for (const tab of tabs) {
+		// This tab's OWN resolved fields/modes/points — resolveTabFields, the same
+		// resolver the submit path and every reveal use, so a per-tab field override
+		// is honoured here exactly as it is when the answer is scored.
+		// bonusFields is deliberately not read: whether a field is a bonus one changes
+		// how it counts towards the threshold, not whether the team has it right.
+		const { fields, fieldModes, fieldPoints } = fieldMapsFromResolved(
+			resolveTabFields(tab, { variant, points_config: pointsConfig }, variantDefaultPoints)
+		);
+
+		const sources = getSourceTracksForTab(
+			variant,
+			{ id: tab.id, mashup_id: tab.mashup_id ?? null },
+			sourceTrackRows,
+			mashupSources,
+			allTabClipData,
+			clips,
+			trackMap
+		);
+		// A tab with no track behind it (an unfinished mashup, an empty slot) has no
+		// answers to hint at. Skipped, not fatal — the other tabs still produce hints,
+		// the same posture free_tab takes towards a cell it cannot resolve.
+		if (!sources.length) continue;
+
+		const tabDraft = draftByTab[String(tab.position)] ?? [];
+
+		for (let slotIndex = 0; slotIndex < sources.length; slotIndex++) {
+			const track = sources[slotIndex].track;
+			if (!track) continue;
+			const slotDraft = tabDraft[slotIndex];
+
+			for (const field of fields) {
+				// grouping is scored across the whole tab, not per track — no single
+				// answer exists to mask. Excluded here exactly as every reveal excludes it.
+				if (field === 'grouping') continue;
+
+				const correct = correctValueForField(field, track);
+				// An empty column on the track: nothing to mask. Silently skipped rather
+				// than emitting a hint of "" that would render as an empty line.
+				if (!correct.trim()) continue;
+
+				const submitted = slotDraft?.fieldValues?.[field] ?? '';
+				const mode = (fieldModes[field] ?? 'open_text') as InputMode;
+				const maxPoints = fieldPoints[field] ?? 0;
+
+				if (fieldIsFullyCorrect(field, submitted, track, mode, maxPoints, artistBonus)) continue;
+
+				hints.push({
+					tabId: tab.id,
+					slotIndex,
+					field: String(field),
+					mask: maskAnswer(correct)
+				});
+			}
+		}
+	}
+
+	return { hints };
 }
 
 // ─── x_ray: spending one reveal from the budget ──────────────────────────────
@@ -1765,6 +2069,86 @@ export async function activatePowerup(
 				.eq('id', teamPowerupId);
 
 			return { success: true, reveals };
+		}
+
+		case 'lifeline': {
+			const challengeId = options?.currentChallengeId;
+			if (!challengeId)
+				return { success: false, error: `${powerupType.name} requires an active challenge` };
+
+			// ── Guard 1: mid-challenge only, and past the halfway mark ─────────────
+			// The one TIME-gated activation in the system. attemptElapsedFraction does
+			// the whole calculation server-side from challenge_attempts.started_at and
+			// the boost-adjusted clock; null means there is nothing to measure — no open
+			// attempt, or an untimed challenge, which has no halfway point at all.
+			//
+			// The two failure messages are deliberately different: "not started" is a
+			// different thing for the team to do about it than "too early". Both leave
+			// the powerup HELD, the same refusal posture free_answer takes — a Lifeline
+			// must never be burned by a click that changed nothing.
+			const elapsed = await attemptElapsedFraction(supabase, challengeId, tpu.team_id);
+			if (!elapsed)
+				return {
+					success: false,
+					error: 'Lifeline needs a timed challenge you have already started'
+				};
+			if (elapsed.fraction < LIFELINE_MIN_ELAPSED_FRACTION) {
+				const remainingSec = Math.max(
+					1,
+					Math.ceil((LIFELINE_MIN_ELAPSED_FRACTION - elapsed.fraction) * elapsed.totalSeconds)
+				);
+				return {
+					success: false,
+					error: `Too early — Lifeline unlocks halfway through. Try again in ${remainingSec}s.`
+				};
+			}
+
+			// ── Guard 2: there has to be something to hint at ──────────────────────
+			// Every cell already correct (or no answerable cell at all) means the
+			// activation would hand over nothing. Stays held, same as above.
+			const resolved = await resolveLifelineHints(
+				supabase,
+				challengeId,
+				options?.lifelineDraft ?? {}
+			);
+			if ('error' in resolved) return { success: false, error: resolved.error };
+			if (!resolved.hints.length)
+				return { success: false, error: 'Nothing left to hint at — you have them all right!' };
+
+			// Written ALREADY CONSUMED, exactly like free_answer's reveal row: the hint
+			// is computed once and stored, not an effect that rides into scoring. Two
+			// independent things keep it out of the scorer — consumed rows are invisible
+			// to loadActiveEffects, and deriveEffectModifiers has no 'lifeline' case —
+			// so Lifeline cannot change a single point. What the row is for is the
+			// RELOAD: the challenge page reads it back on load, which is what makes the
+			// hints survive a refresh and stay up for the rest of the challenge.
+			await supabase.from('team_effects').insert({
+				team_id: tpu.team_id,
+				set_id: tpu.set_id,
+				effect_type: 'lifeline',
+				payload: {
+					challenge_id: challengeId,
+					// Snake_case inside the payload, matching every other stored payload
+					// (free_answer's tab_id / slot_index); the camelCase LifelineHint is the
+					// in-memory/wire shape.
+					hints: resolved.hints.map((h) => ({
+						tab_id: h.tabId,
+						slot_index: h.slotIndex,
+						field: h.field,
+						mask: h.mask
+					}))
+				},
+				consumed_at: new Date().toISOString(),
+				consumed_challenge_id: challengeId,
+				source_team_powerup_id: teamPowerupId
+			} as never);
+
+			await supabase
+				.from('team_powerups')
+				.update({ status: 'consumed' } as never)
+				.eq('id', teamPowerupId);
+
+			return { success: true, lifelineHints: resolved.hints };
 		}
 
 		case 'penalty_shot': {

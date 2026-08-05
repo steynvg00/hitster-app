@@ -133,6 +133,100 @@ export type RevealTarget = {
 	field: string;
 };
 
+// ─── lifeline: the masking rule ──────────────────────────────────────────────
+//
+// Lifeline is NOT a reveal powerup (it is deliberately absent from
+// REVEAL_POWERUP_IDS above): it never writes a value into the draft and never
+// hands the team an answer to accept. It hands over a MASK of the answer, and
+// the team still types the real thing. That is why it does not go through
+// applyRevealToDraft and why its hint renders as read-only text.
+//
+// The rule, in one sentence: keep the first character of every word, underscore
+// the rest, leave everything that is not a word alone.
+//
+//   "Raiders Of Rampage"  -> "R______ O_ R______"
+//   "Miss K8 & Nolz"      -> "M___ K_ & N___"
+//   "D-Block & S-te-Fan"  -> "D-_____ & S-__-___"
+//   "Don't Stop"          -> "D__'_ S___"
+//   "2011"                -> "2___"
+//
+// The consequences of that rule, each a deliberate choice:
+//
+//   MULTIPLE WORDS  Every word is masked independently, so the word count and
+//     each word's length show through. That is the hint: it is what lets a team
+//     recognise a title they half-know.
+//
+//   &-COLLABS  The artist field's answer is already one string — correctValueForField
+//     joins a track's artists[] with ' & ' — so nothing special happens here.
+//     '&' is not a word character, so it survives literally and the collab
+//     structure ("two acts, this one 4 letters, that one 4") is visible. Same
+//     for the tag input's own display: the hint is one line of text either way,
+//     so a tagged artist field needs no separate shape (unlike free_answer,
+//     which must ship real tags because it FILLS the input).
+//
+//   PUNCTUATION  A word is a WHITESPACE-delimited token, and punctuation inside
+//     one is preserved rather than underscored — so "D-Block" keeps its shape
+//     ("D-_____") and "Don't" masks to "D__'_". Splitting on punctuation instead
+//     would make every hyphen and apostrophe expose another letter
+//     ("D-B____", "D__'t"), which hands over three letters of "S-te-Fan" and one
+//     of "Don't" while a plain word gives up exactly one. One letter per word,
+//     always, whatever punctuation the word happens to contain.
+//
+//     A token with no letters or digits at all — "&" — passes through untouched,
+//     which is what keeps a collab readable as a collab.
+//
+//   DIGITS  A digit counts as a letter for this purpose, so "K8" -> "K_" and a
+//     year "2011" -> "2___". Every year in this game starts with 2, so the year
+//     hint carries almost no information. That is the honest application of one
+//     uniform rule rather than a per-field exception, and it is stated here so
+//     the weakness is a known property and not a surprise.
+//
+// Lives in this client-safe module for the same reason doubleDownMultiplier
+// does: the server produces the mask and the page renders it, and a second copy
+// in a .svelte file would be free to drift.
+export function maskAnswer(value: string): string {
+	return value.replace(/\S+/g, (word) => {
+		let firstSeen = false;
+		// Array.from, not indexing: a surrogate pair (an emoji or an astral-plane
+		// character in a track title) is two UTF-16 units, and walking by index would
+		// cut one in half and mask it as two characters.
+		return Array.from(word)
+			.map((ch) => {
+				// Punctuation is structure, not content — it survives as itself and does
+				// not count as the word's first letter.
+				if (!/[\p{L}\p{N}]/u.test(ch)) return ch;
+				if (!firstSeen) {
+					firstSeen = true;
+					return ch;
+				}
+				return '_';
+			})
+			.join('');
+	});
+}
+
+/**
+ * One lifeline hint, addressed exactly like a reveal — same (tab, slot, field)
+ * triple, same freeAnswerRevealKey — so the page can look a hint up next to the
+ * field it belongs to without a second addressing scheme.
+ *
+ * `mask` is the ONLY thing that crosses to the client. The unmasked answer stays
+ * on the server.
+ */
+export type LifelineHint = {
+	tabId: string;
+	slotIndex: number;
+	field: string;
+	mask: string;
+};
+
+/**
+ * The fraction of a challenge's clock that must have elapsed before Lifeline can
+ * be activated. A defensive powerup for a team that is stuck — activating it in
+ * the first seconds would just be a free head start.
+ */
+export const LIFELINE_MIN_ELAPSED_FRACTION = 0.5;
+
 /**
  * A free_answer reveal, fully addressed. The server echoes back the tab and slot
  * it actually resolved against, so the page keys the badge on what was revealed

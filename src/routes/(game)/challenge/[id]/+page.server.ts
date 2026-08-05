@@ -9,6 +9,7 @@ import {
 	getTeamsWithActiveTimedAttempt,
 	parsePredictedPct,
 	parseRevealTargets,
+	parseLifelineDraft,
 	type EarnedPowerup
 } from '$lib/server/powerups';
 import { scoreAndPersistSubmission } from '$lib/server/submit';
@@ -791,7 +792,8 @@ export const actions: Actions = {
 			targetTeamId,
 			...parseRevealAddress(fd),
 			...parseRevealTargets(fd),
-			...parsePredictedPct(fd)
+			...parsePredictedPct(fd),
+			...parseLifelineDraft(fd)
 		});
 		if (!result.success) return fail(400, { activateError: result.error });
 		return {
