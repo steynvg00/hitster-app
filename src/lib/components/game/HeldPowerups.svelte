@@ -37,6 +37,7 @@
 		slotIndex = 0,
 		revealTabs = [],
 		setTeams = [],
+		resurrectableChallenges = [],
 		draftSnapshot,
 		onactivated,
 		onlifeline
@@ -53,6 +54,16 @@
 		// straight through.
 		revealTabs?: Array<{ id: string; label: string; fields: string[]; slotCount: number }>;
 		setTeams?: TargetTeam[];
+		// resurrection only: the team's finished challenges. Passed straight through
+		// — see PowerupActivationModal for the shape and why both numbers on each
+		// entry come from the server.
+		resurrectableChallenges?: Array<{
+			id: string;
+			title: string;
+			variant: string;
+			oldFinal: number;
+			retrySeconds: number | null;
+		}>;
 		// lifeline only: reads the challenge page's live draft at activation time.
 		// Passed straight through — see PowerupActivationModal for why it is a
 		// function rather than a value.
@@ -153,6 +164,7 @@
 		{slotIndex}
 		{revealTabs}
 		{targetTeams}
+		{resurrectableChallenges}
 		{draftSnapshot}
 	/>
 {/if}

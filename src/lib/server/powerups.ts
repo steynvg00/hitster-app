@@ -5,7 +5,8 @@ import type {
 	PowerupConfigV2,
 	ThresholdMode,
 	BandMode,
-	PowerupTypeOverride
+	PowerupTypeOverride,
+	ResurrectionScoreMode
 } from '$lib/types';
 import {
 	artistTargets,
@@ -33,6 +34,7 @@ import {
 	POWER_SPIN_DEFAULT_TIER_S_CHANCE,
 	SPIN_TIERS,
 	EYE_DEFAULT_SHOW_SCORES,
+	resurrectionRetrySeconds,
 	isSpinExcluded,
 	type EyeSlot,
 	type EyeTab,
@@ -301,6 +303,90 @@ export function stripAnswersForEye(answers: unknown): EyeTab[] {
  */
 export function resolveEyeShowScores(cfg: PowerupConfigV2): boolean {
 	return cfg.types?.all_seeing_eye?.show_scores === true ? true : EYE_DEFAULT_SHOW_SCORES;
+}
+
+// ─── resurrection: the settlement mode and the old score ─────────────────────
+
+/**
+ * How a Resurrection retry settles against the submission it replaces, from the
+ * set's config (powerup_config.types.resurrection.score_mode) — the same per-type
+ * override map the dice range, the reveal budget and the Eye's show_scores live
+ * in.
+ *
+ * Anything that is not EXACTLY 'best' is 'replace'. The strict mode is the
+ * default on purpose: under 'best' a retry can only help, which turns "when do I
+ * spend this" from a decision into a button.
+ */
+export function resolveResurrectionScoreMode(cfg: PowerupConfigV2): ResurrectionScoreMode {
+	return cfg.types?.resurrection?.score_mode === 'best' ? 'best' : 'replace';
+}
+
+/**
+ * The exact number a stored submission added to teams.score.
+ *
+ * This is `answers[0].breakdown.final` — written by scoreAndPersistSubmission
+ * (src/lib/server/submit.ts), which persists `breakdown.final` into the answers
+ * array AND adds that same value to the team score, so the two cannot disagree.
+ * The fallback chain handles submissions that predate the breakdown
+ * (`submissions.score`, then 0) rather than guessing.
+ *
+ * Read ONCE, at activation, before the retry re-opens anything — the retry
+ * overwrites this very row, so afterwards the number is gone. What is read here
+ * is what lands in the ticket payload, and the ticket is the only thing the
+ * settlement trusts.
+ */
+export function submissionFinalScore(sub: { answers?: unknown; score?: number | null }): number {
+	const answers = sub.answers;
+	if (Array.isArray(answers)) {
+		const breakdown = (answers[0] as { breakdown?: { final?: unknown } } | undefined)?.breakdown;
+		if (breakdown && typeof breakdown.final === 'number' && Number.isFinite(breakdown.final)) {
+			return breakdown.final;
+		}
+	}
+	return typeof sub.score === 'number' && Number.isFinite(sub.score) ? sub.score : 0;
+}
+
+/**
+ * The team's OPEN Resurrection ticket for one challenge, if any.
+ *
+ * The ticket is a non-consumed team_effects row written at activation. It is the
+ * single carrier of everything the settlement needs — old_final and score_mode,
+ * both frozen at activation — and its `consumed_at IS NULL` state is what makes
+ * "this submission is a retry" a fact the server can check rather than infer.
+ *
+ * Deliberately NOT filtered on set_id: a ticket is addressed by (team,
+ * challenge), and the challenge is what the retry is for. SELECT only.
+ */
+export async function loadResurrectionTicket(
+	supabase: SupabaseClient<Database>,
+	teamId: string,
+	challengeId: string
+): Promise<{
+	id: string;
+	oldFinal: number;
+	scoreMode: ResurrectionScoreMode;
+	sourcePowerupId: string | null;
+} | null> {
+	const { data: rows } = await supabase
+		.from('team_effects')
+		.select('id, payload, source_team_powerup_id')
+		.eq('team_id', teamId)
+		.eq('effect_type', 'resurrection')
+		.is('consumed_at', null);
+
+	for (const r of rows ?? []) {
+		const p = (r.payload ?? {}) as Record<string, unknown>;
+		if (p.challenge_id !== challengeId) continue;
+		return {
+			id: r.id,
+			oldFinal: typeof p.old_final === 'number' ? p.old_final : 0,
+			scoreMode: p.score_mode === 'best' ? 'best' : 'replace',
+			// Closed by the settlement (src/lib/server/submit.ts): the powerup goes
+			// 'active' at activation and is only spent when the retry lands.
+			sourcePowerupId: r.source_team_powerup_id
+		};
+	}
+	return null;
 }
 
 /**
@@ -906,6 +992,12 @@ export type ActivateOptions = {
 	// so there is no server-side copy to read and the client must send it. Absent
 	// or unparseable is treated as an empty draft: every field gets a hint.
 	lifelineDraft?: Record<string, SlotDraft[]>;
+	// resurrection: WHICH finished challenge to bring back. The only option that
+	// names a challenge the team is NOT currently on — every other challenge-scoped
+	// type uses currentChallengeId, because every other one acts on the challenge in
+	// front of you. Falls back to currentChallengeId so activating from the
+	// challenge page itself ("or it is the current one") needs no extra field.
+	resurrectionChallengeId?: string;
 };
 
 /**
@@ -981,6 +1073,19 @@ export function parseLifelineDraft(fd: FormData): {
 	}
 }
 
+/**
+ * Read resurrection's target challenge out of an activation form post. Same role
+ * as parsePredictedPct / parseRevealTargets / parseLifelineDraft: the form field
+ * name lives in ONE place, shared by every ?/activatePowerup action.
+ *
+ * Absent yields {} — activatePowerup then falls back to currentChallengeId, which
+ * is what makes "or it is the current one" work without a second code path.
+ */
+export function parseResurrectionChallengeId(fd: FormData): { resurrectionChallengeId?: string } {
+	const raw = (fd.get('resurrection_challenge_id') as string | null)?.trim();
+	return raw ? { resurrectionChallengeId: raw } : {};
+}
+
 export type ActivateResult = {
 	success: boolean;
 	error?: string;
@@ -1014,6 +1119,17 @@ export type ActivateResult = {
 	// verdict or a matched track id — so the contract is enforced by shape, not by
 	// remembering to delete things.
 	allSeeingEye?: AllSeeingEyeData;
+	// resurrection: what was re-opened, so the client can send the team straight to
+	// it and state the terms it just accepted. `retrySeconds` is null on an untimed
+	// challenge (no clock to divide), and `oldFinal` is the score the retry will be
+	// measured against — the number the modal must show BEFORE the click, and the
+	// one the settlement books the difference from.
+	resurrection?: {
+		challengeId: string;
+		retrySeconds: number | null;
+		oldFinal: number;
+		scoreMode: ResurrectionScoreMode;
+	};
 };
 
 /**
@@ -2568,6 +2684,165 @@ export async function activatePowerup(
 				.eq('id', teamPowerupId);
 
 			return { success: true, allSeeingEye: eyeData };
+		}
+
+		case 'resurrection': {
+			// The only activation that reaches BACKWARDS. Everything else acts on a
+			// challenge that is still open; this re-opens one the team already closed.
+			//
+			// Order is the safety property here, so it is stated up front. Three writes
+			// happen, and they are sequenced so that no failure can leave the team able
+			// to submit that challenge again WITHOUT a ticket — that is the one
+			// combination that would double-count (the submit pipeline would add the
+			// retry's points on top of the original's instead of the difference):
+			//
+			//   1. the ticket        carries old_final + score_mode; nothing is unlocked yet
+			//   2. the unlock CAS    is_final true → false. Fails → ticket deleted, refuse
+			//   3. the attempt       restarted on the 1/3 clock
+			//
+			// After (1) alone the challenge is still locked (harmless). After (2) the
+			// ticket already exists. There is no window in which the reverse holds.
+			const challengeId = options?.resurrectionChallengeId ?? options?.currentChallengeId;
+			if (!challengeId)
+				return { success: false, error: `${powerupType.name} needs a challenge to bring back` };
+
+			// ── Guard 1: one open retry per team ───────────────────────────────────
+			// Not a correctness requirement (a ticket is addressed per challenge, so two
+			// would settle independently) but a comprehension one: two challenges live
+			// at once, each on its own short clock, is not a state a player can hold in
+			// their head. Checked first because it is the cheapest refusal.
+			const { data: openTickets } = await supabase
+				.from('team_effects')
+				.select('id')
+				.eq('team_id', tpu.team_id)
+				.eq('effect_type', 'resurrection')
+				.is('consumed_at', null)
+				.limit(1);
+			if (openTickets?.length)
+				return {
+					success: false,
+					error: 'You already have a challenge back from the dead — finish that one first'
+				};
+
+			// ── Guard 2: an own, FINISHED submission ───────────────────────────────
+			// is_final is the honest definition of finished, and after this feature it
+			// is also the LOCK (the submit action's 409 reads it), so the two questions
+			// have one answer. A non-final row means that challenge is already open —
+			// a state this branch must never create twice.
+			const { data: sub } = await supabase
+				.from('submissions')
+				.select('id, answers, score, is_final')
+				.eq('challenge_id', challengeId)
+				.eq('team_id', tpu.team_id)
+				.maybeSingle();
+			if (!sub)
+				return {
+					success: false,
+					error: 'You have not finished that challenge yet — there is nothing to bring back'
+				};
+			if (!sub.is_final)
+				return { success: false, error: 'That challenge is already open — go and play it' };
+
+			// ── The old score, read before anything moves ──────────────────────────
+			// The retry OVERWRITES this row, so this is the last moment the number
+			// exists. It goes into the ticket and the settlement reads it from there —
+			// never from the submission, which by then describes the retry.
+			const oldFinal = submissionFinalScore(sub);
+
+			const { data: ch } = await supabase
+				.from('challenges')
+				.select('timer_seconds')
+				.eq('id', challengeId)
+				.maybeSingle();
+			// null on an untimed challenge: nothing to divide, so the retry inherits the
+			// untimed behaviour (no deadline, no auto-submit) rather than inventing one.
+			const retrySeconds = resurrectionRetrySeconds(ch?.timer_seconds);
+
+			const scoreMode = resolveResurrectionScoreMode(
+				parseConfig((gameSet as unknown as { powerup_config?: unknown }).powerup_config)
+			);
+
+			// (1) The ticket. NOT consumed — this row IS the open retry, and its
+			// consumed_at is what the settlement claims by compare-and-swap so a client
+			// submit racing the auto-submit backstop can only book the difference once.
+			//
+			// deriveEffectModifiers has no 'resurrection' case, so an unconsumed ticket
+			// sitting in loadActiveEffects during the retry cannot move a single point
+			// of its own — same containment the Eye's row relies on.
+			const { data: ticket, error: ticketErr } = await supabase
+				.from('team_effects')
+				.insert({
+					team_id: tpu.team_id,
+					set_id: tpu.set_id,
+					effect_type: 'resurrection',
+					payload: {
+						challenge_id: challengeId,
+						old_final: oldFinal,
+						score_mode: scoreMode,
+						retry_seconds: retrySeconds,
+						// Kept for the record only. The retry overwrites the attempt row, so
+						// without these the original run's timing is unrecoverable.
+						original_submission_id: sub.id
+					},
+					source_team_powerup_id: teamPowerupId
+				} as never)
+				.select('id')
+				.single();
+			if (ticketErr || !ticket) return { success: false, error: ticketErr?.message ?? 'Failed' };
+
+			// (2) The unlock, as a compare-and-swap on is_final. Two teams cannot race
+			// here (a submission belongs to one team), but a double-click can — and the
+			// loser must not get a second ticket for the same re-opening.
+			const { data: unlocked } = await supabase
+				.from('submissions')
+				.update({ is_final: false } as never)
+				.eq('id', sub.id)
+				.eq('is_final', true)
+				.select('id');
+			if (!unlocked?.length) {
+				// Someone else already opened it. Roll the ticket back so the invariant
+				// "an unlocked submission always has exactly one ticket" holds, and leave
+				// the powerup HELD — nothing was spent.
+				await supabase.from('team_effects').delete().eq('id', ticket.id);
+				return { success: false, error: 'That challenge is already open — go and play it' };
+			}
+
+			// (3) The attempt, restarted on the short clock. UPSERT rather than insert:
+			// challenge_attempts is unique on (challenge_id, team_id)
+			// (0014_challenge_attempts.sql), and this is deliberately the SAME row — a
+			// second live attempt for one (challenge, team) is exactly what the sweep in
+			// /api/auto-submit must never find. Restarting the row also means there is
+			// no stale open attempt left behind to fire on.
+			await supabase.from('challenge_attempts').upsert(
+				{
+					challenge_id: challengeId,
+					team_id: tpu.team_id,
+					started_at: new Date().toISOString(),
+					ended_at: null,
+					timer_override_seconds: retrySeconds
+				} as never,
+				{ onConflict: 'challenge_id,team_id' } as never
+			);
+
+			// 'active', not 'consumed': the powerup is spent only when the retry
+			// settles. consumeResurrectionTicket() (src/lib/server/submit.ts) flips it.
+			await supabase
+				.from('team_powerups')
+				.update({ status: 'active' } as never)
+				.eq('id', teamPowerupId);
+
+			await supabase.from('activity_log').insert({
+				team_id: tpu.team_id,
+				challenge_id: challengeId,
+				event_type: 'resurrection_opened',
+				payload: { old_final: oldFinal, score_mode: scoreMode, retry_seconds: retrySeconds }
+			} as never);
+
+			return {
+				success: true,
+				effectId: ticket.id,
+				resurrection: { challengeId, retrySeconds, oldFinal, scoreMode }
+			};
 		}
 
 		case 'lifeline': {

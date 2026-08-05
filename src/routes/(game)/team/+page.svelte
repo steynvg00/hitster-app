@@ -314,6 +314,7 @@
 				setId={data.playerSetId}
 				powerups={data.heldPowerups}
 				setTeams={data.setTeams}
+				resurrectableChallenges={data.resurrectableChallenges}
 			/>
 		{/if}
 

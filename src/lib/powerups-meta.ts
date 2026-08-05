@@ -2,6 +2,8 @@
 // (src/lib/server/powerups.ts) and the player-facing Svelte modals. Kept in its
 // own module with NO server-only imports so `.svelte` files can import it too.
 
+import type { ResurrectionScoreMode } from '$lib/types';
+
 // Powerups that act on ANOTHER team and therefore require a target picker at
 // activation. All four are live: give_a_shot (stuk 1), freeze + time_drain
 // (stuk 2), tap_to_break (stuk 3 — completes the offensive powerups feature).
@@ -350,3 +352,58 @@ export type AllSeeingEyeData = {
 
 /** Default for the show-scores switch. False for the reason given on EyeTeam.score. */
 export const EYE_DEFAULT_SHOW_SCORES = false;
+
+// ─── resurrection: the short clock and the difference ────────────────────────
+//
+// Both numbers Resurrection turns on are computed HERE, client-safe and pure, for
+// the same reason doubleDownMultiplier lives in this module: the player-facing
+// modal must promise exactly what the server will do. The modal shows the retry
+// length before the team commits, and the server sets the attempt's clock from
+// the same function — a second copy of `/3` in a .svelte file is precisely the
+// drift this module exists to prevent.
+
+/** One third of the original clock — the whole cost of a second chance. */
+export const RESURRECTION_TIMER_FRACTION = 1 / 3;
+
+/**
+ * The retry clock for a challenge whose normal timer is `timerSeconds`.
+ *
+ * Rounded, with a floor of 1 second: a 2-second challenge would otherwise round
+ * to a 1-second retry and a 1-second challenge to a ZERO-second one — an attempt
+ * that /api/auto-submit would close on its very first sweep, i.e. a Tier S
+ * powerup spent on a clock that never ran.
+ *
+ * An untimed challenge (0 or null) has no clock to divide, so it returns null and
+ * the retry inherits the untimed behaviour it already had: no deadline, no
+ * auto-submit, the team submits when it submits.
+ */
+export function resurrectionRetrySeconds(timerSeconds: number | null | undefined): number | null {
+	if (typeof timerSeconds !== 'number' || !Number.isFinite(timerSeconds) || timerSeconds <= 0) {
+		return null;
+	}
+	return Math.max(1, Math.round(timerSeconds * RESURRECTION_TIMER_FRACTION));
+}
+
+/**
+ * What a retry does to the team's score: the DIFFERENCE, never a rollback.
+ *
+ * `oldFinal` is the breakdown.final of the submission being replaced — the exact
+ * number that submission added to teams.score, multipliers and bonuses included.
+ * `newFinal` is the same quantity for the retry. The result is added to the team
+ * score in ONE update, so the old points are never briefly removed and never
+ * left standing alongside the new ones.
+ *
+ *   replace   newFinal - oldFinal      40 → 60 = +20    60 → 40 = -20
+ *   best      MAX(0, that)             40 → 60 = +20    60 → 40 =  +0
+ *
+ * Pure and exported so the arithmetic can be asserted directly
+ * (tests/bots/verify-resurrection.ts) rather than inferred from a live game.
+ */
+export function resurrectionDelta(
+	oldFinal: number,
+	newFinal: number,
+	mode: ResurrectionScoreMode
+): number {
+	const diff = newFinal - oldFinal;
+	return mode === 'best' ? Math.max(0, diff) : diff;
+}

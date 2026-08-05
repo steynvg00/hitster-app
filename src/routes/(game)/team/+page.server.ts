@@ -5,10 +5,13 @@ import {
 	activatePowerup,
 	loadActiveEffects,
 	getTeamsWithActiveTimedAttempt,
-	parsePredictedPct
+	parsePredictedPct,
+	parseResurrectionChallengeId,
+	submissionFinalScore
 } from '$lib/server/powerups';
 import { TEAM_COLOR_ORDER, getTeamsInSet } from '$lib/server/randomize';
 import { parseBattleConfig } from '$lib/battle-ranking';
+import { resurrectionRetrySeconds } from '$lib/powerups-meta';
 
 export const load: PageServerLoad = async ({ locals, cookies }) => {
 	if (!locals.teamId) redirect(302, '/join');
@@ -122,6 +125,17 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 	let setCompletedCount = 0;
 	let setTotalCount = 0;
 	let challengeUnlocks: string[] = [];
+	// The Resurrection picker's options — this team's finished challenges in the
+	// active set, each with the score a retry would be measured against and the
+	// 1/3 clock it would run on. Empty for a team that has finished nothing, which
+	// is what makes the modal say so instead of offering an empty list.
+	let resurrectableChallenges: Array<{
+		id: string;
+		title: string;
+		variant: string;
+		oldFinal: number;
+		retrySeconds: number | null;
+	}> = [];
 
 	if (playerSetId) {
 		{
@@ -180,9 +194,12 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 					const challengeIds = setChallenges.map((sc) => sc.challenge_id);
 					setTotalCount = challengeIds.length;
 
+					// title + timer_seconds are for the Resurrection picker below (which
+					// names the challenge and states its retry clock); variant drives the
+					// tutorial lookup as before.
 					const { data: setChallengeRows } = await admin
 						.from('challenges')
-						.select('id, variant')
+						.select('id, variant, title, timer_seconds')
 						.in('id', challengeIds);
 
 					const variants = [...new Set((setChallengeRows ?? []).map((c) => c.variant))];
@@ -198,14 +215,49 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 						}));
 					}
 
-					// Count completions for this team
+					// Count completions for this team. `answers` and `score` ride along for
+					// the Resurrection picker below — same rows, so no second query.
 					const { data: teamSubs } = await admin
 						.from('submissions')
-						.select('challenge_id')
+						.select('challenge_id, answers, score')
 						.eq('team_id', locals.teamId)
 						.eq('is_final', true)
 						.in('challenge_id', challengeIds);
 					setCompletedCount = (teamSubs ?? []).length;
+
+					// ── Resurrection picker data ───────────────────────────────────────
+					// Exactly the challenges this powerup can act on: the team's own, with
+					// a FINISHED submission (is_final — the same definition the activation
+					// guard enforces server-side, so the list can never offer something the
+					// server would refuse).
+					//
+					// Each entry carries the score it would be measured against, from
+					// submissionFinalScore — the same reader the activation uses to freeze
+					// old_final into the ticket. A team must be able to see what it is
+					// betting against BEFORE it spends a Tier S powerup.
+					if (teamSubs?.length) {
+						const finishedIds = teamSubs.map((s) => s.challenge_id);
+						const chById = new Map(
+							(setChallengeRows ?? [])
+								.filter((c) => finishedIds.includes(c.id))
+								.map((c) => [c.id, c])
+						);
+						resurrectableChallenges = teamSubs
+							.filter((s) => chById.has(s.challenge_id))
+							.map((s) => {
+								const c = chById.get(s.challenge_id)!;
+								return {
+									id: c.id,
+									title: c.title ?? 'Challenge',
+									variant: c.variant,
+									oldFinal: submissionFinalScore(s),
+									// null on an untimed challenge — the modal says "no timer"
+									// rather than promising a number that will not exist.
+									retrySeconds: resurrectionRetrySeconds(c.timer_seconds)
+								};
+							})
+							.sort((a, b) => a.title.localeCompare(b.title));
+					}
 
 					// Load NFC unlocks for this team — needed when set lock is on OR any challenge overrides to true
 					const { data: unlockRows } = await admin
@@ -320,6 +372,7 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		setCompletedCount,
 		setTotalCount,
 		challengeUnlocks,
+		resurrectableChallenges,
 		heldPowerups,
 		playerSetId,
 		activeEffects,
@@ -339,11 +392,22 @@ export const actions: Actions = {
 		if (!teamPowerupId) return fail(400, { activateError: 'Missing powerup ID' });
 		const result = await activatePowerup(admin, teamPowerupId, {
 			targetTeamId,
-			...parsePredictedPct(fd)
+			...parsePredictedPct(fd),
+			// resurrection is activated from HERE in the normal case: /team is where the
+			// team can see every challenge it has finished, and picking one of them is
+			// the whole decision. There is no currentChallengeId to fall back on, so the
+			// picker's choice is the only address.
+			...parseResurrectionChallengeId(fd)
 		});
 		if (!result.success) return fail(400, { activateError: result.error });
 		// `payload` carries lucky_dice's roll — /team is a normal place to fire it
 		// from, so the number has to come back here too.
-		return { activated: true, payload: result.payload, blocked: result.blocked };
+		return {
+			activated: true,
+			payload: result.payload,
+			blocked: result.blocked,
+			// resurrection: the client sends the team to the re-opened challenge.
+			resurrection: result.resurrection
+		};
 	}
 };

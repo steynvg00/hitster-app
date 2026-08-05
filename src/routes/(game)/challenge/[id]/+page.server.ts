@@ -10,6 +10,8 @@ import {
 	parsePredictedPct,
 	parseRevealTargets,
 	parseLifelineDraft,
+	parseResurrectionChallengeId,
+	loadResurrectionTicket,
 	type EarnedPowerup
 } from '$lib/server/powerups';
 import { scoreAndPersistSubmission } from '$lib/server/submit';
@@ -293,9 +295,14 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 	});
 
 	// ── Timer ─────────────────────────────────────────────────────────────────
+	// timer_override_seconds (migration 0074) is THIS attempt's own clock — set to
+	// a third of the original by a Resurrection retry, NULL on every ordinary
+	// attempt. /api/auto-submit resolves the deadline the same way, so the number
+	// the team is counting down and the one the backstop enforces are the same.
+	const attemptTimerSeconds = attempt?.timer_override_seconds ?? challenge.timer_seconds ?? 0;
 	const timerEndsAt =
-		attempt && !attempt.ended_at && (challenge.timer_seconds ?? 0) > 0
-			? new Date(attempt.started_at).getTime() + (challenge.timer_seconds ?? 0) * 1000
+		attempt && !attempt.ended_at && attemptTimerSeconds > 0
+			? new Date(attempt.started_at).getTime() + attemptTimerSeconds * 1000
 			: null;
 
 	// ── Combobox pools ────────────────────────────────────────────────────────
@@ -339,7 +346,13 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 
 	let priorResult: ChallengeResult | null = null;
 
-	if (existing) {
+	// A re-opened submission (is_final = false — a Resurrection retry in progress)
+	// is deliberately NOT a prior result. The page derives its results screen from
+	// priorResult (`{#if result}` wins over every other branch), so leaving it set
+	// would show the team the score they are currently replaying and never render
+	// the form. The old answers are not lost — they are still in the row until the
+	// retry overwrites it — they are simply not what this page is about right now.
+	if (existing && existing.is_final !== false) {
 		const answersArray = existing.answers as unknown as TabAnswer[];
 		const trackDataMap = new Map<string, TrackData>(
 			(tracksResult.data ?? []).map((t) => [t.id, t as TrackData])
@@ -695,14 +708,23 @@ export const actions: Actions = {
 		const teamId = (formData.get('team_id') as string | null) ?? '';
 		if (!teamId) return fail(400, { formError: 'Missing team' });
 
-		// Guard: reject if already submitted
+		// Guard: reject if already submitted.
+		//
+		// The lock is is_final, not the row's existence. Before Resurrection those
+		// were the same thing (nothing ever unset the flag, so any row meant a
+		// finished challenge) and this guard read the row alone. A retry re-opens
+		// the row with is_final=false, which is exactly the state that must be
+		// allowed through — and the pipeline then UPDATES that row rather than
+		// inserting a second one, which the unique (challenge_id, team_id) forbids
+		// anyway. Re-submitting sets is_final=true again, so this guard re-locks the
+		// challenge: one Resurrection, one retry.
 		const { data: existingSub } = await supabase
 			.from('submissions')
 			.select('id, is_final')
 			.eq('challenge_id', params.id)
 			.eq('team_id', teamId)
 			.maybeSingle();
-		if (existingSub) {
+		if (existingSub?.is_final) {
 			return fail(409, { formError: 'Already submitted — reload to see your result' });
 		}
 
@@ -752,6 +774,13 @@ export const actions: Actions = {
 			? (cookies.get('dev_force_powerup') ?? undefined)
 			: undefined;
 
+		// An open Resurrection ticket for this (team, challenge) makes this submit a
+		// RETRY: the pipeline updates the re-opened row instead of inserting, and
+		// books the difference against the score the ticket froze at activation
+		// rather than the raw new total. Absent → an ordinary first submission, and
+		// this whole feature is invisible.
+		const resurrection = (await loadResurrectionTicket(admin, teamId, params.id)) ?? undefined;
+
 		const outcome = await scoreAndPersistSubmission(admin, {
 			challenge,
 			tabs,
@@ -759,7 +788,8 @@ export const actions: Actions = {
 			playerSetId,
 			draftByTab,
 			elapsedSeconds,
-			forcePowerupTypeId
+			forcePowerupTypeId,
+			resurrection
 		});
 
 		if (!outcome.ok) {
@@ -848,7 +878,8 @@ export const actions: Actions = {
 			...parseRevealAddress(fd),
 			...parseRevealTargets(fd),
 			...parsePredictedPct(fd),
-			...parseLifelineDraft(fd)
+			...parseLifelineDraft(fd),
+			...parseResurrectionChallengeId(fd)
 		});
 		if (!result.success) return fail(400, { activateError: result.error });
 		return {
@@ -873,7 +904,11 @@ export const actions: Actions = {
 			// the team just rolled never leaves the server, which is why the activation
 			// modal had nothing to show.
 			payload: result.payload,
-			blocked: result.blocked
+			blocked: result.blocked,
+			// resurrection: which challenge was re-opened and on what terms. The client
+			// navigates to it (it may not be the one being looked at) and states the
+			// score it is now measured against.
+			resurrection: result.resurrection
 		};
 	},
 

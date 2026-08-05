@@ -2,6 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
 import { scoreAndPersistSubmission } from '$lib/server/submit';
+import { loadResurrectionTicket } from '$lib/server/powerups';
 import { resolveBattlesForRecap } from '$lib/server/battle';
 
 export const POST: RequestHandler = async ({ locals }) => {
@@ -23,7 +24,7 @@ export const POST: RequestHandler = async ({ locals }) => {
 
 		const { data: openAttempts } = await db
 			.from('challenge_attempts')
-			.select('id, challenge_id, team_id, started_at')
+			.select('id, challenge_id, team_id, started_at, timer_override_seconds')
 			.in('challenge_id', challengeIds)
 			.is('ended_at', null);
 
@@ -62,7 +63,12 @@ export const POST: RequestHandler = async ({ locals }) => {
 		// landing at t=0.
 		const GRACE_MS = 20_000;
 		const expired = (openAttempts ?? []).filter((a) => {
-			const seconds = timerMap.get(a.challenge_id) ?? 0;
+			// This attempt's own clock wins over the challenge's when it has one
+			// (migration 0074) — a Resurrection retry runs on a third of the original
+			// and must be closed on THAT deadline, not the full one. The challenge
+			// page computes timerEndsAt from the same pair, so the countdown the team
+			// sees and the deadline enforced here cannot drift apart.
+			const seconds = a.timer_override_seconds ?? timerMap.get(a.challenge_id) ?? 0;
 			if (seconds <= 0) return false;
 			const boost = boostMap.get(`${a.team_id}|${a.challenge_id}`) ?? 0;
 			return new Date(a.started_at).getTime() + (seconds + boost) * 1000 + GRACE_MS < now;
@@ -123,13 +129,20 @@ export const POST: RequestHandler = async ({ locals }) => {
 			for (const attempt of expired) {
 				const { data: existingSub } = await db
 					.from('submissions')
-					.select('id')
+					.select('id, is_final')
 					.eq('challenge_id', attempt.challenge_id)
 					.eq('team_id', attempt.team_id)
 					.maybeSingle();
-				if (existingSub) {
-					// The team already submitted (client beat the backstop) — just
-					// make sure the attempt is closed.
+				// A FINISHED submission means the team beat the backstop — just close
+				// the attempt. A non-final row is the other case entirely: a
+				// Resurrection retry whose short clock ran out. Skipping that one (which
+				// is what a bare `if (existingSub)` did) would strand the submission
+				// unlocked forever — invisible to the recap, the podium, /play/thanks and
+				// the Eye, all of which filter on is_final — with an unscored attempt
+				// behind it. So it falls through and settles like any other expired
+				// challenge: scored on an empty draft, which under score_mode 'replace'
+				// is what makes abandoning a retry cost the original points.
+				if (existingSub?.is_final) {
 					await db.from('challenge_attempts').update({ ended_at: endedAt }).eq('id', attempt.id);
 					continue;
 				}
@@ -144,13 +157,20 @@ export const POST: RequestHandler = async ({ locals }) => {
 				}
 
 				const elapsedSeconds = Math.floor((now - new Date(attempt.started_at).getTime()) / 1000);
+				// Same lookup the interactive submit does, for the same reason: with an
+				// open ticket this is a retry, so the pipeline updates the re-opened row
+				// and books the difference. The ticket's CAS claim is what stops this and
+				// a client submit landing together from booking it twice.
+				const resurrection =
+					(await loadResurrectionTicket(db, attempt.team_id, attempt.challenge_id)) ?? undefined;
 				const outcome = await scoreAndPersistSubmission(db, {
 					challenge,
 					tabs: challengeTabs,
 					teamId: attempt.team_id,
 					playerSetId: challengeSetMap.get(attempt.challenge_id) ?? null,
 					draftByTab: {}, // empty → every field scores 0 (partial scoring handles it)
-					elapsedSeconds
+					elapsedSeconds,
+					resurrection
 				});
 
 				if (outcome.ok) {
