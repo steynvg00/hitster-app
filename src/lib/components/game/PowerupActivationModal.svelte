@@ -31,7 +31,7 @@
 
 	// One tab of the challenge, as far as a reveal picker needs to know it: which
 	// fields it has and how many answer slots. x_ray picks cells out of the tab
-	// being played.
+	// being played; free_tab picks a whole tab from this list.
 	type RevealTab = {
 		id: string;
 		label: string;
@@ -53,7 +53,7 @@
 	}: {
 		teamPowerupId: string;
 		type: PowerupType;
-		// `reveals` is a LIST because x_ray produces several at once.
+		// `reveals` is a LIST because x_ray and free_tab produce several at once.
 		// free_answer hands back a one-element list — one apply path on the page, not
 		// one per powerup.
 		onclose: (activated?: boolean, reveals?: RevealResult[]) => void;
@@ -64,8 +64,8 @@
 		variantFields?: string[];
 		tabId?: string;
 		slotIndex?: number;
-		// x_ray only: every tab of this challenge with its fields and slot count, so
-		// the picker can address the tab being played by id rather than by position.
+		// x_ray / free_tab only: every tab of this challenge with its fields and slot
+		// count, so the picker can address cells the player is not currently looking at.
 		revealTabs?: RevealTab[];
 		targetTeams?: TargetTeam[];
 		// The form action to POST to. Defaults to the held-powerup activation path
@@ -127,6 +127,10 @@
 			action: `Pick up to ${X_RAY_MAX_REVEALS} answers on this tab — each one is revealed and filled in for you.`,
 			warning: 'Requires an active challenge.'
 		},
+		free_tab: {
+			action: 'Pick one tab — every field of every track on that tab is revealed and filled in.',
+			warning: 'Requires an active challenge.'
+		},
 		double_down: {
 			action:
 				'Predict how much of the next challenge you will score. Hit your prediction and your points go up by that percentage — miss it and they go down by it.',
@@ -150,13 +154,15 @@
 	const copy = $derived(EFFECT_COPY[powerupType.id] ?? { action: powerupType.description ?? '' });
 	const needsFieldPicker = $derived(powerupType.id === 'free_answer');
 
-	// ── x_ray cell picker ─────────────────────────────────────────────────────
+	// ── x_ray / free_tab pickers ──────────────────────────────────────────────
 	//
-	// Builds a list of (tab, slot, field) addresses — the SAME address free_answer's
-	// single field + tab_id + slot_index form, five of them instead of one. Nothing
-	// is resolved client-side: the addresses go to the server and come back as
-	// answers from free_answer's resolver.
+	// Both build a list of (tab, slot, field) addresses — the SAME address
+	// free_answer's single field + tab_id + slot_index form. x_ray lets the team
+	// hand-pick up to five cells on the tab it is playing; free_tab takes every
+	// cell of one chosen tab. Neither resolves anything client-side: the addresses
+	// go to the server and come back as answers from free_answer's resolver.
 	const needsCellPicker = $derived(powerupType.id === 'x_ray');
+	const needsTabPicker = $derived(powerupType.id === 'free_tab');
 
 	// `grouping` is scored across a whole tab rather than per track, so it has no
 	// single answer — excluded from every picker, exactly as free_answer excludes it.
@@ -197,6 +203,12 @@
 		}
 	}
 
+	let selectedTabId = $state('');
+	$effect(() => {
+		if (needsTabPicker && !selectedTabId) selectedTabId = tabId ?? revealTabs[0]?.id ?? '';
+	});
+	const selectedTab = $derived(revealTabs.find((t) => t.id === selectedTabId));
+
 	// What actually gets posted. Built here so the "how many answers will this
 	// reveal" preview below and the hidden input can never disagree.
 	const revealTargets = $derived<RevealTarget[]>(
@@ -205,9 +217,17 @@
 					const [si, ...rest] = k.split(':');
 					return { tabId, slotIndex: Number(si), field: rest.join(':') };
 				})
-			: []
+			: needsTabPicker && selectedTab
+				? Array.from({ length: Math.max(selectedTab.slotCount, 1) }, (_, si) =>
+						revealable(selectedTab.fields).map((f) => ({
+							tabId: selectedTab.id,
+							slotIndex: si,
+							field: f
+						}))
+					).flat()
+				: []
 	);
-	const targetsMissing = $derived(needsCellPicker && revealTargets.length === 0);
+	const targetsMissing = $derived((needsCellPicker || needsTabPicker) && revealTargets.length === 0);
 	// double_down asks for a NUMBER rather than a choice from a list — the first
 	// powerup to do so. It travels by the same hidden-input mechanism free_answer's
 	// field picker uses; only the control differs.
@@ -275,7 +295,7 @@
 		};
 	});
 	const needsChallenge = $derived(
-		['time_boost', 'insurance', 'free_answer', 'x_ray'].includes(powerupType.id)
+		['time_boost', 'insurance', 'free_answer', 'x_ray', 'free_tab'].includes(powerupType.id)
 	);
 	const gated = $derived(needsChallenge && !currentChallengeId);
 	const targetName = $derived(
@@ -322,10 +342,10 @@
 								}
 							: undefined;
 					// One shape leaves this modal: a list. free_answer's single reveal
-					// becomes a one-element list; x_ray hands back the list the
+					// becomes a one-element list; x_ray/free_tab hand back the list the
 					// server already addressed for them (which may be SHORTER than what was
 					// asked for — unresolvable cells are skipped server-side, see the
-					// x_ray branch in powerups.ts).
+					// x_ray/free_tab branch in powerups.ts).
 					const reveals: RevealResult[] | undefined = data?.reveals?.length
 						? data.reveals
 						: reveal
@@ -483,6 +503,36 @@
 				</div>
 			{/if}
 
+			<!-- Tab picker for free_tab: one tab, every answer on it -->
+			{#if needsTabPicker}
+				<div class="mb-4">
+					<label for="free-tab-pick" class="mb-1.5 block text-xs font-semibold text-zinc-400">
+						Choose a tab to reveal
+					</label>
+					{#if revealTabs.length === 0}
+						<p class="rounded-lg bg-zinc-800 px-3 py-2 text-xs text-zinc-500">
+							No tabs available on this challenge.
+						</p>
+					{:else}
+						<select
+							id="free-tab-pick"
+							bind:value={selectedTabId}
+							class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200 outline-none focus:border-amber-500"
+						>
+							{#each revealTabs as t (t.id)}
+								<option value={t.id}>{t.label}</option>
+							{/each}
+						</select>
+						{#if revealTargets.length > 0}
+							<p class="mt-1.5 text-xs text-zinc-500">
+								Reveals {revealTargets.length}
+								{revealTargets.length === 1 ? 'answer' : 'answers'} on this tab.
+							</p>
+						{/if}
+					{/if}
+				</div>
+			{/if}
+
 			<!-- Prediction slider for double_down -->
 			{#if needsPrediction}
 				<div class="mb-4">
@@ -559,7 +609,7 @@
 							<input type="hidden" name="predicted_pct" value={predictedPct} />
 						{/if}
 						{#if revealTargets.length > 0}
-							<!-- x_ray: the whole address list in one field
+							<!-- x_ray / free_tab: the whole address list in one field
 							     (parseRevealTargets on the server). -->
 							<input type="hidden" name="reveal_targets" value={JSON.stringify(revealTargets)} />
 						{/if}

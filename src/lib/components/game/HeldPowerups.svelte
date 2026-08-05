@@ -47,11 +47,11 @@
 		variantFields?: string[];
 		tabId?: string;
 		slotIndex?: number;
-		// x_ray: the tabs a multi-reveal picker can address. Also passed straight
-		// through.
+		// x_ray / free_tab: the tabs a multi-reveal picker can address. Also passed
+		// straight through.
 		revealTabs?: Array<{ id: string; label: string; fields: string[]; slotCount: number }>;
 		setTeams?: TargetTeam[];
-		// A list because x_ray reveals several answers at once; free_answer
+		// A list because x_ray/free_tab reveal several answers at once; free_answer
 		// sends a one-element list through the same callback.
 		onactivated?: (reveals: RevealResult[]) => void;
 	} = $props();

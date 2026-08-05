@@ -96,13 +96,13 @@ export function freeAnswerRevealKey(tabId: string, slotIndex: number, field: str
 
 // ─── Multi-reveal powerups (group A) ─────────────────────────────────────────
 //
-// x_ray reveals SEVERAL answers from one activation. It is not a second reveal
-// mechanism: every single reveal it produces is one (tab, slot, field) triple
-// resolved by the same server helper free_answer uses (resolveFreeAnswerValue),
-// stored as the same team_effects row, keyed by the same freeAnswerRevealKey, and
-// pre-filled by the same applyRevealToDraft. The only difference is how many
-// addresses go in — one, or up to five.
-export const REVEAL_POWERUP_IDS = ['free_answer', 'x_ray'] as const;
+// x_ray and free_tab reveal SEVERAL answers from one activation. They are not a
+// second reveal mechanism: every single reveal they produce is one
+// (tab, slot, field) triple resolved by the same server helper free_answer uses
+// (resolveFreeAnswerValue), stored as the same team_effects row, keyed by the
+// same freeAnswerRevealKey, and pre-filled by the same applyRevealToDraft. The
+// only difference is how many addresses go in — one, up to five, or a whole tab.
+export const REVEAL_POWERUP_IDS = ['free_answer', 'x_ray', 'free_tab'] as const;
 
 export function isRevealPowerup(id: string): boolean {
 	return (REVEAL_POWERUP_IDS as readonly string[]).includes(id);
@@ -110,6 +110,14 @@ export function isRevealPowerup(id: string): boolean {
 
 /** x_ray: how many answer cells a team may pick in one activation. */
 export const X_RAY_MAX_REVEALS = 5;
+
+/**
+ * free_tab: sanity bound on how many cells one tab may hand over. Not a game
+ * rule — a real tab has at most a handful of slots × fields — but the target list
+ * arrives from the client, so the server needs an upper bound it can refuse
+ * beyond.
+ */
+export const FREE_TAB_MAX_REVEALS = 40;
 
 /** One requested reveal, as posted by the activation modal. */
 export type RevealTarget = {

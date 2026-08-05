@@ -799,7 +799,7 @@ export const actions: Actions = {
 			revealedTags: result.revealedTags,
 			revealedTabId: result.revealedTabId,
 			revealedSlotIndex: result.revealedSlotIndex,
-			// x_ray: the whole list. free_answer leaves this undefined and
+			// x_ray / free_tab: the whole list. free_answer leaves this undefined and
 			// keeps using the four singular fields above — untouched contract.
 			reveals: result.reveals,
 			blocked: result.blocked

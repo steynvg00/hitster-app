@@ -16,6 +16,7 @@ import {
 } from '$lib/server/scoring';
 import {
 	freeAnswerRevealKey,
+	FREE_TAB_MAX_REVEALS,
 	X_RAY_MAX_REVEALS,
 	type RevealResult,
 	type RevealTarget
@@ -551,7 +552,7 @@ export type ActivateOptions = {
 	// lucky_dice: the randomness source, injectable so the roll is assertable in a
 	// test (see rollDice). Defaults to Math.random in production.
 	rand?: () => number;
-	// x_ray: the (tab, slot, field) addresses to reveal. Each one is
+	// x_ray / free_tab: the (tab, slot, field) addresses to reveal. Each one is
 	// resolved by the SAME helper free_answer's single `field` goes through — this
 	// is a longer list of the same thing, not a different mechanism.
 	revealTargets?: RevealTarget[];
@@ -573,7 +574,7 @@ export function parsePredictedPct(fd: FormData): { predictedPct?: number } {
 }
 
 /**
- * Read x_ray's target list out of an activation form post. Same role
+ * Read x_ray / free_tab's target list out of an activation form post. Same role
  * as parseRevealAddress (free_answer's single tab/slot pair) and parsePredictedPct
  * (double_down's number): the form field name lives in ONE place, shared by every
  * ?/activatePowerup action.
@@ -611,7 +612,7 @@ export type ActivateResult = {
 	revealedTags?: string[]; // free_answer on `artist`: the scorer's targets, for the tag input
 	revealedTabId?: string; // free_answer: which tab the value belongs to
 	revealedSlotIndex?: number; // free_answer: which answer slot within that tab
-	// x_ray: every reveal this activation produced, each fully addressed
+	// x_ray / free_tab: every reveal this activation produced, each fully addressed
 	// exactly like free_answer's single one. free_answer keeps its four singular
 	// fields (its contract is untouched); the client normalises both into the same
 	// RevealResult[] before applying them, so there is one apply path, not two.
@@ -1407,12 +1408,15 @@ export async function activatePowerup(
 			};
 		}
 
-		case 'x_ray': {
-			// Several reveals, one at a time, through free_answer's own resolver —
-			// identical to its single-reveal case in every respect except how many
-			// addresses go in. A separate implementation is exactly how the bugs fixed
-			// in the free_answer pass (tab-1 smearing, tag chips, per-tab keying) would
-			// come back.
+		case 'x_ray':
+		case 'free_tab': {
+			// ONE branch for both: they differ only in how the target list is bounded —
+			// x_ray takes up to five cells the team hand-picks, free_tab takes every
+			// cell of a single tab. Everything after that is identical, and identical
+			// to free_answer's single-reveal case: same resolver, same row shape, same
+			// address. A separate implementation per powerup is exactly how the bugs
+			// fixed in the free_answer pass (tab-1 smearing, tag chips, per-tab keying)
+			// would come back.
 			const challengeId = options?.currentChallengeId;
 			if (!challengeId)
 				return { success: false, error: `${powerupType.name} requires an active challenge` };
@@ -1443,10 +1447,19 @@ export async function activatePowerup(
 			if (!targets.length)
 				return { success: false, error: `${powerupType.name} needs at least one answer selected` };
 
-			// The target list comes from the client, so the cap is ENFORCED here rather
-			// than trusted to the picker's own five-selection limit.
-			if (targets.length > X_RAY_MAX_REVEALS)
+			// The target list comes from the client, so the per-powerup rule is enforced
+			// here rather than trusted: x_ray is capped at five cells, free_tab must
+			// stay inside ONE tab (its whole point — a second tab would be a second
+			// free_tab) with a sanity bound on top.
+			if (typeId === 'x_ray' && targets.length > X_RAY_MAX_REVEALS)
 				return { success: false, error: `X-Ray reveals at most ${X_RAY_MAX_REVEALS} answers` };
+			if (typeId === 'free_tab') {
+				const distinctTabs = new Set(targets.map((t) => t.tabId ?? ''));
+				if (distinctTabs.size > 1)
+					return { success: false, error: 'Free Tab reveals one tab, not several' };
+				if (targets.length > FREE_TAB_MAX_REVEALS)
+					return { success: false, error: 'That is more answers than one tab can have' };
+			}
 
 			// Resolve each address through free_answer's resolver — the only place that
 			// knows how a (tab, slot, field) becomes an answer.

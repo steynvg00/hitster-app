@@ -363,7 +363,7 @@
 			: 0
 	);
 
-	// The tabs a multi-reveal powerup (x_ray) can address, labelled the
+	// The tabs a multi-reveal powerup (x_ray, free_tab) can address, labelled the
 	// way the tab strip labels them so "Tab 2" in the picker is the "Tab 2" the
 	// player clicks. `fields` is each tab's RESOLVED field set (the same
 	// resolveTabFields output the reveal resolver validates against), so a cell the
@@ -573,7 +573,8 @@
 		return true;
 	}
 
-	// Every reveal — free_answer's single one, x_ray's five — arrives here as a list and is applied one at a time by the SAME two steps:
+	// Every reveal — free_answer's single one, x_ray's five, free_tab's whole tab —
+	// arrives here as a list and is applied one at a time by the SAME two steps:
 	// key the badge on (tab, slot, field), then pre-fill that one slot. The loop is
 	// the only difference between one reveal and many; there is no second apply path.
 	function onPowerupActivated(reveals: RevealResult[]) {
