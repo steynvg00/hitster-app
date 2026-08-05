@@ -32,7 +32,7 @@ import {
 	type ClipRaw
 } from '$lib/server/scoring.js';
 import { thresholdOfFields } from '$lib/threshold';
-import { freeAnswerRevealKey } from '$lib/powerups-meta';
+import { freeAnswerRevealKey, type EyeTeam } from '$lib/powerups-meta';
 
 /**
  * The (tab, slot) a free_answer activation is addressed to, as posted by the
@@ -580,6 +580,13 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 	// and stay up for the rest of the challenge. Only the MASK was ever stored —
 	// there is no unmasked answer in this row to leak.
 	const lifelineHints: Record<string, string> = {};
+	// all_seeing_eye: the finished teams' answers, read back from the stored
+	// (consumed) team_effects row so the panel survives a refresh — same shape as
+	// lifeline above. What was stored is ALREADY STRIPPED (stripAnswersForEye ran
+	// once, at activation), so this path only copies a payload that never contained
+	// scored / total / breakdown / matched_source_track_id. There is deliberately
+	// no re-derivation from submissions here: one strip, one place.
+	let allSeeingEye: EyeTeam[] = [];
 	if (activeSetId && locals.teamId) {
 		activeEffects = await loadActiveEffects(admin, locals.teamId, activeSetId);
 
@@ -632,6 +639,21 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 				}
 			}
 		}
+
+		// Eye rows are written already-consumed too, so the same query shape applies.
+		// A team that somehow opened two Eyes on one challenge simply keeps the last
+		// snapshot rather than merging two views of the same teams.
+		const { data: eyeRows } = await admin
+			.from('team_effects')
+			.select('payload')
+			.eq('team_id', locals.teamId)
+			.eq('effect_type', 'all_seeing_eye')
+			.not('consumed_at', 'is', null);
+		for (const r of eyeRows ?? []) {
+			const p = (r.payload ?? {}) as Record<string, unknown>;
+			if (p.challenge_id !== params.id || !Array.isArray(p.teams)) continue;
+			allSeeingEye = p.teams as EyeTeam[];
+		}
 	}
 
 	return {
@@ -657,6 +679,7 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		activeEffects,
 		freeAnswerReveal,
 		lifelineHints,
+		allSeeingEye,
 		setTeams
 	};
 };
@@ -841,6 +864,10 @@ export const actions: Actions = {
 			// page cannot feed them into the reveal pre-fill path by accident — a hint
 			// is read-only text, and the team still types the answer itself.
 			lifelineHints: result.lifelineHints,
+			// all_seeing_eye: the finished teams' answers, already stripped server-side.
+			// Its own key for the same reason lifeline has one — a different thing from
+			// a reveal, rendered by a different surface.
+			allSeeingEye: result.allSeeingEye,
 			// The team_effects payload the activation wrote. lucky_dice's roll travels
 			// in here (value / dice_min / dice_max / new_score) — without it the number
 			// the team just rolled never leaves the server, which is why the activation
