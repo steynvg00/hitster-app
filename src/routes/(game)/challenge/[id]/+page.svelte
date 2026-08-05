@@ -154,10 +154,70 @@
 		yearTouched[`${ti}:${si}`] = true;
 	}
 
+	/** The numeric year this tab/slot carried in the saved draft, if any. */
+	function draftedYearFor(tabPosition: number, si: number): number | null {
+		const raw = (savedDraft[String(tabPosition)] ?? [])[si]?.fieldValues?.['year'] ?? '';
+		if (!raw.trim()) return null;
+		const n = parseInt(raw, 10);
+		return isNaN(n) ? null : n;
+	}
+
+	/**
+	 * The year a free_answer reveal handed this tab/slot, if any. Read from the
+	 * SERVER's reveal map — the exact data that renders the 💡 badge — so the badge
+	 * and the input cannot disagree about what was revealed. Only meaningful while
+	 * the year renders as a number input; in open_text mode a revealed year lives in
+	 * allDrafts like any other text field and is persisted with it.
+	 */
+	function revealedYearFor(ti: number, si: number): number | null {
+		if (!yearIsNumericMode) return null;
+		const tabId = data.tabs[ti]?.id;
+		if (!tabId) return null;
+		const raw = data.freeAnswerReveal[freeAnswerRevealKey(tabId, si, 'year')];
+		if (!raw) return null;
+		const n = parseInt(raw, 10);
+		return isNaN(n) ? null : n;
+	}
+
 	/** The single rule for "this tab/slot's year counts as answered". */
 	function yearIsAnswered(ti: number, tabPosition: number, si: number): boolean {
-		return wasYearDrafted(tabPosition, si) || yearTouched[`${ti}:${si}`] === true;
+		return (
+			wasYearDrafted(tabPosition, si) ||
+			yearTouched[`${ti}:${si}`] === true ||
+			// A revealed year is answered by definition — the team was given it. This
+			// keeps the dot correct even on a device whose localStorage never held the
+			// draft, from the same server data the badge uses.
+			revealedYearFor(ti, si) !== null
+		);
 	}
+
+	// Re-assert the year AFTER hydration.
+	//
+	// The server has no localStorage, so the SSR'd markup always carries YEAR_SEED.
+	// That is below YearInput's min, so the browser clamps the rendered input and
+	// Svelte's binding writes the clamped number back into state while hydrating
+	// (see YEAR_SEED). That read-back happens AFTER this component's initialiser and
+	// therefore silently overwrote whatever the initialiser had restored — a revealed
+	// year, or a year the team set before reloading. The badge survived a refresh
+	// because it is server-rendered from server data; the slider did not.
+	//
+	// onMount runs once the children have hydrated, which is the first moment a write
+	// here sticks. Deliberately assigns values only: nothing is marked touched, so a
+	// tab with no draft and no reveal keeps its untouched state and its "empty" dot.
+	onMount(() => {
+		for (let ti = 0; ti < data.tabs.length; ti++) {
+			const tab = data.tabs[ti];
+			const slotCount = Math.max(tab.sourceTracks.length, 1);
+			for (let si = 0; si < slotCount; si++) {
+				// The team's own draft wins over the reveal: they may have moved the
+				// slider off the revealed year, and that is still their answer.
+				const authoritative = draftedYearFor(tab.position, si) ?? revealedYearFor(ti, si);
+				if (authoritative !== null && allYearValues[ti]?.[si] !== authoritative) {
+					allYearValues[ti][si] = authoritative;
+				}
+			}
+		}
+	});
 
 	// ── Multi-artist tags: per-tab, per-slot (C1 stuk 2) ──────────────────────
 	// Replaces the old collab UI, which joined its inputs with ' & '. That format
