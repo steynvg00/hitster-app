@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { supabaseBrowser } from '$lib/supabase-browser';
 	import PowerupActivationModal from './PowerupActivationModal.svelte';
-	import type { RevealResult } from '$lib/powerups-meta';
+	import type { LifelineHint, RevealResult } from '$lib/powerups-meta';
 
 	type PowerupType = {
 		id: string;
@@ -37,7 +37,9 @@
 		slotIndex = 0,
 		revealTabs = [],
 		setTeams = [],
-		onactivated
+		draftSnapshot,
+		onactivated,
+		onlifeline
 	}: {
 		teamId: string;
 		setId: string;
@@ -51,9 +53,18 @@
 		// straight through.
 		revealTabs?: Array<{ id: string; label: string; fields: string[]; slotCount: number }>;
 		setTeams?: TargetTeam[];
+		// lifeline only: reads the challenge page's live draft at activation time.
+		// Passed straight through — see PowerupActivationModal for why it is a
+		// function rather than a value.
+		draftSnapshot?: () => string;
 		// A list because x_ray/free_tab reveal several answers at once; free_answer
 		// sends a one-element list through the same callback.
 		onactivated?: (reveals: RevealResult[]) => void;
+		// lifeline's masked hints. A SEPARATE callback from onactivated on purpose:
+		// reveals get written into the draft, hints must not be, and keeping the two
+		// channels apart is what makes mixing them up impossible rather than merely
+		// unlikely.
+		onlifeline?: (hints: LifelineHint[]) => void;
 	} = $props();
 
 	// The teams a caster can attack — every team in the set except their own.
@@ -66,9 +77,10 @@
 		selectedPowerup = p;
 	}
 
-	function onModalClose(activated?: boolean, reveals?: RevealResult[]) {
+	function onModalClose(activated?: boolean, reveals?: RevealResult[], hints?: LifelineHint[]) {
 		selectedPowerup = null;
 		if (activated && reveals?.length) onactivated?.(reveals);
+		if (activated && hints?.length) onlifeline?.(hints);
 	}
 
 	onMount(() => {
@@ -141,5 +153,6 @@
 		{slotIndex}
 		{revealTabs}
 		{targetTeams}
+		{draftSnapshot}
 	/>
 {/if}

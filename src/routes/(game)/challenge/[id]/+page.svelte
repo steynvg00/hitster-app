@@ -11,7 +11,7 @@
 	import ArtistTagInput from '$lib/components/ui/ArtistTagInput.svelte';
 	import { parseArtistTags, joinArtistTags } from '$lib/artist-tags';
 	import { thresholdOfFields } from '$lib/threshold';
-	import { freeAnswerRevealKey, type RevealResult } from '$lib/powerups-meta';
+	import { freeAnswerRevealKey, type LifelineHint, type RevealResult } from '$lib/powerups-meta';
 	import { supabaseBrowser } from '$lib/supabase-browser';
 	import Waveform from '$lib/components/ui/Waveform.svelte';
 	import BonusTracker from '$lib/components/game/BonusTracker.svelte';
@@ -469,6 +469,41 @@
 	// ── Powerup state ─────────────────────────────────────────────────────────
 	let timerBoostMs = $state(0);
 	let freeAnswerReveals = $state<Record<string, string>>({ ...data.freeAnswerReveal });
+
+	// ── Lifeline hints ────────────────────────────────────────────────────────
+	//
+	// A hint is NOT a reveal. It is a masked string ("R______ O_ R______") for a
+	// field the team has not got right yet, rendered read-only beside that field —
+	// the team still types the answer itself. So it deliberately does NOT go
+	// through onPowerupActivated / applyRevealToDraft: nothing is written into the
+	// draft, no input is touched, and the tab fill dots keep reading the team's own
+	// answers rather than lighting up because a powerup fired.
+	//
+	// Keyed by the SAME (tab, slot, field) triple reveals use, so a hint sits next
+	// to the field it belongs to on the tab it belongs to. Seeded from the server
+	// (rebuilt from the stored lifeline row on every load), which is what makes it
+	// survive a refresh and stay up for the rest of the challenge.
+	// Two layers rather than one seeded snapshot: the server map stays live (a
+	// reload or invalidation re-supplies it) and hints added during this session
+	// layer on top. Same visible behaviour as freeAnswerReveals' seeded copy above,
+	// without capturing `data` at init.
+	let addedLifelineHints = $state<Record<string, string>>({});
+	const lifelineHints = $derived({ ...(data.lifelineHints ?? {}), ...addedLifelineHints });
+
+	function onLifelineHints(hints: LifelineHint[]) {
+		const added: Record<string, string> = {};
+		for (const h of hints) {
+			added[freeAnswerRevealKey(h.tabId, h.slotIndex, h.field)] = h.mask;
+		}
+		addedLifelineHints = { ...addedLifelineHints, ...added };
+	}
+
+	/** The masked hint for one field of the active tab, if Lifeline produced one. */
+	function lifelineFor(field: string, slot: number): string | undefined {
+		const id = activeTab?.id;
+		if (!id) return undefined;
+		return lifelineHints[freeAnswerRevealKey(id, slot, field)];
+	}
 
 	// ── Incoming timer attacks (stuk 2: freeze + time_drain) ───────────────────
 	// Both are payload-driven marker rows on the SAME realtime channel/convention
@@ -1630,7 +1665,9 @@
 					slotIndex={activeSlotEffective}
 					{revealTabs}
 					setTeams={data.setTeams}
+					draftSnapshot={() => JSON.stringify(buildAnswersForSubmit())}
 					onactivated={onPowerupActivated}
+					onlifeline={onLifelineHints}
 				/>
 				{#if xrayError}
 					<!-- A refused X-Ray reveal (no track behind this tab, no open attempt, …).
@@ -1927,6 +1964,18 @@
 										<span>Revealed: {revealFor(String(field), slotIdx)}</span>
 									</div>
 								{/if}
+								<!-- Lifeline hint: read-only, never an input, never written into the
+								     draft. Suppressed when this cell has a full reveal — the answer
+								     beats a mask of it. Cyan rather than the reveal's amber so the
+								     two never read as the same thing. -->
+								{#if lifelineFor(String(field), slotIdx) && !revealFor(String(field), slotIdx)}
+									<div class="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-cyan-300">
+										<span>🆘</span>
+										<span class="font-mono tracking-[0.15em]"
+											>{lifelineFor(String(field), slotIdx)}</span
+										>
+									</div>
+								{/if}
 
 								{#if field === 'artist' && artistIsTagged}
 									<ArtistTagInput
@@ -2042,6 +2091,13 @@
 								<div class="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-amber-300">
 									<span>💡</span>
 									<span>Revealed: {revealFor(String(field), 0)}</span>
+								</div>
+							{/if}
+							<!-- Same read-only Lifeline hint as the multi-slot layout, always slot 0. -->
+							{#if lifelineFor(String(field), 0) && !revealFor(String(field), 0)}
+								<div class="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-cyan-300">
+									<span>🆘</span>
+									<span class="font-mono tracking-[0.15em]">{lifelineFor(String(field), 0)}</span>
 								</div>
 							{/if}
 

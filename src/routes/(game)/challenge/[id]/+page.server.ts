@@ -9,6 +9,7 @@ import {
 	getTeamsWithActiveTimedAttempt,
 	parsePredictedPct,
 	parseRevealTargets,
+	parseLifelineDraft,
 	type EarnedPowerup
 } from '$lib/server/powerups';
 import { scoreAndPersistSubmission } from '$lib/server/submit';
@@ -573,6 +574,12 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 	// Active powerup effects + free-answer reveals
 	let activeEffects: Awaited<ReturnType<typeof loadActiveEffects>> = [];
 	let freeAnswerReveal: Record<string, string> = {};
+	// lifeline: masked hints, keyed the same way reveals are so the page can look
+	// one up beside the field it belongs to. Rebuilt from the stored (consumed)
+	// team_effects row on every load, which is what makes a hint survive a refresh
+	// and stay up for the rest of the challenge. Only the MASK was ever stored —
+	// there is no unmasked answer in this row to leak.
+	const lifelineHints: Record<string, string> = {};
 	if (activeSetId && locals.teamId) {
 		activeEffects = await loadActiveEffects(admin, locals.teamId, activeSetId);
 
@@ -600,6 +607,31 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 				}
 			}
 		}
+
+		// Lifeline rows are written already-consumed (like free_answer's), so the
+		// same consumed-row query shape applies. One row per activation, each
+		// carrying its whole hint list; a team that somehow held two Lifelines and
+		// spent both simply merges — a later hint for the same cell overwrites an
+		// identical earlier one.
+		const { data: lifelineRows } = await admin
+			.from('team_effects')
+			.select('payload')
+			.eq('team_id', locals.teamId)
+			.eq('effect_type', 'lifeline')
+			.not('consumed_at', 'is', null);
+		for (const r of lifelineRows ?? []) {
+			const p = (r.payload ?? {}) as Record<string, unknown>;
+			if (p.challenge_id !== params.id || !Array.isArray(p.hints)) continue;
+			for (const raw of p.hints) {
+				const h = (raw ?? {}) as Record<string, unknown>;
+				if (typeof h.field !== 'string' || typeof h.mask !== 'string') continue;
+				const hintTabId = typeof h.tab_id === 'string' ? h.tab_id : tabs[0]?.id;
+				const hintSlot = typeof h.slot_index === 'number' ? h.slot_index : 0;
+				if (hintTabId) {
+					lifelineHints[freeAnswerRevealKey(hintTabId, hintSlot, h.field)] = h.mask;
+				}
+			}
+		}
 	}
 
 	return {
@@ -624,6 +656,7 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		heldPowerups,
 		activeEffects,
 		freeAnswerReveal,
+		lifelineHints,
 		setTeams
 	};
 };
@@ -791,7 +824,8 @@ export const actions: Actions = {
 			targetTeamId,
 			...parseRevealAddress(fd),
 			...parseRevealTargets(fd),
-			...parsePredictedPct(fd)
+			...parsePredictedPct(fd),
+			...parseLifelineDraft(fd)
 		});
 		if (!result.success) return fail(400, { activateError: result.error });
 		return {
@@ -803,6 +837,10 @@ export const actions: Actions = {
 			// x_ray / free_tab: the whole list. free_answer leaves this undefined and
 			// keeps using the four singular fields above — untouched contract.
 			reveals: result.reveals,
+			// lifeline: masked hints, NOT reveals. Kept in its own key precisely so the
+			// page cannot feed them into the reveal pre-fill path by accident — a hint
+			// is read-only text, and the team still types the answer itself.
+			lifelineHints: result.lifelineHints,
 			// The team_effects payload the activation wrote. lucky_dice's roll travels
 			// in here (value / dice_min / dice_max / new_score) — without it the number
 			// the team just rolled never leaves the server, which is why the activation

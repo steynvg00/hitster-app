@@ -741,6 +741,54 @@ export function scoreField(
 	return { score: correct ? maxPoints : 0 };
 }
 
+/**
+ * Does this answer already earn the field's FULL points?
+ *
+ * The one mid-challenge correctness question in the system, asked by the
+ * `lifeline` powerup: a hint is only produced for a cell that is empty or wrong,
+ * so something has to decide "wrong" BEFORE the team submits.
+ *
+ * It answers that by running scoreField — the actual scorer — rather than
+ * re-implementing a comparison. A second notion of "correct" that only lifeline
+ * used would be free to drift from the one that awards the points, and the team
+ * would get a hint on a field it had already nailed (or, worse, none on a field
+ * it had not).
+ *
+ * FULL points, not "any points", is the bar. A year one off scores 50% and a
+ * 65%-similar title scores 50%; both are answers the team should still get a
+ * hint for, because both are wrong. So partial credit counts as wrong here.
+ *
+ * The artist field is the one place `score` alone will not do: scoreField folds
+ * bonus-artist points into it, so a team that missed one of two main artists but
+ * guessed a bonus artist could reach maxPoints without having the answer right.
+ * Subtracting bonusScore leaves exactly scoreArtistField's mainScore, which is
+ * the part measured against maxPoints.
+ */
+export function fieldIsFullyCorrect(
+	field: AnswerField,
+	submitted: string,
+	track: TrackData,
+	mode: InputMode,
+	maxPoints: number,
+	artistBonus: ArtistBonusConfig = {}
+): boolean {
+	// grouping has no per-track answer (scoreTabGrouping scores it across the tab),
+	// so there is nothing to be right about at this granularity.
+	if (field === 'grouping') return false;
+	// Blank is never correct, whatever the scorer would make of it — and the
+	// unscorable-field guards inside scoreField already return 0 for a blank, so
+	// this is belt-and-braces rather than the load-bearing check.
+	if (!submitted.trim()) return false;
+	// A field worth 0 points cannot be "fully correct" in any meaningful sense;
+	// without this, score(0) >= max(0) would call every empty-ish answer correct
+	// and silently suppress the hint.
+	if (maxPoints <= 0) return false;
+
+	const r = scoreField(field, submitted, track, mode, maxPoints, artistBonus);
+	const mainScore = r.score - (r.bonusScore ?? 0);
+	return mainScore >= maxPoints;
+}
+
 // ─── Field results for a single slot ─────────────────────────────────────────
 
 export function buildFieldResults(
