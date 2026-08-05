@@ -32,7 +32,12 @@ import {
 	X_RAY_DEFAULT_BUDGET,
 	POWER_SPIN_DEFAULT_TIER_S_CHANCE,
 	SPIN_TIERS,
+	EYE_DEFAULT_SHOW_SCORES,
 	isSpinExcluded,
+	type EyeSlot,
+	type EyeTab,
+	type EyeTeam,
+	type AllSeeingEyeData,
 	type PowerupTier,
 	type LifelineHint,
 	type RevealResult,
@@ -185,6 +190,179 @@ export function resolveXrayBudget(cfg: PowerupConfigV2): number {
 		return X_RAY_DEFAULT_BUDGET;
 	}
 	return raw;
+}
+
+// ─── all_seeing_eye: the strip ───────────────────────────────────────────────
+//
+// THE security boundary of this powerup. Everything the Eye ever shows passes
+// through stripAnswersForEye(), and it runs exactly once — at activation, before
+// anything is stored — so the already-stripped snapshot is what lands in
+// team_effects and what the page reads back on reload. There is no second place
+// where a raw submission is turned into Eye data, and therefore no second place
+// that can leak.
+//
+// A stored submission holds two halves:
+//
+//   WRITTEN by the team    field_values, fragments          → shown
+//   DECIDED by the scorer  scored, total, breakdown,
+//                          matched_source_track_id,
+//                          (and submissions.status)         → never leaves the server
+//
+// Every item in the second column answers "was this right?". The Eye exists to
+// show other teams' answers WITHOUT answering that, so all of it is dropped.
+// matched_source_track_id is the sharpest: it is the correct track's uuid, one
+// join away from the correct artist/title/year.
+//
+// Written as an ALLOWLIST — the output object is constructed field by field from
+// a small set of names — rather than by deleting known-bad keys. A delete-list
+// silently passes anything added to the submission shape later; this refuses it
+// by default. The shape of the result is fixed by EyeTab/EyeSlot in
+// $lib/powerups-meta, which is the contract the client renders against.
+
+/** Coerce one field value to a display string. Values are stored as string | number. */
+function eyeFieldValue(v: unknown): string | null {
+	if (typeof v === 'string') return v;
+	if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+	return null;
+}
+
+/** field_values → a plain string map, dropping anything that isn't a scalar value. */
+function eyeFieldValues(raw: unknown): Record<string, string> {
+	const out: Record<string, string> = {};
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+	for (const [field, value] of Object.entries(raw as Record<string, unknown>)) {
+		const v = eyeFieldValue(value);
+		if (v !== null) out[field] = v;
+	}
+	return out;
+}
+
+/**
+ * Strip one submission's `answers` down to what the Eye may show.
+ *
+ * Handles BOTH stored shapes, because the column has carried two over its life
+ * (see the note on AnswerArrayEntry in $lib/types): the current TabAnswer[] with
+ * `source_answers`, and the pre-0036 flat entries with a top-level `field_values`
+ * and `track_id`. The legacy `track_id` is the same leak as
+ * `matched_source_track_id` and is dropped by the same allowlist — neither is
+ * ever read, so neither can be copied.
+ *
+ * Anything unrecognisable yields an empty list rather than a partial copy: for a
+ * strip, failing closed is the only acceptable direction.
+ */
+export function stripAnswersForEye(answers: unknown): EyeTab[] {
+	if (!Array.isArray(answers)) return [];
+
+	const tabs: EyeTab[] = [];
+	answers.forEach((rawTab, index) => {
+		if (!rawTab || typeof rawTab !== 'object') return;
+		const tab = rawTab as Record<string, unknown>;
+
+		const tabPosition = typeof tab.tab_position === 'number' ? tab.tab_position : index;
+
+		// Current shape: one entry per tab, holding a list of per-slot answers.
+		if (Array.isArray(tab.source_answers)) {
+			const slots: EyeSlot[] = [];
+			tab.source_answers.forEach((rawSlot, slotIdx) => {
+				if (!rawSlot || typeof rawSlot !== 'object') return;
+				const slot = rawSlot as Record<string, unknown>;
+				const fieldValues = eyeFieldValues(slot.field_values);
+				const fragments = Array.isArray(slot.fragments)
+					? slot.fragments.filter((n): n is number => typeof n === 'number')
+					: undefined;
+				slots.push({
+					slotIndex: typeof slot.slot_index === 'number' ? slot.slot_index : slotIdx,
+					fieldValues,
+					...(fragments && fragments.length ? { fragments } : {})
+				});
+			});
+			tabs.push({ tabPosition, slots });
+			return;
+		}
+
+		// Legacy shape: field_values sits directly on the entry, one slot per tab.
+		if (tab.field_values && typeof tab.field_values === 'object') {
+			tabs.push({
+				tabPosition,
+				slots: [{ slotIndex: 0, fieldValues: eyeFieldValues(tab.field_values) }]
+			});
+		}
+	});
+	return tabs;
+}
+
+/**
+ * Whether the Eye's panel also shows each finished team's total score.
+ *
+ * Read from powerup_config.types.all_seeing_eye.show_scores, the same per-type
+ * override map the dice range and reveal budget live in. Anything that is not
+ * EXACTLY boolean true is false — a truthy string or a 1 must not switch on a
+ * correctness signal by accident, which is the direction that matters here.
+ */
+export function resolveEyeShowScores(cfg: PowerupConfigV2): boolean {
+	return cfg.types?.all_seeing_eye?.show_scores === true ? true : EYE_DEFAULT_SHOW_SCORES;
+}
+
+/**
+ * Every OTHER team that has already finished this challenge, with their answers
+ * stripped for display.
+ *
+ * "Finished" is submissions.is_final = true — set in exactly one place
+ * (scoreAndPersistSubmission, src/lib/server/submit.ts) and never unset, which is
+ * why it is the honest definition of done for both the normal and the
+ * auto-submit path.
+ *
+ * Reads with the ADMIN client, which is what the caller always passes: this is
+ * another team's data, and the anon browser client cannot see it — nor should it
+ * ever be asked to. Nothing here runs in a browser.
+ *
+ * An empty list is a legitimate answer and means "nobody has finished yet"; the
+ * activation branch turns that into a refusal rather than an empty panel.
+ *
+ * SELECTs only, no writes — exported so a verification run can drive the real
+ * function against the real database.
+ */
+export async function resolveAllSeeingEye(
+	supabase: SupabaseClient<Database>,
+	challengeId: string,
+	ownTeamId: string,
+	showScores: boolean
+): Promise<EyeTeam[]> {
+	// `score` is selected unconditionally because the strip below decides whether
+	// it is used; keeping the query shape constant means the decision lives in ONE
+	// readable place instead of being split between a query and a mapper.
+	const { data: subs } = await supabase
+		.from('submissions')
+		.select('team_id, answers, score')
+		.eq('challenge_id', challengeId)
+		.eq('is_final', true)
+		.neq('team_id', ownTeamId);
+
+	if (!subs?.length) return [];
+
+	const teamIds = [...new Set(subs.map((s) => s.team_id))];
+	const { data: teamRows } = await supabase
+		.from('teams')
+		.select('id, display_name, color')
+		.in('id', teamIds);
+	const teamById = new Map((teamRows ?? []).map((t) => [t.id, t]));
+
+	const out: EyeTeam[] = [];
+	for (const sub of subs) {
+		const team = teamById.get(sub.team_id);
+		out.push({
+			teamId: sub.team_id,
+			displayName: team?.display_name ?? 'Unknown team',
+			color: team?.color ?? 'black',
+			tabs: stripAnswersForEye(sub.answers),
+			// Omitted, not zeroed, when the switch is off — a client that ignores the
+			// flag still finds no number to render.
+			...(showScores && typeof sub.score === 'number' ? { score: sub.score } : {})
+		});
+	}
+	// Stable order so the panel does not reshuffle between reloads.
+	out.sort((a, b) => a.displayName.localeCompare(b.displayName));
+	return out;
 }
 
 // ─── power_spin: the roll ────────────────────────────────────────────────────
@@ -830,6 +1008,12 @@ export type ActivateResult = {
 	// flatten or reinterpret it; that is the whole point of routing through
 	// materializeAward.
 	spun?: EarnedPowerup;
+	// all_seeing_eye: every finished team's answers, ALREADY STRIPPED by
+	// stripAnswersForEye. This is the only Eye data that ever crosses to a client,
+	// and its type (AllSeeingEyeData) has no room for a score breakdown, a per-field
+	// verdict or a matched track id — so the contract is enforced by shape, not by
+	// remembering to delete things.
+	allSeeingEye?: AllSeeingEyeData;
 };
 
 /**
@@ -2322,6 +2506,68 @@ export async function activatePowerup(
 				.eq('id', teamPowerupId);
 
 			return { success: true, reveals };
+		}
+
+		case 'all_seeing_eye': {
+			// The first powerup that READS another team's play rather than acting on
+			// it. Two guards, then a stripped snapshot.
+			const challengeId = options?.currentChallengeId;
+			if (!challengeId)
+				return { success: false, error: `${powerupType.name} requires an active challenge` };
+
+			// ── The refusal ────────────────────────────────────────────────────────
+			// If no other team has finished this challenge, the Eye would open on an
+			// empty room. Refuse and leave the powerup HELD — no team_effects row, no
+			// status change, nothing consumed. Same posture as lifeline's time gate and
+			// free_answer's challenge gate: a powerup must never be burned by a click
+			// that showed nothing. The team can look again in a minute, which is the
+			// timing skill this powerup is built around.
+			//
+			// Note the ordering: resolveAllSeeingEye() runs BEFORE anything is written,
+			// so the refusal path touches no state at all.
+			const showScores = resolveEyeShowScores(
+				parseConfig((gameSet as unknown as { powerup_config?: unknown }).powerup_config)
+			);
+			const eyeTeams = await resolveAllSeeingEye(supabase, challengeId, tpu.team_id, showScores);
+			if (!eyeTeams.length)
+				return {
+					success: false,
+					error:
+						'No other team has finished this challenge yet — the Eye sees nothing. Try again later.'
+				};
+
+			const eyeData: AllSeeingEyeData = { challengeId, teams: eyeTeams };
+
+			// Written ALREADY CONSUMED, exactly like lifeline's hint row and
+			// free_answer's reveal row: this is a snapshot, not an effect that rides
+			// into scoring. Two independent things keep it out of the scorer — consumed
+			// rows are invisible to loadActiveEffects, and deriveEffectModifiers has no
+			// 'all_seeing_eye' case — so the Eye cannot move a single point.
+			//
+			// What the row is FOR is the reload: the challenge page reads it back on
+			// load, which is what makes the panel survive a refresh. And because what
+			// is stored is the already-stripped snapshot, the read-back path has
+			// nothing dangerous to hand out either — the strip happened once, here.
+			//
+			// The snapshot is deliberately FROZEN at this moment: "teams that have
+			// already finished" is what was bought. A team that submits later does not
+			// appear, which is also what makes WHEN you open the Eye a real decision.
+			await supabase.from('team_effects').insert({
+				team_id: tpu.team_id,
+				set_id: tpu.set_id,
+				effect_type: 'all_seeing_eye',
+				payload: { challenge_id: challengeId, teams: eyeTeams },
+				consumed_at: new Date().toISOString(),
+				consumed_challenge_id: challengeId,
+				source_team_powerup_id: teamPowerupId
+			} as never);
+
+			await supabase
+				.from('team_powerups')
+				.update({ status: 'consumed' } as never)
+				.eq('id', teamPowerupId);
+
+			return { success: true, allSeeingEye: eyeData };
 		}
 
 		case 'lifeline': {

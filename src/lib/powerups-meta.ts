@@ -296,3 +296,57 @@ export function isSpinExcluded(id: string): boolean {
  * 0.15 = the designed 85% A / 15% S split.
  */
 export const POWER_SPIN_DEFAULT_TIER_S_CHANCE = 0.15;
+
+// ─── all_seeing_eye: the wire shape ──────────────────────────────────────────
+//
+// What the Eye is allowed to show, and nothing else. These three types ARE the
+// security contract: the server builds exactly this and the client renders
+// exactly this, so anything absent here cannot reach a browser.
+//
+// A stored submission carries two halves — what the team WROTE and what the
+// scorer DECIDED. The written half is `field_values` (plus `fragments`, which is
+// also player input: which fragment numbers they assigned). The decided half is
+// `scored`, `total`, `breakdown` and `matched_source_track_id`, joined by the
+// `submissions.status` column alongside. Every item in that second list answers
+// "was this right?", which is the one question the Eye must never answer —
+// reading other teams' answers WITHOUT being told which to trust is the whole
+// mechanic. `matched_source_track_id` is the sharpest of them: it is the uuid of
+// the correct track, straight off a join.
+//
+// stripAnswersForEye() (src/lib/server/powerups.ts) is built as an ALLOWLIST
+// against these types rather than as a delete-list, so a field added to the
+// submission shape later is excluded by default instead of silently riding along.
+export type EyeSlot = {
+	slotIndex: number;
+	/** Only ever the team's own typed values. Never a score, never a verdict. */
+	fieldValues: Record<string, string>;
+	/** fragments variant only: which fragment numbers the team assigned. Input, not scoring. */
+	fragments?: number[];
+};
+
+export type EyeTab = {
+	tabPosition: number;
+	slots: EyeSlot[];
+};
+
+export type EyeTeam = {
+	teamId: string;
+	displayName: string;
+	color: string;
+	tabs: EyeTab[];
+	/**
+	 * Present ONLY when powerup_config.types.all_seeing_eye.show_scores is exactly
+	 * true. Left off entirely otherwise — not zeroed, not nulled — so a client that
+	 * ignores the flag still cannot find a number to render.
+	 */
+	score?: number;
+};
+
+/** The whole payload one activation produces. */
+export type AllSeeingEyeData = {
+	challengeId: string;
+	teams: EyeTeam[];
+};
+
+/** Default for the show-scores switch. False for the reason given on EyeTeam.score. */
+export const EYE_DEFAULT_SHOW_SCORES = false;
