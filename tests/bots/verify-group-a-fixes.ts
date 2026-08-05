@@ -22,6 +22,14 @@
 // from a small mutable world. It is not a Postgres emulator — the CAS filter, for
 // instance, is asserted structurally (the update carries
 // payload->>reveals_remaining = the value that was read) rather than raced.
+//
+// It DOES validate sort columns, and that is not decoration. The first version of
+// this fake treated .order() as a no-op returning `this`, so spendXrayReveal's
+// `.order('created_at')` sailed through all 34 checks — while against the real
+// database team_effects has no created_at (it has activated_at), PostgREST
+// rejected the entire query, and every reveal came back "No X-Ray running" with a
+// budget of 5 sitting right there in the banner. A fake that accepts any column
+// name cannot catch a wrong column name, so the real column lists live below.
 
 import { activatePowerup, spendXrayReveal } from '../../src/lib/server/powerups';
 
@@ -45,12 +53,44 @@ type Op = {
 	cols?: string;
 	values?: Record<string, unknown> | Record<string, unknown>[];
 	filters: Record<string, unknown>;
+	orderBy?: string;
 };
 
 type Responder = (op: Op) => unknown;
 
+// Real column lists, copied from the migrations that create these tables
+// (0044_powerups_runtime.sql + 0047_powerups_p3b.sql). Anything sorted or filtered
+// by a name outside this list is answered the way PostgREST answers it: an error,
+// not an empty result.
+const TABLE_COLUMNS: Record<string, string[]> = {
+	team_effects: [
+		'id',
+		'team_id',
+		'set_id',
+		'effect_type',
+		'payload',
+		'activated_at',
+		'expires_at',
+		'consumed_at',
+		'consumed_challenge_id',
+		'source_team_powerup_id'
+	],
+	team_powerups: [
+		'id',
+		'team_id',
+		'set_id',
+		'powerup_type_id',
+		'status',
+		'granted_at',
+		'granted_from_challenge_id'
+	],
+	teams: ['id', 'color', 'label', 'display_name', 'score', 'current_streak', 'last_threshold_crossed'],
+	challenge_attempts: ['id', 'challenge_id', 'team_id', 'started_at', 'ended_at']
+};
+
 class FakeQuery {
 	op: Op;
+	error: string | null = null;
 	constructor(
 		private respond: Responder,
 		private log: Op[],
@@ -75,20 +115,32 @@ class FakeQuery {
 		this.op.filters[col] = val;
 		return this;
 	}
-	order() {
+	order(col?: string) {
+		// The check the old no-op version did not do.
+		const known = TABLE_COLUMNS[this.op.table];
+		if (col && known && !known.includes(col)) {
+			this.error = `column ${this.op.table}.${col} does not exist`;
+		}
+		this.op.orderBy = col;
 		return this;
 	}
 	limit() {
 		return this;
 	}
-	async maybeSingle() {
+	private settle() {
+		// PostgREST returns the error and NO data — the shape that made the original
+		// bug look like "there is no effect".
+		if (this.error) return { data: null, error: { message: this.error } };
 		return { data: this.respond(this.op) ?? null, error: null };
+	}
+	async maybeSingle() {
+		return this.settle();
 	}
 	async single() {
-		return { data: this.respond(this.op) ?? null, error: null };
+		return this.settle();
 	}
-	then<T>(onFulfilled: (v: { data: unknown; error: null }) => T) {
-		return Promise.resolve({ data: this.respond(this.op) ?? null, error: null }).then(onFulfilled);
+	then<T>(onFulfilled: (v: { data: unknown; error: { message: string } | null }) => T) {
+		return Promise.resolve(this.settle()).then(onFulfilled);
 	}
 }
 
@@ -370,6 +422,48 @@ async function verifyXray() {
 			(upd.values as { payload?: { reveals_remaining?: number } }).payload?.reveals_remaining,
 			2
 		);
+	}
+
+	console.log('\n── X-Ray: the lookup only touches columns that exist ─────────────');
+	{
+		// The regression guard for the "No X-Ray running with a budget of 5" bug: the
+		// budget lookup sorted by a column team_effects does not have, PostgREST
+		// refused the query, and a query error was read as "no effect".
+		const { db, log } = xrayWorld(2);
+		await spendXrayReveal(
+			db,
+			{ teamId: 'team1', challengeId: 'ch1', field: 'artist', tabId: 'tab1', slotIndex: 0 },
+			{ resolveReveal: okResolver as never }
+		);
+		const lookup = log.find((o) => o.table === 'team_effects' && o.kind === 'select');
+		assert('budget lookup sorts by activated_at', lookup?.orderBy, 'activated_at');
+		assert(
+			'…which is a real team_effects column',
+			TABLE_COLUMNS.team_effects.includes(lookup?.orderBy ?? ''),
+			true
+		);
+
+		// And prove the guard itself bites: a bogus sort column must produce a
+		// PostgREST-shaped error, not a silent empty result.
+		const probe = makeFake(() => ({ id: 'x' }));
+		const bogus = await (probe.db as unknown as {
+			from: (t: string) => {
+				select: (c?: string) => {
+					order: (c: string) => { limit: (n: number) => { maybeSingle: () => Promise<{ data: unknown; error: { message: string } | null }> } };
+				};
+			};
+		})
+			.from('team_effects')
+			.select('id')
+			.order('created_at')
+			.limit(1)
+			.maybeSingle();
+		assert(
+			'a bogus sort column errors like PostgREST does',
+			bogus.error?.message,
+			'column team_effects.created_at does not exist'
+		);
+		assert('…and returns no data', bogus.data, null);
 	}
 
 	console.log('\n── X-Ray: no budget at all ───────────────────────────────────────');

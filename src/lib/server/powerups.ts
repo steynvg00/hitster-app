@@ -1052,18 +1052,28 @@ export async function spendXrayReveal(
 ): Promise<SpendXrayResult> {
 	const resolveReveal = deps?.resolveReveal ?? resolveFreeAnswerValue;
 
-	// The running budget. Scoped by team + effect type; a team is in one set at a
-	// time and the reset SQL clears team_effects, so no set filter is needed to
-	// find the right one.
-	const { data: effect } = await supabase
+	// The running budget. Same criterion the banner shows it by — team_id +
+	// consumed_at IS NULL (loadActiveEffects adds set_id, which only narrows it), so
+	// anything the banner displays is findable here.
+	//
+	// Ordered by activated_at, NOT created_at: team_effects has no created_at column
+	// (0044_powerups_runtime.sql — id, team_id, set_id, effect_type, payload,
+	// activated_at, expires_at, consumed_at, consumed_challenge_id, plus 0047's
+	// source_team_powerup_id). PostgREST rejects the whole query on an unknown sort
+	// column, which returned data=null and read as "no effect" — the banner, which
+	// never sorts, kept showing the very row this could not find.
+	const { data: effect, error: lookupErr } = await supabase
 		.from('team_effects')
 		.select('id, set_id, payload, source_team_powerup_id')
 		.eq('team_id', params.teamId)
 		.eq('effect_type', 'x_ray')
 		.is('consumed_at', null)
-		.order('created_at', { ascending: false })
+		.order('activated_at', { ascending: false })
 		.limit(1)
 		.maybeSingle();
+	// A failed QUERY is not the same as no budget, and conflating the two is what
+	// made the bug above so hard to read from the UI. Surface it as its own message.
+	if (lookupErr) return { success: false, error: `X-Ray lookup failed: ${lookupErr.message}` };
 	if (!effect) return { success: false, error: 'No X-Ray running' };
 
 	const payload = (effect.payload ?? {}) as Record<string, unknown>;
