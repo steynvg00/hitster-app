@@ -58,10 +58,7 @@ export const DOUBLE_DOWN_MAX_PCT = 100;
  * powerup earning).
  */
 export function doubleDownMultiplier(predictedPct: number, scorePct: number): number {
-	const g = Math.min(
-		DOUBLE_DOWN_MAX_PCT,
-		Math.max(DOUBLE_DOWN_MIN_PCT, Math.round(predictedPct))
-	);
+	const g = Math.min(DOUBLE_DOWN_MAX_PCT, Math.max(DOUBLE_DOWN_MIN_PCT, Math.round(predictedPct)));
 	const raw = scorePct >= g ? 1 + g / 100 : 1 - g / 100;
 	// Snap to 2 decimals. Not cosmetic: 1 - 80/100 is 0.19999999999999996 in
 	// IEEE754, and this number is PERSISTED in submissions.answers[0].breakdown
