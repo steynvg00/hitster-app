@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { supabaseBrowser } from '$lib/supabase-browser';
 	import PowerupActivationModal from './PowerupActivationModal.svelte';
+	import type { RevealResult } from '$lib/powerups-meta';
 
 	type PowerupType = {
 		id: string;
@@ -32,6 +33,8 @@
 		powerups: initialPowerups,
 		currentChallengeId,
 		variantFields = [],
+		tabId,
+		slotIndex = 0,
 		setTeams = [],
 		onactivated
 	}: {
@@ -39,9 +42,12 @@
 		setId: string;
 		powerups: HeldPowerup[];
 		currentChallengeId?: string;
+		// free_answer addressing — see PowerupActivationModal. Passed straight through.
 		variantFields?: string[];
+		tabId?: string;
+		slotIndex?: number;
 		setTeams?: TargetTeam[];
-		onactivated?: (revealedValue?: string, revealedField?: string) => void;
+		onactivated?: (reveal: RevealResult) => void;
 	} = $props();
 
 	// The teams a caster can attack — every team in the set except their own.
@@ -54,11 +60,9 @@
 		selectedPowerup = p;
 	}
 
-	function onModalClose(activated?: boolean, revealedValue?: string, revealedField?: string) {
+	function onModalClose(activated?: boolean, reveal?: RevealResult) {
 		selectedPowerup = null;
-		if (activated && (revealedValue || revealedField)) {
-			onactivated?.(revealedValue, revealedField);
-		}
+		if (activated && reveal) onactivated?.(reveal);
 	}
 
 	onMount(() => {
@@ -127,6 +131,8 @@
 		onclose={onModalClose}
 		{currentChallengeId}
 		{variantFields}
+		{tabId}
+		{slotIndex}
 		{targetTeams}
 	/>
 {/if}

@@ -11,6 +11,7 @@
 	import ArtistTagInput from '$lib/components/ui/ArtistTagInput.svelte';
 	import { parseArtistTags, joinArtistTags } from '$lib/artist-tags';
 	import { thresholdOfFields } from '$lib/threshold';
+	import { freeAnswerRevealKey, type RevealResult } from '$lib/powerups-meta';
 	import { supabaseBrowser } from '$lib/supabase-browser';
 	import Waveform from '$lib/components/ui/Waveform.svelte';
 	import BonusTracker from '$lib/components/game/BonusTracker.svelte';
@@ -260,6 +261,17 @@
 	// Answer slot tabs (mashup + fragments only)
 	let activeSlotIndex = $state(0);
 
+	// The answer slot the player is actually on. Only multi-source tabs (mashup /
+	// fragments) have more than one; every other tab is slot 0. Clamped because
+	// activeSlotIndex survives a tab switch and the new tab may have fewer slots.
+	// Used both to render and to address a free_answer reveal, so the badge and
+	// the powerup can't disagree about which slot is meant.
+	const activeSlotEffective = $derived(
+		isMultiSource && activeTab
+			? Math.min(activeSlotIndex, Math.max(activeTab.sourceTracks.length, 1) - 1)
+			: 0
+	);
+
 	// ── Per-tab fill status + doubt marker (session-only) ─────────────────────
 	// Both are pure client state. Nothing here is persisted, submitted, or read by
 	// the scorer — the fill status is a live read of the same draft signals the
@@ -409,18 +421,26 @@
 		return () => clearInterval(iv);
 	});
 
-	function onPowerupActivated(revealedValue?: string, revealedField?: string) {
-		if (!revealedField || !revealedValue) return;
-		freeAnswerReveals = { ...freeAnswerReveals, [revealedField]: revealedValue };
-		// Pre-fill the draft for all tabs/slots
-		for (let ti = 0; ti < data.tabs.length; ti++) {
-			const slotCount = allDrafts[ti]?.length ?? 1;
-			for (let si = 0; si < slotCount; si++) {
-				if (allDrafts[ti]?.[si]) {
-					allDrafts[ti][si].fieldValues[revealedField] = revealedValue;
-				}
-			}
+	function onPowerupActivated(reveal: RevealResult) {
+		const { value, field, tabId, slotIndex } = reveal;
+		freeAnswerReveals = {
+			...freeAnswerReveals,
+			[freeAnswerRevealKey(tabId, slotIndex, field)]: value
+		};
+		// Pre-fill ONLY the slot the answer belongs to. This used to write the value
+		// into every tab and every slot, which handed a mashup team three "free"
+		// artists from one powerup and put tab 1's answer under tab 2's inputs.
+		const ti = data.tabs.findIndex((t) => t.id === tabId);
+		if (ti >= 0 && allDrafts[ti]?.[slotIndex]) {
+			allDrafts[ti][slotIndex].fieldValues[field] = value;
 		}
+	}
+
+	// A reveal belongs to one (tab, slot, field); the badge shows only there.
+	function revealFor(field: string, slot: number): string | undefined {
+		const id = activeTab?.id;
+		if (!id) return undefined;
+		return freeAnswerReveals[freeAnswerRevealKey(id, slot, field)];
 	}
 
 	// ── Timer ─────────────────────────────────────────────────────────────────
@@ -1335,7 +1355,9 @@
 					setId={data.activeSetId}
 					powerups={data.heldPowerups}
 					currentChallengeId={data.challenge.id}
-					variantFields={variantFields.map((f) => String(f))}
+					variantFields={activeTab?.fields ?? variantFields.map((f) => String(f))}
+					tabId={activeTab?.id}
+					slotIndex={activeSlotEffective}
 					setTeams={data.setTeams}
 					onactivated={onPowerupActivated}
 				/>
@@ -1584,10 +1606,8 @@
 							{/each}
 						</div>
 					{/if}
-					{@const slotIdx = Math.min(
-						activeSlotIndex,
-						Math.max(activeTab.sourceTracks.length, 1) - 1
-					)}
+					<!-- Same clamped slot the free_answer reveal is addressed to. -->
+					{@const slotIdx = activeSlotEffective}
 					<div class="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
 						{#each variantFields.filter((f) => f !== 'grouping') as field (field)}
 							{@const mode = data.fieldModes[field] as InputMode}
@@ -1601,12 +1621,12 @@
 										>
 									{/if}
 								</label>
-								{#if freeAnswerReveals[String(field)]}
+								{#if revealFor(String(field), slotIdx)}
 									<div
 										class="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-amber-300"
 									>
 										<span>💡</span>
-										<span>Revealed: {freeAnswerReveals[String(field)]}</span>
+										<span>Revealed: {revealFor(String(field), slotIdx)}</span>
 									</div>
 								{/if}
 
@@ -1702,10 +1722,11 @@
 									>
 								{/if}
 							</label>
-							{#if freeAnswerReveals[String(field)]}
+							<!-- Single-slot layout: always slot 0 of the active tab. -->
+							{#if revealFor(String(field), 0)}
 								<div class="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-amber-300">
 									<span>💡</span>
-									<span>Revealed: {freeAnswerReveals[String(field)]}</span>
+									<span>Revealed: {revealFor(String(field), 0)}</span>
 								</div>
 							{/if}
 
