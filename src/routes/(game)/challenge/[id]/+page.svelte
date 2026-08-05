@@ -535,6 +535,32 @@
 	 *
 	 * Returns false when the field's input cannot take the value, in which case the
 	 * badge stays as the only surface — better than a half-written draft.
+	 *
+	 * The full matrix, so the absence of a branch reads as a decision rather than an
+	 * omission. "Draft target" is the structure the RENDERING component binds to:
+	 *
+	 *   field/mode                     component        draft target        branch
+	 *   artist (combobox|open_text)    ArtistTagInput   artistTags[ti][si]  yes
+	 *   artist (multiple_choice)       MultipleChoice   fieldValues[field]  fallback
+	 *   year (slider|typeable_number)  YearInput        allYearValues[ti]   yes
+	 *   year (other modes)             per mode         fieldValues[field]  fallback
+	 *   title / festival / label /     Combobox,        fieldValues[field]  fallback
+	 *     vocal_source (any of         OpenText,
+	 *     combobox/open_text/          MultipleChoice
+	 *     multiple_choice)
+	 *   grouping                       fragment chips   — (per-slot, no answer) refused
+	 *
+	 * The two guards mirror the template's own conditions (artistIsTagged,
+	 * yearIsNumericMode), so "which input is on screen" and "where the reveal is
+	 * written" cannot disagree. Everything else binds to fieldValues, which is why
+	 * one fallback covers combobox, open_text and multiple_choice together — a
+	 * per-mode branch there would be three copies of the same assignment.
+	 *
+	 * NOTE: a combobox field used to show nothing after a reveal despite this
+	 * writing the right key. That was never a missing branch here — Combobox kept a
+	 * mount-time COPY of the value as its visible text and ignored later external
+	 * writes. Fixed in the component ($lib/components/ui/Combobox.svelte), which is
+	 * the only place that could see it.
 	 */
 	function applyRevealToDraft(reveal: RevealResult, ti: number): boolean {
 		const { value, tags, field, slotIndex: si } = reveal;

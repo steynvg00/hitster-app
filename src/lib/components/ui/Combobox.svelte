@@ -17,8 +17,37 @@
 		value = $bindable('')
 	}: Props = $props();
 
+	// The visible text and the confirmed `value` are deliberately two different
+	// things: you can type "master" (no confirmed value yet) and only picking an
+	// option from the list commits it. That split is why `inputText` starts as a
+	// COPY of `value` rather than being bound to it.
+	//
+	// A copy taken once at mount, though, is a one-way street — and a powerup reveal
+	// writes the answer into the draft this component is bound to, from the outside,
+	// while it is mounted. `value` updated, the hidden input carried the right
+	// answer, the "Revealed:" badge showed it, and the box the player actually looks
+	// at stayed empty. (Cross-tab reveals looked fine, because switching tabs
+	// remounts the inputs via {#key activeTabIndex} — which is the same thing said
+	// twice: a fresh mount re-copies the value.)
+	//
+	// So the copy is kept in sync with EXTERNAL writes only. `selfValue` mirrors the
+	// last value this component itself produced; when `value` differs from it, the
+	// change came from somewhere else and the text must follow. Without that guard
+	// the sync would fight the player's typing, because handleInput() sets
+	// `value = ''` on every keystroke that isn't an exact pool match.
 	let inputText = $state(value || '');
+	let selfValue = $state(value);
 	let open = $state(false);
+
+	$effect(() => {
+		if (value === selfValue) return; // our own write — already on screen
+		selfValue = value;
+		// Follows an external clear too, which is what a multi-source tab needs when
+		// the player switches answer slot: the binding re-points at another slot's
+		// value without a remount, so a stale label would otherwise sit above the
+		// wrong track.
+		inputText = value;
+	});
 
 	const fuse = $derived(new Fuse(pool, { threshold: 0.4, minMatchCharLength: 1 }));
 
@@ -33,6 +62,7 @@
 	function select(item: string) {
 		inputText = item;
 		value = item;
+		selfValue = item; // ours, not an external write — keeps the sync effect quiet
 		open = false;
 	}
 
@@ -41,6 +71,7 @@
 		// Confirm value only on exact (case-insensitive) pool match
 		const exact = pool.find((p) => p.toLowerCase() === inputText.toLowerCase());
 		value = exact ?? '';
+		selfValue = value; // ditto: never let the sync effect overwrite live typing
 	}
 
 	function handleBlur() {
