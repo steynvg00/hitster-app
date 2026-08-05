@@ -24,6 +24,7 @@
 		"bots:verify-group-a": "tsx tests/bots/verify-group-a.ts",
 		"bots:verify-group-a-fixes": "tsx tests/bots/verify-group-a-fixes.ts",
 		"bots:verify-regression": "tsx tests/bots/verify-regression.ts",
+		"bots:verify-power-spin": "tsx tests/bots/verify-power-spin.ts",
 		"bots:fixtures": "tsx scripts/gen-fixtures.ts",
 		"seed:mechanics": "tsx scripts/seed-mechanics-set.ts"
 	},

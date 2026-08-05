@@ -6,6 +6,12 @@ export type Json = string | number | boolean | null | { [key: string]: Json | un
 
 type TeamColor = 'blue' | 'yellow' | 'green' | 'red' | 'indigo' | 'black';
 type PowerupCategory = 'offensive' | 'defensive' | 'information' | 'social' | 'self';
+// Mirrors POWERUP_TIERS / PowerupTier in $lib/powerups-meta. Restated locally
+// rather than imported because this file is regenerable (`supabase gen types`)
+// and an import would be wiped by the next paste — the same reason every other
+// alias above is local. The two are structurally identical, so assignment
+// between them type-checks in both directions.
+type PowerupTier = 'S' | 'A' | 'B' | 'C' | 'D';
 type PowerupVisibility = 'public' | 'target_only' | 'hidden' | 'silent';
 type PowerupTargetType = 'self' | 'team' | 'all_others' | 'none';
 type ChallengeType = 'standard' | 'anthem' | 'label' | 'mashup' | 'fragments' | 'effects';
@@ -940,6 +946,10 @@ export type Database = {
 					enabled_by_default: boolean;
 					coming_soon: boolean;
 					default_inverse: boolean;
+					// Power band of the type (migration 0072). A fixed trait, like
+					// `category` — NOT a per-set setting. Read by power_spin's roll pool
+					// and nothing else; the earning planner ignores it.
+					tier: PowerupTier;
 					created_at: string;
 				};
 				Insert: {
@@ -963,6 +973,7 @@ export type Database = {
 					enabled_by_default?: boolean;
 					coming_soon?: boolean;
 					default_inverse?: boolean;
+					tier?: PowerupTier;
 					created_at?: string;
 				};
 				Update: {
@@ -986,6 +997,7 @@ export type Database = {
 					enabled_by_default?: boolean;
 					coming_soon?: boolean;
 					default_inverse?: boolean;
+					tier?: PowerupTier;
 					created_at?: string;
 				};
 				Relationships: [];

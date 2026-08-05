@@ -302,7 +302,12 @@ export interface ChallengeResult {
 
 // ─── NFC ─────────────────────────────────────────────────────────────────────
 
-export type NfcTagPurpose = 'team_identity' | 'team_entry' | 'challenge' | 'hint' | 'challenge_unlock';
+export type NfcTagPurpose =
+	| 'team_identity'
+	| 'team_entry'
+	| 'challenge'
+	| 'hint'
+	| 'challenge_unlock';
 
 export interface NfcTag {
 	id: string;
@@ -398,6 +403,13 @@ export interface PowerupTypeOverride {
 	// range — a setting rather than a constant, with resolveXrayBudget()
 	// (src/lib/server/powerups.ts) supplying X_RAY_DEFAULT_BUDGET when absent.
 	reveal_budget?: number;
+	// power_spin only: how often the wheel reaches for Tier S instead of Tier A,
+	// as a probability in [0,1]. Third instance of the same pattern as the dice
+	// range and the reveal budget — a per-set dial, resolved by
+	// resolveSpinTierSChance() (src/lib/server/powerups.ts) with
+	// POWER_SPIN_DEFAULT_TIER_S_CHANCE as the fallback. Seeded at 0.15 by
+	// migration 0072, i.e. the designed 85% A / 15% S split.
+	tier_s_chance?: number;
 }
 
 export interface PowerupConfigV2 {

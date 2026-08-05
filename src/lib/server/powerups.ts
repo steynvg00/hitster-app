@@ -1,6 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/types/database';
-import type { AnswerField, PowerupConfigV2, ThresholdMode, BandMode, PowerupTypeOverride } from '$lib/types';
+import type {
+	AnswerField,
+	PowerupConfigV2,
+	ThresholdMode,
+	BandMode,
+	PowerupTypeOverride
+} from '$lib/types';
 import {
 	artistTargets,
 	computeSetMaxScore,
@@ -24,6 +30,10 @@ import {
 	LIFELINE_MIN_ELAPSED_FRACTION,
 	maskAnswer,
 	X_RAY_DEFAULT_BUDGET,
+	POWER_SPIN_DEFAULT_TIER_S_CHANCE,
+	SPIN_TIERS,
+	isSpinExcluded,
+	type PowerupTier,
 	type LifelineHint,
 	type RevealResult,
 	type RevealTarget
@@ -177,6 +187,126 @@ export function resolveXrayBudget(cfg: PowerupConfigV2): number {
 	return raw;
 }
 
+// ─── power_spin: the roll ────────────────────────────────────────────────────
+//
+// Power Spin rolls ONE powerup out of the Tier A/S pool and awards it. It does
+// NOT handle the outcome — it picks a type and hands it to materializeAward(),
+// the same function the earning ladder uses, so the rolled powerup behaves
+// exactly as if the team had earned it (immediate-use fires, holdable goes to
+// the stock, a type with a choice offers that choice).
+//
+// The three functions below are PURE: tier weighting, pool construction and the
+// pick are all decided from data + an injected `rand`, with no database access.
+// That is deliberate — it lets a verification run pin the RNG and assert the
+// distribution and the exclusions without touching a live set (the same reason
+// rollDice and planAwards are pure).
+
+/**
+ * How often the wheel reaches for Tier S, from the set's config
+ * (powerup_config.types.power_spin.tier_s_chance). Read the same way the dice
+ * range and the reveal budget are, so the A/S split is a SETTING rather than a
+ * constant in the roll. Anything missing, non-finite or outside [0,1] falls back
+ * to POWER_SPIN_DEFAULT_TIER_S_CHANCE — a chance above 1 would make every spin
+ * reach for a tier that is empty today, and a negative one would silently kill
+ * Tier S altogether.
+ */
+export function resolveSpinTierSChance(cfg: PowerupConfigV2): number {
+	const raw = cfg.types?.power_spin?.tier_s_chance;
+	if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0 || raw > 1) {
+		return POWER_SPIN_DEFAULT_TIER_S_CHANCE;
+	}
+	return raw;
+}
+
+/**
+ * Which tier the wheel reaches for. One draw, weighted: below the S chance is
+ * Tier S, everything else is Tier A. This is the ROLL, not the outcome — an
+ * empty tier is resolved afterwards by pickSpinType's fallback, so this function
+ * stays a pure statement of the configured odds and the distribution is
+ * assertable on its own.
+ */
+export function rollSpinTier(tierSChance: number, rand: () => number = Math.random): PowerupTier {
+	return rand() < tierSChance ? 'S' : 'A';
+}
+
+/**
+ * Every type Power Spin is allowed to hand out from one tier.
+ *
+ * Four filters, each for its own reason:
+ *   - tier match — the pool this spin is drawing from.
+ *   - NOT excluded — power_spin itself, plus any future type that awards a
+ *     powerup. This is what makes the spin non-recursive; see
+ *     SPIN_EXCLUDED_TYPE_IDS in $lib/powerups-meta for the full argument.
+ *   - NOT coming_soon — an unbuilt placeholder cannot be awarded.
+ *   - enabled for this set, and its category on — a host who switched a powerup
+ *     off for this game must not get it back through the wheel. Same
+ *     `override ?? default` resolution planAwards uses for its own pool.
+ *
+ * Deliberately NOT filtered on `default_inverse`. Inverse describes how a type
+ * is EARNED (score below a bound rather than above one); it says nothing about
+ * whether the type can be granted. A spin is not an earn, so the trait does not
+ * apply — and no Tier A or S type is inverse today in any case.
+ *
+ * Score bounds (default_min/max_score_pct) are likewise not applied: they gate
+ * the earning ladder, and the spin has already been earned by the time it rolls.
+ */
+export function spinPoolForTier(
+	cfg: PowerupConfigV2,
+	types: PowerupType[],
+	tier: PowerupTier
+): PowerupType[] {
+	return types.filter((t) => {
+		if (t.tier !== tier) return false;
+		if (isSpinExcluded(t.id)) return false;
+		if (t.coming_soon) return false;
+		const ov = cfg.types[t.id];
+		if (!(ov?.enabled ?? t.enabled_by_default)) return false;
+		if (!(cfg.categories[t.category] ?? true)) return false;
+		return true;
+	});
+}
+
+export type SpinPick = {
+	/** The tier the weighted roll asked for. */
+	rolledTier: PowerupTier;
+	/** The tier actually drawn from — differs from rolledTier when it fell back. */
+	usedTier: PowerupTier | null;
+	/** null when every tier in the chain is empty. */
+	type: PowerupType | null;
+};
+
+/**
+ * Roll a tier, then pick a type from it — with a fallback down SPIN_TIERS when
+ * the rolled tier has no eligible members.
+ *
+ * The fallback is not defensive padding, it is the NORMAL case today: Tier S is
+ * empty because resurrection and all_seeing_eye have not been built, so ~15% of
+ * spins currently roll S and land on A. A player sees an ordinary Tier A result
+ * and is told nothing about the empty shelf; the 15% starts paying out on its
+ * own the moment those two types exist, with no config change.
+ *
+ * Both tiers empty (a host disabled every Tier A powerup for this set) yields
+ * `type: null`. The caller consumes the spin and reports an empty wheel rather
+ * than failing — a failed activation would leave the team_powerup row stuck on
+ * 'pending', i.e. a powerup the team owns but can never see again.
+ */
+export function pickSpinType(
+	cfg: PowerupConfigV2,
+	types: PowerupType[],
+	rand: () => number = Math.random
+): SpinPick {
+	const rolledTier = rollSpinTier(resolveSpinTierSChance(cfg), rand);
+
+	// Try the rolled tier first, then the rest of the chain in order (S, A).
+	const order = [rolledTier, ...SPIN_TIERS.filter((t) => t !== rolledTier)];
+	for (const tier of order) {
+		const pool = spinPoolForTier(cfg, types, tier);
+		if (!pool.length) continue;
+		return { rolledTier, usedTier: tier, type: pool[Math.floor(rand() * pool.length)] };
+	}
+	return { rolledTier, usedTier: null, type: null };
+}
+
 export type EarnedPowerup = {
 	teamPowerupId: string;
 	type: PowerupType;
@@ -282,12 +412,25 @@ export function planAwards(
 
 // ─── Earning v2: IO wrapper (piece 3a) ───────────────────────────────────────
 
-/** Insert a pending team_powerup and auto-activate it if it's an immediate-use type. */
+/**
+ * Insert a pending team_powerup and auto-activate it if it's an immediate-use type.
+ *
+ * THE award path. Everything that grants a powerup during play goes through here
+ * — the earning ladder (awardPowerups), the dev force, and power_spin's roll —
+ * which is precisely why the spin can hand a rolled type over and get the right
+ * behaviour for free: this function is what decides "fire now" vs "offer the
+ * store/lose choice", from the type's own flags.
+ *
+ * `challengeId` is nullable because not every grant has a challenge behind it:
+ * team_powerups.granted_from_challenge_id has always been nullable
+ * (0044_powerups_runtime.sql), and a spin activated outside a challenge has no
+ * id to pass on.
+ */
 async function materializeAward(
 	supabase: SupabaseClient<Database>,
 	teamId: string,
 	setId: string,
-	challengeId: string,
+	challengeId: string | null,
 	type: PowerupType
 ): Promise<EarnedPowerup | null> {
 	const { data: inserted } = await supabase
@@ -678,6 +821,15 @@ export type ActivateResult = {
 	lifelineHints?: LifelineHint[];
 	payload?: Record<string, unknown>; // the team_effects payload that was written
 	blocked?: boolean; // offensive types: the target's shield absorbed the attack
+	// power_spin only: the powerup the wheel landed on, already materialized
+	// through the normal award path. Absent when the wheel came up empty.
+	//
+	// It is a full EarnedPowerup — the same object the earning ladder returns —
+	// so the client can push it onto the reveal queue and let it show its OWN
+	// card (store/lose, or its immediate-use confirmation). The spin does not
+	// flatten or reinterpret it; that is the whole point of routing through
+	// materializeAward.
+	spun?: EarnedPowerup;
 };
 
 /**
@@ -972,7 +1124,11 @@ export async function resolveFreeAnswerValue(
 		return { error: `This tab has no ${fieldLabel} field` };
 
 	const [srcRes, tabClipRes] = await Promise.all([
-		supabase.from('challenge_tab_source_tracks').select('*').eq('tab_id', tab.id).order('sort_order'),
+		supabase
+			.from('challenge_tab_source_tracks')
+			.select('*')
+			.eq('tab_id', tab.id)
+			.order('sort_order'),
 		supabase.from('challenge_tab_clips').select('*').eq('tab_id', tab.id).order('sort_order')
 	]);
 	const sourceTrackRows = (srcRes.data ?? []) as TabSourceTrackRaw[];
@@ -1038,7 +1194,8 @@ export async function resolveFreeAnswerValue(
 	const value = correctValueForField(field as AnswerField, slot.track);
 	// A misconfigured track (empty column) would otherwise reveal '' and still burn
 	// the powerup — the exact silent failure the old lookup had for vocal_source.
-	if (!value.trim()) return { error: `This track has no ${fieldLabel} on file — nothing to reveal` };
+	if (!value.trim())
+		return { error: `This track has no ${fieldLabel} on file — nothing to reveal` };
 
 	// The artist answer is a TAG LIST, not a string, and the client cannot derive
 	// the tags from `value`: artistTargets joins with ' & ', and a track whose
@@ -1240,7 +1397,9 @@ export async function resolveLifelineHints(
 	const tracksRes = await (trackIds.length
 		? supabase.from('tracks').select('*').in('id', trackIds)
 		: Promise.resolve({ data: [] as unknown[] }));
-	const trackMap = new Map(((tracksRes.data ?? []) as unknown as TrackData[]).map((t) => [t.id, t]));
+	const trackMap = new Map(
+		((tracksRes.data ?? []) as unknown as TrackData[]).map((t) => [t.id, t])
+	);
 
 	const allTabClipData: TabClipData[] = tabClipRows.map((c) => ({
 		id: c.id,
@@ -1593,6 +1752,100 @@ export async function activatePowerup(
 			return {
 				success: true,
 				payload: { value: roll, dice_min: min, dice_max: max, new_score: newScore }
+			};
+		}
+
+		case 'power_spin': {
+			// The first powerup that awards ANOTHER powerup.
+			//
+			// Power Spin deliberately implements almost nothing itself: it rolls a
+			// type and hands it to materializeAward() — the very function the earning
+			// ladder calls — so the rolled powerup follows ITS OWN nature. An
+			// immediate-use result fires at once (materializeAward auto-activates it),
+			// a holdable one lands as 'pending' and gets its normal store/lose card, a
+			// targeted one gets its target picker. None of that is re-implemented here,
+			// which is what makes a spun powerup indistinguishable from an earned one.
+			//
+			// Recursion is closed off in the POOL, not by a special case in the award
+			// path: spinPoolForTier subtracts SPIN_EXCLUDED_TYPE_IDS, which holds
+			// power_spin itself (it is Tier A, so the wheel could otherwise land on
+			// itself) plus any future type that also awards powerups. With that filter
+			// the chain is at most materializeAward -> activatePowerup(power_spin) ->
+			// materializeAward -> activatePowerup(rolled) -> terminates.
+			const spinCfg = parseConfig(
+				(gameSet as unknown as { powerup_config?: unknown }).powerup_config
+			);
+			const { data: spinTypes } = await supabase.from('powerup_types').select('*');
+
+			// Randomness from the injectable source, exactly like lucky_dice's roll, so
+			// a verification run can pin both the tier draw and the pick.
+			const pick = pickSpinType(spinCfg, (spinTypes ?? []) as PowerupType[], options?.rand);
+
+			// Empty wheel: every tier in the chain had no eligible member (a host would
+			// have to have disabled all of Tier A, since Tier S being empty just falls
+			// back). Consume rather than fail — a failed activation leaves the row on
+			// 'pending', which is a powerup the team owns but can never reach again.
+			if (!pick.type) {
+				await supabase
+					.from('team_powerups')
+					.update({ status: 'consumed' } as never)
+					.eq('id', teamPowerupId);
+				return {
+					success: true,
+					payload: {
+						rolled_tier: pick.rolledTier,
+						used_tier: null,
+						rolled_type_id: null,
+						rolled_type_name: null
+					}
+				};
+			}
+
+			// Same set, and the same challenge this spin was granted from (nullable —
+			// a spin earned outside a challenge simply passes null along).
+			const spun = await materializeAward(
+				supabase,
+				tpu.team_id,
+				tpu.set_id,
+				tpu.granted_from_challenge_id,
+				pick.type
+			);
+			if (!spun) {
+				// The insert failed. Consume the spin anyway so it doesn't strand on
+				// 'pending', and report honestly instead of pretending something landed.
+				await supabase
+					.from('team_powerups')
+					.update({ status: 'consumed' } as never)
+					.eq('id', teamPowerupId);
+				return { success: false, error: 'Spin could not award a powerup' };
+			}
+
+			await supabase.from('activity_log').insert({
+				team_id: tpu.team_id,
+				event_type: 'power_spin',
+				payload: {
+					rolled_tier: pick.rolledTier,
+					used_tier: pick.usedTier,
+					rolled_type_id: pick.type.id,
+					awarded_team_powerup_id: spun.teamPowerupId
+				}
+			} as never);
+
+			await supabase
+				.from('team_powerups')
+				.update({ status: 'consumed' } as never)
+				.eq('id', teamPowerupId);
+
+			return {
+				success: true,
+				spun,
+				payload: {
+					rolled_tier: pick.rolledTier,
+					used_tier: pick.usedTier,
+					rolled_type_id: pick.type.id,
+					rolled_type_name: pick.type.name,
+					rolled_type_icon: pick.type.icon
+				}
 			};
 		}
 
