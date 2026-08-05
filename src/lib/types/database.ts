@@ -251,6 +251,10 @@ export type Database = {
 					started_at: string;
 					ended_at: string | null;
 					created_at: string;
+					// This attempt's own clock, overriding challenges.timer_seconds
+					// (migration 0074). NULL on every normal attempt; set to the 1/3
+					// retry clock by a Resurrection.
+					timer_override_seconds: number | null;
 				};
 				Insert: {
 					id?: string;
@@ -259,6 +263,7 @@ export type Database = {
 					started_at?: string;
 					ended_at?: string | null;
 					created_at?: string;
+					timer_override_seconds?: number | null;
 				};
 				Update: {
 					id?: string;
@@ -267,6 +272,7 @@ export type Database = {
 					started_at?: string;
 					ended_at?: string | null;
 					created_at?: string;
+					timer_override_seconds?: number | null;
 				};
 				Relationships: [];
 			};

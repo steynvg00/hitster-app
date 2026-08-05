@@ -387,6 +387,13 @@ export type ThresholdMode = 'per_challenge' | 'cumulative';
 // 'highest_band': only the single highest newly-crossed threshold awards.
 export type BandMode = 'all_bands' | 'highest_band';
 
+// How a Resurrection retry settles against the submission it replaces.
+// 'replace': book the raw difference (a worse retry costs points).
+// 'best': book MAX(0, difference) (a worse retry is free).
+// Applied by resurrectionDelta() ($lib/powerups-meta), which is the one place
+// either arithmetic exists.
+export type ResurrectionScoreMode = 'replace' | 'best';
+
 export interface PowerupTypeOverride {
 	enabled?: boolean;
 	threshold?: number;
@@ -417,6 +424,13 @@ export interface PowerupTypeOverride {
 	// POWER_SPIN_DEFAULT_TIER_S_CHANCE as the fallback. Seeded at 0.15 by
 	// migration 0072, i.e. the designed 85% A / 15% S split.
 	tier_s_chance?: number;
+	// resurrection only: how a retry settles against the submission it replaces.
+	// 'replace' (the default) books the raw difference, so a worse retry costs
+	// points; 'best' books MAX(0, difference), so a worse retry is free. Resolved
+	// by resolveResurrectionScoreMode() (src/lib/server/powerups.ts), which treats
+	// anything that is not exactly 'best' as 'replace' — the mode that keeps the
+	// timing decision meaningful.
+	score_mode?: ResurrectionScoreMode;
 }
 
 export interface PowerupConfigV2 {
