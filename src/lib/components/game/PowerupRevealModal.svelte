@@ -65,6 +65,10 @@
 		switch (powerupType.id) {
 			case 'bonus_points':
 				return `+${payload.value ?? 15} bonus points banked for your next challenge!`;
+			case 'lucky_dice':
+				// The rolled number is the whole point of this powerup — show it, and the
+				// range it came out of, straight from the payload the server wrote.
+				return `🎲 You rolled ${payload.value ?? '?'} (out of ${payload.dice_min ?? 1}–${payload.dice_max ?? 6}) — +${payload.value ?? 0} bonus points on your next submission!`;
 			case 'hard_gaan':
 				return `×${payload.multiplier ?? 1.5} on challenge points for the next ${payload.window_minutes ?? 15} minutes!`;
 			case 'single_event_mult':

@@ -106,6 +106,47 @@ export function mergePowerupConfig(
 	};
 }
 
+// ─── lucky_dice: the roll ─────────────────────────────────────────────────────
+//
+// The range is a SETTING, not a constant: it is read from
+// powerup_config.types.lucky_dice.{dice_min,dice_max} — the same per-type override
+// map the console already writes for enabled/threshold/chance — so a later
+// settings UI can retune it without a code change. These two numbers are only the
+// fallback for a set whose config predates the key (every set today).
+export const LUCKY_DICE_DEFAULT_MIN = 1;
+export const LUCKY_DICE_DEFAULT_MAX = 6;
+
+/**
+ * The dice range for a set, from its parsed powerup_config. Anything missing,
+ * non-numeric, non-integer, below 1 or inverted (min > max) falls back to the
+ * 1–6 default rather than producing a nonsense roll — a mis-typed config must not
+ * be able to award 0 or negative points.
+ */
+export function resolveDiceRange(cfg: PowerupConfigV2): { min: number; max: number } {
+	const ov = cfg.types?.lucky_dice;
+	const rawMin = ov?.dice_min;
+	const rawMax = ov?.dice_max;
+	const ok = (n: unknown): n is number =>
+		typeof n === 'number' && Number.isFinite(n) && Number.isInteger(n) && n >= 1;
+	if (!ok(rawMin) || !ok(rawMax) || rawMin > rawMax) {
+		return { min: LUCKY_DICE_DEFAULT_MIN, max: LUCKY_DICE_DEFAULT_MAX };
+	}
+	return { min: rawMin, max: rawMax };
+}
+
+/**
+ * Roll an integer in [min, max], inclusive at BOTH ends.
+ *
+ * The single place the randomness enters, and `rand` is injectable for exactly
+ * that reason: a test can pin it (rand=()=>0 → min, rand=()=>0.999… → max) and
+ * assert the boundaries instead of sampling and hoping. activatePowerup takes the
+ * same injection point via ActivateOptions.rand, so the whole branch is
+ * deterministic under test (tests/bots/verify-group-a.ts drives both).
+ */
+export function rollDice(min: number, max: number, rand: () => number = Math.random): number {
+	return min + Math.floor(rand() * (max - min + 1));
+}
+
 export type EarnedPowerup = {
 	teamPowerupId: string;
 	type: PowerupType;
@@ -501,6 +542,9 @@ export type ActivateOptions = {
 	// Immediate-use types (bonus_points, hard_gaan, single_event_mult) auto-activate
 	// straight from the earn path, before the player ever "holds" them.
 	allowFromPending?: boolean;
+	// lucky_dice: the randomness source, injectable so the roll is assertable in a
+	// test (see rollDice). Defaults to Math.random in production.
+	rand?: () => number;
 };
 
 /**
@@ -936,7 +980,7 @@ export async function activatePowerup(
 	// 2. Validate set is active
 	const { data: gameSet } = await supabase
 		.from('game_sets')
-		.select('status, play_state, hard_gaan_window_minutes')
+		.select('status, play_state, hard_gaan_window_minutes, powerup_config')
 		.eq('id', tpu.set_id)
 		.maybeSingle();
 
@@ -949,6 +993,48 @@ export async function activatePowerup(
 	switch (typeId) {
 		case 'bonus_points': {
 			const payload = { value: 15 };
+			const { data: eff, error } = await supabase
+				.from('team_effects')
+				.insert({
+					team_id: tpu.team_id,
+					set_id: tpu.set_id,
+					effect_type: 'bonus_points',
+					payload,
+					source_team_powerup_id: teamPowerupId
+				} as never)
+				.select('id')
+				.single();
+			if (error) return { success: false, error: error.message };
+			await supabase
+				.from('team_powerups')
+				.update({ status: 'active' } as never)
+				.eq('id', teamPowerupId);
+			return { success: true, effectId: eff.id, payload };
+		}
+
+		case 'lucky_dice': {
+			// The roll decides HOW MANY points, nothing else — so the effect it writes
+			// is an ordinary bonus_points row, the exact path bonus_points already
+			// takes into scoring (deriveEffectModifiers sums payload.value, the
+			// breakdown adds it flat, ActiveEffectsBanner renders "+N next submission"
+			// from the same key). No scoring change, no new effect_type, no second
+			// points mechanism to keep in sync — only the number differs.
+			//
+			// Range from the set's config (never hardcoded here); randomness from the
+			// one injectable roll function, so a test can pin both ends.
+			const { min, max } = resolveDiceRange(
+				parseConfig((gameSet as unknown as { powerup_config?: unknown }).powerup_config)
+			);
+			const roll = rollDice(min, max, options?.rand);
+			// `source`/`dice_*` are additive keys: the bonus_points reader only looks at
+			// `value`, so they cost nothing and let the reveal modal say what was rolled
+			// and out of what range.
+			const payload = {
+				value: roll,
+				source: 'lucky_dice',
+				dice_min: min,
+				dice_max: max
+			};
 			const { data: eff, error } = await supabase
 				.from('team_effects')
 				.insert({
