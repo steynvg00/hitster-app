@@ -14,6 +14,12 @@ import {
 	type TabSourceTrackRaw,
 	type TrackData
 } from '$lib/server/scoring';
+import {
+	freeAnswerRevealKey,
+	X_RAY_MAX_REVEALS,
+	type RevealResult,
+	type RevealTarget
+} from '$lib/powerups-meta';
 
 export type PowerupType = Database['public']['Tables']['powerup_types']['Row'];
 export type TeamPowerupRow = Database['public']['Tables']['team_powerups']['Row'];
@@ -545,6 +551,10 @@ export type ActivateOptions = {
 	// lucky_dice: the randomness source, injectable so the roll is assertable in a
 	// test (see rollDice). Defaults to Math.random in production.
 	rand?: () => number;
+	// x_ray: the (tab, slot, field) addresses to reveal. Each one is
+	// resolved by the SAME helper free_answer's single `field` goes through — this
+	// is a longer list of the same thing, not a different mechanism.
+	revealTargets?: RevealTarget[];
 };
 
 /**
@@ -562,6 +572,37 @@ export function parsePredictedPct(fd: FormData): { predictedPct?: number } {
 	return Number.isFinite(n) ? { predictedPct: n } : {};
 }
 
+/**
+ * Read x_ray's target list out of an activation form post. Same role
+ * as parseRevealAddress (free_answer's single tab/slot pair) and parsePredictedPct
+ * (double_down's number): the form field name lives in ONE place, shared by every
+ * ?/activatePowerup action.
+ *
+ * Posted as JSON because the payload is a list of triples, which url-encoded form
+ * fields express badly. Anything unparseable yields {} — activatePowerup's own
+ * per-powerup caps and the resolver are the authority on what is acceptable, so a
+ * malformed list is refused there with a message rather than silently trimmed here.
+ */
+export function parseRevealTargets(fd: FormData): { revealTargets?: RevealTarget[] } {
+	const raw = (fd.get('reveal_targets') as string | null)?.trim();
+	if (!raw) return {};
+	try {
+		const parsed = JSON.parse(raw) as unknown;
+		if (!Array.isArray(parsed)) return {};
+		const targets = parsed
+			.filter((t): t is Record<string, unknown> => !!t && typeof t === 'object')
+			.map((t) => ({
+				tabId: typeof t.tabId === 'string' && t.tabId ? t.tabId : undefined,
+				slotIndex: typeof t.slotIndex === 'number' ? t.slotIndex : 0,
+				field: typeof t.field === 'string' ? t.field : ''
+			}))
+			.filter((t) => t.field !== '');
+		return targets.length ? { revealTargets: targets } : {};
+	} catch {
+		return {};
+	}
+}
+
 export type ActivateResult = {
 	success: boolean;
 	error?: string;
@@ -570,6 +611,11 @@ export type ActivateResult = {
 	revealedTags?: string[]; // free_answer on `artist`: the scorer's targets, for the tag input
 	revealedTabId?: string; // free_answer: which tab the value belongs to
 	revealedSlotIndex?: number; // free_answer: which answer slot within that tab
+	// x_ray: every reveal this activation produced, each fully addressed
+	// exactly like free_answer's single one. free_answer keeps its four singular
+	// fields (its contract is untouched); the client normalises both into the same
+	// RevealResult[] before applying them, so there is one apply path, not two.
+	reveals?: RevealResult[];
 	payload?: Record<string, unknown>; // the team_effects payload that was written
 	blocked?: boolean; // offensive types: the target's shield absorbed the attack
 };
@@ -1359,6 +1405,115 @@ export async function activatePowerup(
 				revealedTabId: resolved.tabId,
 				revealedSlotIndex: resolved.slotIndex
 			};
+		}
+
+		case 'x_ray': {
+			// Several reveals, one at a time, through free_answer's own resolver —
+			// identical to its single-reveal case in every respect except how many
+			// addresses go in. A separate implementation is exactly how the bugs fixed
+			// in the free_answer pass (tab-1 smearing, tag chips, per-tab keying) would
+			// come back.
+			const challengeId = options?.currentChallengeId;
+			if (!challengeId)
+				return { success: false, error: `${powerupType.name} requires an active challenge` };
+
+			// Same gate free_answer uses: a reveal is only meaningful while the team is
+			// actually answering this challenge.
+			const { data: attempt } = await supabase
+				.from('challenge_attempts')
+				.select('id')
+				.eq('challenge_id', challengeId)
+				.eq('team_id', tpu.team_id)
+				.is('ended_at', null)
+				.maybeSingle();
+			if (!attempt) return { success: false, error: 'No active attempt for this challenge' };
+
+			// Dedupe on the SAME address key the page renders badges with, so asking
+			// for one cell twice costs one of the five rather than two.
+			const seen = new Set<string>();
+			const targets: RevealTarget[] = [];
+			for (const t of options?.revealTargets ?? []) {
+				if (!t || typeof t.field !== 'string' || !t.field.trim()) continue;
+				const slotIndex = Number.isInteger(t.slotIndex) && t.slotIndex >= 0 ? t.slotIndex : 0;
+				const key = freeAnswerRevealKey(t.tabId ?? '', slotIndex, t.field);
+				if (seen.has(key)) continue;
+				seen.add(key);
+				targets.push({ tabId: t.tabId, slotIndex, field: t.field });
+			}
+			if (!targets.length)
+				return { success: false, error: `${powerupType.name} needs at least one answer selected` };
+
+			// The target list comes from the client, so the cap is ENFORCED here rather
+			// than trusted to the picker's own five-selection limit.
+			if (targets.length > X_RAY_MAX_REVEALS)
+				return { success: false, error: `X-Ray reveals at most ${X_RAY_MAX_REVEALS} answers` };
+
+			// Resolve each address through free_answer's resolver — the only place that
+			// knows how a (tab, slot, field) becomes an answer.
+			const reveals: RevealResult[] = [];
+			const failures: string[] = [];
+			for (const t of targets) {
+				const resolved = await resolveFreeAnswerValue(
+					supabase,
+					challengeId,
+					t.field,
+					t.tabId ?? null,
+					t.slotIndex
+				);
+				if ('error' in resolved) {
+					failures.push(resolved.error);
+					continue;
+				}
+				reveals.push({
+					value: resolved.value,
+					...(resolved.tags?.length ? { tags: resolved.tags } : {}),
+					field: t.field,
+					tabId: resolved.tabId,
+					slotIndex: resolved.slotIndex
+				});
+			}
+
+			// Refusal posture, extended from free_answer's rather than reinvented.
+			// free_answer has one reveal, so "nothing resolved" and "the activation
+			// fails" are the same event: nothing is written and the powerup stays HELD.
+			// With several reveals that splits in two, and the same principle decides
+			// both: never burn a one-shot for zero answers, never withhold answers that
+			// did resolve. So a cell that cannot be resolved (a field this tab does not
+			// have, a track with an empty column, `grouping`) is SKIPPED, and only a
+			// run in which every cell failed fails the activation.
+			if (!reveals.length)
+				return { success: false, error: failures[0] ?? 'Nothing could be revealed' };
+
+			// One row per revealed cell — the shape the challenge page's reveal load
+			// already reads back (effect_type='free_answer', keyed by tab/slot/field).
+			// `source` is additive and ignored by that reader; it records which powerup
+			// produced the row without a join back through source_team_powerup_id.
+			const nowIso = new Date().toISOString();
+			await supabase.from('team_effects').insert(
+				reveals.map((r) => ({
+					team_id: tpu.team_id,
+					set_id: tpu.set_id,
+					effect_type: 'free_answer',
+					payload: {
+						field: r.field,
+						value: r.value,
+						challenge_id: challengeId,
+						tab_id: r.tabId,
+						slot_index: r.slotIndex,
+						source: typeId
+					},
+					consumed_at: nowIso,
+					consumed_challenge_id: challengeId,
+					source_team_powerup_id: teamPowerupId
+				})) as never
+			);
+
+			await supabase
+				.from('team_powerups')
+				.update({ status: 'consumed' } as never)
+				.eq('id', teamPowerupId);
+
+			return { success: true, reveals };
 		}
 
 		case 'penalty_shot': {

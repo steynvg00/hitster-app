@@ -94,6 +94,30 @@ export function freeAnswerRevealKey(tabId: string, slotIndex: number, field: str
 	return `${tabId}:${slotIndex}:${field}`;
 }
 
+// ─── Multi-reveal powerups (group A) ─────────────────────────────────────────
+//
+// x_ray reveals SEVERAL answers from one activation. It is not a second reveal
+// mechanism: every single reveal it produces is one (tab, slot, field) triple
+// resolved by the same server helper free_answer uses (resolveFreeAnswerValue),
+// stored as the same team_effects row, keyed by the same freeAnswerRevealKey, and
+// pre-filled by the same applyRevealToDraft. The only difference is how many
+// addresses go in — one, or up to five.
+export const REVEAL_POWERUP_IDS = ['free_answer', 'x_ray'] as const;
+
+export function isRevealPowerup(id: string): boolean {
+	return (REVEAL_POWERUP_IDS as readonly string[]).includes(id);
+}
+
+/** x_ray: how many answer cells a team may pick in one activation. */
+export const X_RAY_MAX_REVEALS = 5;
+
+/** One requested reveal, as posted by the activation modal. */
+export type RevealTarget = {
+	tabId?: string;
+	slotIndex: number;
+	field: string;
+};
+
 /**
  * A free_answer reveal, fully addressed. The server echoes back the tab and slot
  * it actually resolved against, so the page keys the badge on what was revealed

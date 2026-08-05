@@ -363,6 +363,20 @@
 			: 0
 	);
 
+	// The tabs a multi-reveal powerup (x_ray) can address, labelled the
+	// way the tab strip labels them so "Tab 2" in the picker is the "Tab 2" the
+	// player clicks. `fields` is each tab's RESOLVED field set (the same
+	// resolveTabFields output the reveal resolver validates against), so a cell the
+	// server would refuse is never offered in the first place.
+	const revealTabs = $derived(
+		data.tabs.map((t, i) => ({
+			id: t.id,
+			label: `Tab ${i + 1}`,
+			fields: t.fields,
+			slotCount: Math.max(t.sourceTracks.length, 1)
+		}))
+	);
+
 	// ── Per-tab fill status + doubt marker (session-only) ─────────────────────
 	// Both are pure client state. Nothing here is persisted, submitted, or read by
 	// the scorer — the fill status is a live read of the same draft signals the
@@ -559,17 +573,21 @@
 		return true;
 	}
 
-	function onPowerupActivated(reveal: RevealResult) {
-		const { value, field, tabId, slotIndex } = reveal;
-		freeAnswerReveals = {
-			...freeAnswerReveals,
-			[freeAnswerRevealKey(tabId, slotIndex, field)]: value
-		};
-		// Pre-fill ONLY the slot the answer belongs to. This used to write the value
-		// into every tab and every slot, which handed a mashup team three "free"
-		// artists from one powerup and put tab 1's answer under tab 2's inputs.
-		const ti = data.tabs.findIndex((t) => t.id === tabId);
-		if (ti >= 0) applyRevealToDraft(reveal, ti);
+	// Every reveal — free_answer's single one, x_ray's five — arrives here as a list and is applied one at a time by the SAME two steps:
+	// key the badge on (tab, slot, field), then pre-fill that one slot. The loop is
+	// the only difference between one reveal and many; there is no second apply path.
+	function onPowerupActivated(reveals: RevealResult[]) {
+		const added: Record<string, string> = {};
+		for (const reveal of reveals) {
+			const { value, field, tabId, slotIndex } = reveal;
+			added[freeAnswerRevealKey(tabId, slotIndex, field)] = value;
+			// Pre-fill ONLY the slot the answer belongs to. This used to write the value
+			// into every tab and every slot, which handed a mashup team three "free"
+			// artists from one powerup and put tab 1's answer under tab 2's inputs.
+			const ti = data.tabs.findIndex((t) => t.id === tabId);
+			if (ti >= 0) applyRevealToDraft(reveal, ti);
+		}
+		freeAnswerReveals = { ...freeAnswerReveals, ...added };
 	}
 
 	// A reveal belongs to one (tab, slot, field); the badge shows only there.
@@ -1494,6 +1512,7 @@
 					variantFields={activeTab?.fields ?? variantFields.map((f) => String(f))}
 					tabId={activeTab?.id}
 					slotIndex={activeSlotEffective}
+					{revealTabs}
 					setTeams={data.setTeams}
 					onactivated={onPowerupActivated}
 				/>

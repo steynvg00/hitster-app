@@ -8,6 +8,7 @@ import {
 	loadActiveEffects,
 	getTeamsWithActiveTimedAttempt,
 	parsePredictedPct,
+	parseRevealTargets,
 	type EarnedPowerup
 } from '$lib/server/powerups';
 import { scoreAndPersistSubmission } from '$lib/server/submit';
@@ -788,6 +789,7 @@ export const actions: Actions = {
 			field,
 			targetTeamId,
 			...parseRevealAddress(fd),
+			...parseRevealTargets(fd),
 			...parsePredictedPct(fd)
 		});
 		if (!result.success) return fail(400, { activateError: result.error });
@@ -797,6 +799,9 @@ export const actions: Actions = {
 			revealedTags: result.revealedTags,
 			revealedTabId: result.revealedTabId,
 			revealedSlotIndex: result.revealedSlotIndex,
+			// x_ray: the whole list. free_answer leaves this undefined and
+			// keeps using the four singular fields above — untouched contract.
+			reveals: result.reveals,
 			blocked: result.blocked
 		};
 	},
