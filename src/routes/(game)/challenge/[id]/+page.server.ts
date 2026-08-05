@@ -14,6 +14,7 @@ import { getTeamsInSet } from '$lib/server/randomize';
 import type { AnswerField, ChallengeResult, TabAnswer, EffectsConfig } from '$lib/types/index.js';
 import {
 	resolveChallengeFields,
+	resolveTabFields,
 	fieldMapsFromResolved,
 	resolveArtistBonus,
 	FIELD_POOL_TABLE,
@@ -310,6 +311,14 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		// The per-slot field fold is the shared thresholdOfFields ($lib/threshold);
 		// grouping is folded in below from stored scores (this loader rebuilds only
 		// the non-grouping FieldResults, unlike the submit path).
+		//
+		// C3b: the NON-grouping field maps below are resolved PER TAB
+		// (resolveTabFields), so the reload matches the submit path once an override
+		// exists. Grouping's presence/max/bonus (groupingMaxPts / hasGroupingField /
+		// groupingIsBonusField) DELIBERATELY stays challenge-wide here — that
+		// by-name grouping special-casing is untouched (C6 territory). With every
+		// tab NULL both are the challenge-wide values, so this is bit-identical.
+		const tabByPosition = new Map(tabs.map((t) => [t.position, t]));
 		const groupingMaxPts = fieldPoints['grouping'] ?? DEFAULT_FIELD_MAX['grouping'] ?? 10;
 		const hasGroupingField = variantFields.includes('grouping' as AnswerField);
 		const groupingIsBonusField = bonusFields.has('grouping');
@@ -318,18 +327,32 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 
 		// Rebuild result from stored TabAnswer[]
 		const tabFieldResults = (Array.isArray(answersArray) ? answersArray : []).map((tabAns, i) => {
+			// Per-tab field maps for the non-grouping rebuild (inherit challenge-wide
+			// when this tab has no override / no matching row).
+			const {
+				fields: tabVariantFields,
+				fieldModes: tabFieldModes,
+				fieldPoints: tabFieldPoints,
+				bonusFields: tabBonusFields
+			} = fieldMapsFromResolved(
+				resolveTabFields(
+					tabByPosition.get(tabAns.tab_position),
+					{ variant, points_config: pcRaw },
+					variantDefaultPoints
+				)
+			);
 			const slotResults = (tabAns.source_answers ?? []).map((sa, j) => {
 				const track = sa.matched_source_track_id
 					? trackDataMap.get(sa.matched_source_track_id)
 					: undefined;
 				const fields = track
 					? buildFieldResults(
-							variantFields.filter((f) => f !== 'grouping') as AnswerField[],
+							tabVariantFields.filter((f) => f !== 'grouping') as AnswerField[],
 							sa.field_values as Record<string, string>,
 							track,
-							fieldModes,
-							fieldPoints,
-							bonusFields,
+							tabFieldModes,
+							tabFieldPoints,
+							tabBonusFields,
 							artistBonus
 						)
 					: [];
@@ -352,8 +375,8 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 				const total = sa.total ?? fields.reduce((s, fr) => s + fr.score, 0);
 				const maxTotal =
 					fields.reduce((s, fr) => s + fr.maxScore, 0) ||
-					variantFields.reduce(
-						(s, f) => s + (fieldPoints[f] ?? DEFAULT_FIELD_MAX[f as AnswerField] ?? 10),
+					tabVariantFields.reduce(
+						(s, f) => s + (tabFieldPoints[f] ?? DEFAULT_FIELD_MAX[f as AnswerField] ?? 10),
 						0
 					);
 				return {

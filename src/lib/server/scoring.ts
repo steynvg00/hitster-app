@@ -104,6 +104,40 @@ const VALID_INPUT_MODES: readonly InputMode[] = [
 	'slider'
 ];
 
+/**
+ * Parse a raw `fields[]` array (either points_config.fields[] or, from C3b, a
+ * tab's fields[] override — deliberately the same row shape) into ResolvedField[].
+ * Skips malformed/unknown rows gracefully (unknown name → dropped; missing/invalid
+ * input_mode → resolveMode fallback; missing/invalid max_points → resolvePoints
+ * fallback). Returns [] when no row was valid, so callers can fall back.
+ *
+ * The resolveMode/resolvePoints closures carry the fallback source (saved modes,
+ * three-tier points), so an under-specified row resolves exactly as it would have
+ * without an explicit fields[]. Shared by resolveChallengeFields and
+ * resolveTabFields — one shape, one parser (no second shape concept).
+ */
+function parseFieldRows(
+	rows: unknown[],
+	resolveMode: (f: AnswerField) => InputMode,
+	resolvePoints: (f: AnswerField) => number
+): ResolvedField[] {
+	const out: ResolvedField[] = [];
+	for (const raw of rows) {
+		if (!raw || typeof raw !== 'object') continue;
+		const row = raw as Record<string, unknown>;
+		const name = row.name as AnswerField;
+		if (!KNOWN_FIELDS.includes(name)) continue; // ignore unknown names gracefully
+		const modeRaw = row.input_mode as InputMode;
+		const input_mode = VALID_INPUT_MODES.includes(modeRaw) ? modeRaw : resolveMode(name);
+		const max_points =
+			typeof row.max_points === 'number' && Number.isFinite(row.max_points)
+				? row.max_points
+				: resolvePoints(name);
+		out.push({ name, input_mode, max_points, is_bonus: row.is_bonus === true });
+	}
+	return out;
+}
+
 export function resolveChallengeFields(
 	variant: string,
 	pointsConfig: unknown,
@@ -121,22 +155,8 @@ export function resolveChallengeFields(
 	const resolvePoints = (f: AnswerField): number =>
 		challengeFieldPoints[f] ?? variantDefaultPoints[f] ?? DEFAULT_FIELD_MAX[f] ?? 10;
 
-	const configured = Array.isArray(pc.fields) ? (pc.fields as unknown[]) : null;
-	if (configured && configured.length > 0) {
-		const out: ResolvedField[] = [];
-		for (const raw of configured) {
-			if (!raw || typeof raw !== 'object') continue;
-			const row = raw as Record<string, unknown>;
-			const name = row.name as AnswerField;
-			if (!KNOWN_FIELDS.includes(name)) continue; // ignore unknown names gracefully
-			const modeRaw = row.input_mode as InputMode;
-			const input_mode = VALID_INPUT_MODES.includes(modeRaw) ? modeRaw : resolveMode(name);
-			const max_points =
-				typeof row.max_points === 'number' && Number.isFinite(row.max_points)
-					? row.max_points
-					: resolvePoints(name);
-			out.push({ name, input_mode, max_points, is_bonus: row.is_bonus === true });
-		}
+	if (Array.isArray(pc.fields) && pc.fields.length > 0) {
+		const out = parseFieldRows(pc.fields as unknown[], resolveMode, resolvePoints);
 		// Only take the configured path if at least one row was valid — an all-unknown
 		// fields[] falls through to the variant default rather than a fieldless challenge.
 		if (out.length > 0) return out;
@@ -149,6 +169,62 @@ export function resolveChallengeFields(
 		max_points: resolvePoints(name),
 		is_bonus: false
 	}));
+}
+
+// ─── Per-tab fields resolver (C3b) ────────────────────────────────────────────
+//
+// The SINGLE source of truth for "which fields does THIS TAB have". A tab may
+// carry a `fields` JSONB override (migration 0068) with the exact same row shape
+// as points_config.fields[]. When present and usable it wins for that tab only;
+// otherwise the tab inherits the challenge-wide resolution unchanged.
+//
+// Every scoring/resolution consumer that used to read the challenge-wide fields
+// per tab (submit's scoreSubmission, computeSetMaxScore, the challenge page's
+// priorResult rebuild) routes through here, so the moment C3c writes an override
+// all three stay consistent and can't diverge — the same discipline C3a applied
+// to the threshold rule.
+//
+// Location: kept in $lib/server/scoring.ts next to resolveChallengeFields (which
+// it delegates to and reuses the parser of). ALL current consumers are
+// server-side — submit.ts, computeSetMaxScore, and the challenge +page.server.ts
+// load. The client (+page.svelte) renders from server-passed data and never
+// resolves fields itself, so — unlike thresholdOfFields ($lib/threshold, which a
+// .svelte file imports) — there is no client consumer forcing this out of
+// $lib/server. `npm run build` verifies the boundary holds.
+//
+// Edge cases (safest = inherit, "bij twijfel: erven"):
+//   - fields NULL / undefined      → inherit (the default state of every row today)
+//   - fields not an array          → inherit (malformed; no override)
+//   - fields = []  (empty array)   → inherit (an empty override is "no override",
+//                                     never "a tab with zero fields")
+//   - fields all-unknown/malformed → inherit (parseFieldRows yields [] → fall back)
+//   - fields with ≥1 valid row     → OVERRIDE with the parsed rows; under-specified
+//                                     rows fall back to the CHALLENGE's field_modes/
+//                                     field_points (the natural fallback for a tab).
+export function resolveTabFields(
+	tab: { fields?: unknown } | null | undefined,
+	challenge: { variant: string; points_config: unknown },
+	variantDefaultPoints: Record<string, number> = {}
+): ResolvedField[] {
+	const raw = tab?.fields;
+	if (Array.isArray(raw) && raw.length > 0) {
+		// Parse the tab override with the SAME parser + fallback source as
+		// points_config.fields[]: the challenge's saved modes and three-tier points.
+		const pc = (challenge.points_config ?? {}) as Record<string, unknown>;
+		const savedModes = (pc.field_modes ?? {}) as Record<string, string>;
+		const challengeFieldPoints = (pc.field_points ?? {}) as Record<string, number>;
+		const resolveMode = (f: AnswerField): InputMode =>
+			(savedModes[f] as InputMode) ?? DEFAULT_INPUT_MODES[challenge.variant]?.[f] ?? 'open_text';
+		const resolvePoints = (f: AnswerField): number =>
+			challengeFieldPoints[f] ?? variantDefaultPoints[f] ?? DEFAULT_FIELD_MAX[f] ?? 10;
+
+		const out = parseFieldRows(raw as unknown[], resolveMode, resolvePoints);
+		if (out.length > 0) return out;
+	}
+
+	// NULL / empty / malformed / all-unknown → inherit the challenge-wide fields,
+	// bit-identical to pre-C3b behaviour.
+	return resolveChallengeFields(challenge.variant, challenge.points_config, variantDefaultPoints);
 }
 
 /**
@@ -1112,6 +1188,15 @@ export type TabInput = {
 	sourceTracks: TabSourceTrackData[];
 	clips: TabClipData[];
 	playerDraft: SlotDraft[]; // indexed by slot
+	// C3b: optional per-tab resolved field maps (from resolveTabFields via
+	// fieldMapsFromResolved). When present they OVERRIDE the challenge-wide
+	// maps for THIS tab; when absent the challenge-wide params below are used.
+	// The real submit path always fills this (resolveTabFields never returns
+	// null — a NULL tab yields the challenge-wide maps), so the fallback is for
+	// fixtures/tests that pass challenge-wide maps and no per-tab override.
+	// Shape is exactly fieldMapsFromResolved's return (its `fields` key is the
+	// field-name list).
+	fieldMaps?: ReturnType<typeof fieldMapsFromResolved>;
 };
 
 export function scoreSubmission(
@@ -1138,15 +1223,19 @@ export function scoreSubmission(
 
 	for (let i = 0; i < tabs.length; i++) {
 		const tab = tabs[i];
+		// C3b: prefer this tab's own resolved maps (a per-tab override) and fall
+		// back to the challenge-wide params. With every tab NULL (this batch) the
+		// per-tab maps ARE the challenge-wide maps, so scoring is bit-identical.
+		const tf = tab.fieldMaps;
 		const { slotResults, tabTotal, tabMaxTotal, tabThresholdTotal, tabThresholdMax, sourceAnswers } =
 			scoreTab(
-				variantFields,
-				fieldModes,
-				fieldPoints,
+				tf?.fields ?? variantFields,
+				tf?.fieldModes ?? fieldModes,
+				tf?.fieldPoints ?? fieldPoints,
 				tab.sourceTracks,
 				tab.clips,
 				tab.playerDraft,
-				bonusFields,
+				tf?.bonusFields ?? bonusFields,
 				artistBonus
 			);
 		thresholdTotal += tabThresholdTotal;
@@ -1255,6 +1344,7 @@ export async function computeSetMaxScore(
 		id: string;
 		challenge_id: string;
 		mashup_id?: string | null;
+		fields?: unknown; // C3b per-tab override (migration 0068)
 	}>;
 	if (tabs.length === 0) return 0;
 	const tabIds = tabs.map((t) => t.id);
@@ -1321,13 +1411,15 @@ export async function computeSetMaxScore(
 	for (const ch of challenges) {
 		const variant = ch.variant;
 		const vdPoints = vdPointsByVariant.get(variant) ?? {};
-		// Route field resolution through the single source of truth so bonus fields
-		// are excluded from the cumulative-threshold denominator.
-		const resolved = resolveChallengeFields(variant, ch.points_config, vdPoints);
-		const { fields: variantFields, fieldModes, fieldPoints, bonusFields } =
-			fieldMapsFromResolved(resolved);
 
 		for (const tab of tabsByChallenge.get(ch.id) ?? []) {
+			// C3b: resolve PER TAB via the single source of truth so a tab override
+			// changes this tab's denominator contribution — and bonus fields are
+			// still excluded. NULL tab → challenge-wide, bit-identical to pre-C3b.
+			const { fields: variantFields, fieldModes, fieldPoints, bonusFields } =
+				fieldMapsFromResolved(
+					resolveTabFields(tab, { variant, points_config: ch.points_config }, vdPoints)
+				);
 			const resolvedSrcs = getSourceTracksForTab(
 				variant,
 				tab,
