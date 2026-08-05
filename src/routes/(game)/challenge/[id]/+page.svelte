@@ -231,6 +231,17 @@
 	let activeTabIndex = $state(0);
 	const activeTab = $derived(data.tabs[activeTabIndex]);
 	const isMultiTab = $derived(data.tabs.length > 1);
+	const isLastTab = $derived(activeTabIndex === data.tabs.length - 1);
+
+	// The ONE tab-switch path. The tab pills, Previous and Next all call this — a
+	// second navigation route would be a second way to miss the {#key activeTabIndex}
+	// remount and the draft-persist $effect that both hang off this single mutation.
+	// Drafts themselves live in allDrafts/allYearValues/artistTags, which are indexed
+	// per tab and never rebuilt on switch, so any tab order is non-destructive.
+	function goToTab(i: number) {
+		if (i < 0 || i > data.tabs.length - 1) return;
+		activeTabIndex = i;
+	}
 	// Answer slot tabs (mashup + fragments only)
 	let activeSlotIndex = $state(0);
 
@@ -345,6 +356,20 @@
 		if (submitting || result) return;
 		submitting = true;
 		formEl?.requestSubmit();
+	}
+
+	// Enter must never submit this form — teams were finishing a multi-tab challenge
+	// with a half answer by hitting Enter in a field (submit is is_final). Bubble
+	// phase on purpose: a component that owns Enter itself (ArtistTagInput adds a
+	// tag) has already run its own handler by the time this fires, and
+	// preventDefault only kills the browser's implicit form submission, never a
+	// handler that already ran. TEXTAREA keeps its newline; BUTTON keeps
+	// Enter-as-click (relevant only on the last tab, where Submit exists).
+	function onFormKeydown(e: KeyboardEvent) {
+		if (e.key !== 'Enter') return;
+		const tag = (e.target as HTMLElement | null)?.tagName;
+		if (tag === 'TEXTAREA' || tag === 'BUTTON') return;
+		e.preventDefault();
 	}
 
 	onMount(() => {
@@ -1261,7 +1286,7 @@
 				{#each data.tabs as _tab, i}
 					<button
 						type="button"
-						onclick={() => (activeTabIndex = i)}
+						onclick={() => goToTab(i)}
 						class="shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors {activeTabIndex ===
 						i
 							? 'text-white'
@@ -1387,8 +1412,10 @@
 			</p>
 		{/if}
 
+		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 		<form
 			bind:this={formEl}
+			onkeydown={onFormKeydown}
 			method="POST"
 			action="?/submit"
 			use:enhance={({ formData }) => {
@@ -1601,14 +1628,55 @@
 				{/if}
 			{/key}
 
-			<button
-				type="submit"
-				disabled={!canSubmit}
-				class="w-full rounded-xl py-4 text-lg font-black tracking-widest text-white uppercase transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-				style="background-color: {teamHex};"
-			>
-				{submitting ? 'Submitting…' : 'Submit'}
-			</button>
+			<!--
+				Submit exists ONLY on the last tab. Every earlier tab gets Next instead
+				(type="button", so it can't submit), which is what stops a team from
+				finishing a multi-tab challenge with a half answer — submit is is_final.
+				A single-tab challenge takes the {:else} branch and is unchanged.
+				Auto-submit at timer 0 does NOT go through this button: triggerSubmit()
+				calls formEl.requestSubmit() with no submitter, which submits the form
+				itself from whatever tab the team is parked on.
+			-->
+			{#if isMultiTab}
+				<div class="flex gap-3">
+					<button
+						type="button"
+						onclick={() => goToTab(activeTabIndex - 1)}
+						disabled={activeTabIndex === 0}
+						class="rounded-xl border border-zinc-700 px-6 py-4 text-lg font-black tracking-widest text-zinc-300 uppercase transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
+					>
+						Previous
+					</button>
+					{#if isLastTab}
+						<button
+							type="submit"
+							disabled={!canSubmit}
+							class="flex-1 rounded-xl py-4 text-lg font-black tracking-widest text-white uppercase transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+							style="background-color: {teamHex};"
+						>
+							{submitting ? 'Submitting…' : 'Submit'}
+						</button>
+					{:else}
+						<button
+							type="button"
+							onclick={() => goToTab(activeTabIndex + 1)}
+							class="flex-1 rounded-xl py-4 text-lg font-black tracking-widest text-white uppercase transition-colors hover:opacity-90"
+							style="background-color: {teamHex};"
+						>
+							Next
+						</button>
+					{/if}
+				</div>
+			{:else}
+				<button
+					type="submit"
+					disabled={!canSubmit}
+					class="w-full rounded-xl py-4 text-lg font-black tracking-widest text-white uppercase transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+					style="background-color: {teamHex};"
+				>
+					{submitting ? 'Submitting…' : 'Submit'}
+				</button>
+			{/if}
 		</form>
 	</div>
 {/if}
