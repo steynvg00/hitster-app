@@ -32,7 +32,8 @@
 		"bots:verify-all-seeing-eye": "tsx tests/bots/verify-all-seeing-eye.ts",
 		"bots:verify-resurrection": "tsx tests/bots/verify-resurrection.ts",
 		"bots:fixtures": "tsx scripts/gen-fixtures.ts",
-		"seed:mechanics": "tsx scripts/seed-mechanics-set.ts"
+		"seed:mechanics": "tsx scripts/seed-mechanics-set.ts",
+		"bots:verify-timer-autosubmit": "tsx tests/bots/verify-timer-autosubmit.ts"
 	},
 	"devDependencies": {
 		"@eslint/compat": "^2.0.4",
