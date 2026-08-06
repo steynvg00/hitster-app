@@ -138,6 +138,84 @@ export function mergePowerupConfig(
 	};
 }
 
+// ─── Writing powerup_config back ─────────────────────────────────────────────
+//
+// THE RULE: never write a config that was not merged onto the STORED object.
+//
+// game_sets.powerup_config is one jsonb column carrying three families of keys,
+// and parseConfig models only two of them:
+//
+//   v2 earning keys     threshold_mode, band_mode, thresholds_percent, types,
+//                       categories, computed_set_max          → modelled
+//   per-type overrides  types.<id>.{enabled,threshold,chance,…}, including the
+//                       values migrations 0070/0071/0072 seeded   → modelled
+//   token-shop keys     starting_tokens, per_correct_challenge, streak_bonuses,
+//                       time_tick_minutes, tokens_per_tick     → NOT modelled
+//
+// parseConfig builds a fresh object literal (see its return above), so a
+// parse → merge → write round-trip silently drops the entire token-shop family.
+// That is not a hypothetical: the console's powerup grid renders in BOTH modes,
+// so a per-type toggle taken while a set was in token_shop mode used to wipe the
+// set's token config. The worse variant was a write that skipped the merge
+// altogether and replaced the whole column with a freshly-built default —
+// every host override and every migration seed gone on a single click, even a
+// click on the mode that was already active.
+//
+// These three helpers are the only sanctioned way to produce the value handed to
+// `.update({ powerup_config })`. Each returns the WHOLE stored object with the
+// caller's change applied on top, so keys nobody modelled ride along untouched.
+// They differ only in what wins a collision:
+//
+//   mergeConfigPatch      a v2 patch wins over what is stored
+//   mergeConfigKeys       the given raw keys win over what is stored
+//   fillConfigDefaults    what is stored wins over the given defaults
+//
+// tests/bots/verify-config-merge-safe.ts pins both their behaviour and the rule
+// itself — it reads the write sites and fails if one of them stops merging.
+
+/** The stored jsonb as a plain object. Anything that is not one reads as `{}`. */
+function rawConfigObject(raw: unknown): Record<string, unknown> {
+	return raw && typeof raw === 'object' && !Array.isArray(raw)
+		? { ...(raw as Record<string, unknown>) }
+		: {};
+}
+
+/**
+ * Apply a v2 patch and return the full object to persist. The v2 view is
+ * normalized (so a legacy config is upgraded on write) and the patch wins, but
+ * every unmodelled sibling key survives.
+ */
+export function mergeConfigPatch(
+	raw: unknown,
+	patch: Partial<PowerupConfigV2>
+): Record<string, unknown> {
+	return { ...rawConfigObject(raw), ...mergePowerupConfig(parseConfig(raw), patch) };
+}
+
+/**
+ * Apply keys parseConfig does not model — the token-shop family — and return the
+ * full object to persist. Deliberately does NOT run the v2 normalization: a
+ * token-shop save has no business rewriting the earning ladder.
+ */
+export function mergeConfigKeys(
+	raw: unknown,
+	keys: Record<string, unknown>
+): Record<string, unknown> {
+	return { ...rawConfigObject(raw), ...keys };
+}
+
+/**
+ * Fill in keys that are ABSENT from the stored config, never overwriting one
+ * that is present. This is how a mode switch seeds that mode's defaults without
+ * destroying anything — including on a repeat click, which becomes a no-op.
+ */
+export function fillConfigDefaults(
+	raw: unknown,
+	defaults: Record<string, unknown>
+): Record<string, unknown> {
+	return { ...defaults, ...rawConfigObject(raw) };
+}
+
 // ─── lucky_dice: the roll ─────────────────────────────────────────────────────
 //
 // The range is a SETTING, not a constant: it is read from
@@ -580,6 +658,49 @@ export type EarnedPowerup = {
 
 // ─── Earning v2: pure planner (piece 3a) ─────────────────────────────────────
 
+/**
+ * Lifeline's designed drop rate: it appears on about half the submissions that
+ * qualify for it (a LOW score — it is an inverse type, migration 0071:85).
+ *
+ * This constant exists because that 0.5 used to live in exactly one place: a
+ * per-set jsonb seed written by migration 0071:113-127. A migration can only
+ * reach rows that exist when it runs, and neither set-creation path writes a
+ * `types` subtree — `create` inserts no powerup_config at all (so the column
+ * default from migration 0033:18-20 applies) and `createFromPreset` writes a
+ * preset literal, none of which carries one. Every set made after that
+ * migration therefore fell through to the generic `?? 1` below and dropped
+ * Lifeline at DOUBLE the designed rate, silently.
+ *
+ * lucky_dice and power_spin never had this problem because each pairs its seed
+ * with a code constant and a resolver (LUCKY_DICE_DEFAULT_MIN/MAX above,
+ * POWER_SPIN_DEFAULT_TIER_S_CHANCE in $lib/powerups-meta). Their seeds are
+ * belt-and-braces; Lifeline's was load-bearing. This is Lifeline's half of that
+ * same pattern, and it is the fix rather than a migration for one reason: a
+ * migration cannot reach a set that does not exist yet.
+ */
+export const LIFELINE_DEFAULT_CHANCE = 0.5;
+
+/**
+ * Per-type earn-chance defaults, for the types whose designed rate is not 1.
+ * A type absent here keeps the historical `?? 1`, so this map changes nothing
+ * for the other nineteen.
+ */
+const DEFAULT_TYPE_CHANCE: Record<string, number> = {
+	lifeline: LIFELINE_DEFAULT_CHANCE
+};
+
+/**
+ * The probability one eligible type actually drops: the set's own value if the
+ * host (or a migration) set one, otherwise the type's designed default,
+ * otherwise 1. Used by BOTH earning channels so the ladder and the inverse
+ * channel can never disagree about a type's rate.
+ */
+export function resolveTypeChance(cfg: PowerupConfigV2, typeId: string): number {
+	const override = cfg.types?.[typeId]?.chance;
+	if (typeof override === 'number' && Number.isFinite(override)) return override;
+	return DEFAULT_TYPE_CHANCE[typeId] ?? 1;
+}
+
 export type PlannedAward = { typeId: string; channel: 'ladder' | 'inverse' };
 
 export type PlanContext = {
@@ -607,7 +728,8 @@ export type PlanContext = {
  *    enabled (override ?? enabled_by_default), category-on, and whose per-type
  *    threshold (override ?? default_min_score_pct) ≤ submissionPct ≤ default_max_score_pct.
  *  - x bands = up to x awards: each fired band rolls each pool type against its
- *    chance (override ?? 1); if any survive, one is randomly picked.
+ *    chance (resolveTypeChance: override ?? the type's designed default ?? 1); if
+ *    any survive, one is randomly picked.
  *  - Inverse channel (per submission, ladder-independent): each enabled inverse type
  *    whose submissionPct < its bound (override ?? default_max_score_pct) rolls its
  *    chance. "Inverse" is resolved as `override.inverse ?? type.default_inverse`
@@ -651,7 +773,7 @@ export function planAwards(
 
 	// Ladder channel: one roll-and-pick per fired band.
 	for (let i = 0; i < crossed.length; i++) {
-		const rolled = pool.filter((t) => rand() < (cfg.types[t.id]?.chance ?? 1));
+		const rolled = pool.filter((t) => rand() < resolveTypeChance(cfg, t.id));
 		if (rolled.length) {
 			const pick = rolled[Math.floor(rand() * rolled.length)];
 			awards.push({ typeId: pick.id, channel: 'ladder' });
@@ -666,7 +788,7 @@ export function planAwards(
 		if (!(ov?.enabled ?? t.enabled_by_default)) continue;
 		if (!(cfg.categories[t.category] ?? true)) continue;
 		const bound = ov?.threshold ?? t.default_max_score_pct;
-		if (ctx.submissionPct < bound && rand() < (ov?.chance ?? 1)) {
+		if (ctx.submissionPct < bound && rand() < resolveTypeChance(cfg, t.id)) {
 			awards.push({ typeId: t.id, channel: 'inverse' });
 		}
 	}
@@ -719,17 +841,25 @@ async function materializeAward(
 	return { teamPowerupId: inserted.id, type };
 }
 
-/** Read the cached set-max, or compute + cache it (cumulative mode only). */
+/**
+ * Read the cached set-max, or compute + cache it (cumulative mode only).
+ *
+ * Takes the RAW stored config alongside the parsed one because this writes: the
+ * cache is a single key, and merging it onto the parsed view would drop the
+ * token-shop family with it (see "Writing powerup_config back" above). Nothing
+ * about the earning decision changes — only what survives the write.
+ */
 async function getOrComputeSetMax(
 	supabase: SupabaseClient<Database>,
 	setId: string,
-	cfg: PowerupConfigV2
+	cfg: PowerupConfigV2,
+	rawConfig: unknown
 ): Promise<number> {
 	if (typeof cfg.computed_set_max === 'number') return cfg.computed_set_max;
 	const setMax = await computeSetMaxScore(supabase, setId);
 	// Cache back into powerup_config. NOT invalidated when the set's challenge list
 	// changes (that goes through a different action) — acceptable party-game staleness.
-	const merged = mergePowerupConfig(cfg, { computed_set_max: setMax });
+	const merged = mergeConfigPatch(rawConfig, { computed_set_max: setMax });
 	await supabase
 		.from('game_sets')
 		.update({ powerup_config: merged as never })
@@ -785,7 +915,7 @@ export async function awardPowerups(
 			.eq('id', teamId)
 			.maybeSingle();
 		lastThresholdCrossed = team?.last_threshold_crossed ?? 0;
-		const setMax = await getOrComputeSetMax(supabase, setId, cfg);
+		const setMax = await getOrComputeSetMax(supabase, setId, cfg, gameSet.powerup_config);
 		cumulativePct = setMax > 0 ? ((team?.score ?? 0) / setMax) * 100 : 0;
 	}
 
