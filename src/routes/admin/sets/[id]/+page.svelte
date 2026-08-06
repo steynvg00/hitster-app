@@ -13,6 +13,12 @@
 	import { getVariantIcon, getVariantColor } from '$lib/variants';
 	import HelpTooltip from '$lib/components/ui/HelpTooltip.svelte';
 	import { ChevronDown, ChevronRight } from 'lucide-svelte';
+	// X_RAY_DEFAULT_BUDGET / POWER_SPIN_DEFAULT_TIER_S_CHANCE live in the
+	// client-safe $lib/powerups-meta. lucky_dice's 1–6 default is NOT re-exported
+	// there — it's defined alongside resolveDiceRange in $lib/server/powerups,
+	// which SvelteKit forbids importing from a .svelte file — so it's a literal
+	// below, matching resolveDiceRange's fallback.
+	import { X_RAY_DEFAULT_BUDGET, POWER_SPIN_DEFAULT_TIER_S_CHANCE } from '$lib/powerups-meta';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -322,7 +328,22 @@
 	let bandMode = $state<BandMode>(data.powerupConfigV2.band_mode);
 
 	// Token shop config state
-	const initShop = () => data.powerupSetConfig as TokenShopConfig;
+	// initShop() casts the stored config to TokenShopConfig, but a set whose
+	// powerup_mode is token_shop can still be missing the token-shop keys (any
+	// config predating fillConfigDefaults, or written by a path that doesn't seed
+	// them) — the cast doesn't make them exist. streak_bonuses.map() below is the
+	// sharp edge: without a fallback it dereferences undefined and crashes the
+	// console on page load.
+	const initShop = () => {
+		const cfg = data.powerupSetConfig as Partial<TokenShopConfig>;
+		return {
+			starting_tokens: cfg.starting_tokens ?? 0,
+			per_correct_challenge: cfg.per_correct_challenge ?? 1,
+			streak_bonuses: cfg.streak_bonuses ?? [],
+			time_tick_minutes: cfg.time_tick_minutes ?? null,
+			tokens_per_tick: cfg.tokens_per_tick ?? 1
+		} satisfies TokenShopConfig;
+	};
 	let earningStarting = $state(data.powerupMode === 'token_shop' ? initShop().starting_tokens : 0);
 	let earningPerCorrect = $state(
 		data.powerupMode === 'token_shop' ? initShop().per_correct_challenge : 1
@@ -364,11 +385,18 @@
 
 	// Local UI-only collapse toggle — NOT the server toggleCategory action below
 	// (which persists powerup_config.categories). Different concepts, similar name.
-	function toggleCollapsed(cat: string) {
-		collapsedCategories = { ...collapsedCategories, [cat]: !collapsedCategories[cat] };
+	// Shared by category groups (default expanded) and the two non-category
+	// collapsibles below — the rules form and the advanced-settings block (default
+	// collapsed) — so collapse state and its localStorage persistence stay in one
+	// place regardless of what's being collapsed.
+	function toggleCollapsed(key: string) {
+		collapsedCategories = { ...collapsedCategories, [key]: !collapsedCategories[key] };
 		if (typeof localStorage !== 'undefined') {
 			localStorage.setItem(COLLAPSE_KEY, JSON.stringify(collapsedCategories));
 		}
+	}
+	function isCollapsed(key: string, defaultCollapsed: boolean): boolean {
+		return collapsedCategories[key] ?? defaultCollapsed;
 	}
 
 	// Powerup types grouped by category (piece 2: powerup_types, not the legacy
@@ -1183,8 +1211,24 @@
 				{/each}
 			</div>
 
-			<!-- Conditional rules form -->
-			<div class="mt-4 rounded-lg border border-zinc-700 bg-zinc-800/50 p-4">
+			<!-- Conditional rules form — collapsed by default, same collapse pattern as
+			     the category groups below (localStorage-persisted via toggleCollapsed) -->
+			<button
+				type="button"
+				onclick={() => toggleCollapsed('rules')}
+				class="mt-4 flex w-full items-center gap-2 text-left"
+			>
+				{#if isCollapsed('rules', true)}
+					<ChevronRight size={14} class="shrink-0 text-zinc-500" />
+				{:else}
+					<ChevronDown size={14} class="shrink-0 text-zinc-500" />
+				{/if}
+				<span class="text-xs font-semibold tracking-widest text-zinc-500 uppercase">
+					{powerupMode === 'threshold' ? 'Score threshold rules' : 'Token earning rules'}
+				</span>
+			</button>
+			{#if !isCollapsed('rules', true)}
+			<div class="mt-2 rounded-lg border border-zinc-700 bg-zinc-800/50 p-4">
 				{#if powerupMode === 'threshold'}
 					<div class="mb-1 flex items-center gap-1">
 						<h3 class="text-xs font-semibold tracking-widest text-zinc-500 uppercase">
@@ -1381,15 +1425,18 @@
 					</form>
 				{/if}
 			</div>
+			{/if}
 
-			<!-- Powerup grid — grouped by category -->
+			<!-- Powerup grid — grouped by category. Compact overview: icon + name +
+			     on/off only. Per-type threshold/chance config moves to the
+			     advanced-settings block. -->
 			<div class="mt-4 space-y-3">
 				<h3 class="text-xs font-semibold tracking-widest text-zinc-500 uppercase">
 					Powerup Config
 				</h3>
 				{#each powerupsByCategory as { category, powerups: catPowerups }}
 					{@const catEnabled = categoryEnabled(category)}
-					{@const collapsed = !!collapsedCategories[category]}
+					{@const collapsed = isCollapsed(category, false)}
 					{@const workingCount = catPowerups.filter((p) => !p.coming_soon).length}
 					{@const workingEnabledCount = catPowerups.filter(
 						(p) => !p.coming_soon && p.effective_enabled
@@ -1438,26 +1485,36 @@
 							{/if}
 						</div>
 
-						<!-- Powerup rows (collapsible body) -->
+						<!-- Powerup cards (collapsible body) -->
 						{#if !collapsed}
 							{#if catPowerups.length === 0}
 								<div class="border-t border-zinc-800 px-4 py-3 text-xs text-zinc-600">
 									No {category} powerups yet.
 								</div>
 							{:else}
-								<div class="border-t border-zinc-800">
+								<div
+									class="grid grid-cols-2 gap-2 border-t border-zinc-800 p-3 sm:grid-cols-3 lg:grid-cols-4"
+								>
 									{#each catPowerups as p (p.id)}
 										<div
-											class="flex flex-wrap items-center gap-3 border-b border-zinc-800/60 px-4 py-3 last:border-0
+											class="flex flex-col gap-2 rounded-lg border border-zinc-800 bg-zinc-950/40 p-3
 												{p.coming_soon || !p.effective_enabled ? 'opacity-50' : ''}"
 										>
-											<!-- Icon + name -->
-											<div class="min-w-0 flex-1">
-												<div class="flex items-center gap-2">
+											<!-- Icon + name + info button (description hidden until clicked) -->
+											<div class="flex items-start justify-between gap-1">
+												<div class="flex min-w-0 items-center gap-1.5">
 													{#if p.icon}
 														<span class="text-base leading-none">{p.icon}</span>
 													{/if}
-													<span class="text-sm font-semibold text-zinc-200">{p.name}</span>
+													<span class="truncate text-sm font-semibold text-zinc-200">{p.name}</span>
+												</div>
+												{#if p.description}
+													<HelpTooltip text={p.description} />
+												{/if}
+											</div>
+
+											{#if p.has_override || p.coming_soon}
+												<div class="flex flex-wrap items-center gap-1">
 													{#if p.has_override}
 														<span class="text-xs text-amber-400">edited</span>
 													{/if}
@@ -1469,100 +1526,30 @@
 														</span>
 													{/if}
 												</div>
-												<p class="mt-0.5 text-xs text-zinc-500">{p.description}</p>
-											</div>
+											{/if}
 
 											{#if !p.coming_soon}
-												<!-- Enabled toggle -->
+												<!-- Enabled toggle — same ?/saveTypeConfig form/handler as before, only
+												     moved to the bottom of the card. -->
 												<form
 													method="POST"
 													action="?/saveTypeConfig"
 													use:enhance={() =>
 														async ({ update }) =>
 															update({ reset: false })}
+													class="mt-auto"
 												>
 													<input type="hidden" name="type_id" value={p.id} />
 													<input type="hidden" name="enabled" value={String(!p.effective_enabled)} />
 													<button
 														type="submit"
-														class="flex items-center gap-1.5 rounded border px-2 py-1 text-xs font-medium transition-colors
+														class="flex w-full items-center justify-center gap-1.5 rounded border px-2 py-1 text-xs font-medium transition-colors
 															{p.effective_enabled
 															? 'border-green-800 bg-green-950/40 text-green-400 hover:border-green-700'
 															: 'border-zinc-700 text-zinc-500 hover:border-zinc-500 hover:text-zinc-300'}"
 													>
 														{p.effective_enabled ? 'On' : 'Off'}
 													</button>
-												</form>
-
-												<!-- Threshold override -->
-												<form
-													method="POST"
-													action="?/saveTypeConfig"
-													use:enhance={() =>
-														async ({ update }) =>
-															update({ reset: false })}
-												>
-													<input type="hidden" name="type_id" value={p.id} />
-													<label
-														class="flex items-center gap-1.5"
-														title={p.is_inverse
-															? 'Awarded when score is BELOW this %'
-															: 'Awarded when score is AT/ABOVE this %'}
-													>
-														<span class="text-xs text-zinc-500"
-															>{p.is_inverse ? 'Earn below' : 'Threshold'}</span
-														>
-														<input
-															type="number"
-															name="threshold"
-															min="0"
-															max="100"
-															placeholder={String(
-																p.is_inverse ? p.default_max_score_pct : p.default_min_score_pct
-															)}
-															value={p.effective_threshold ?? ''}
-															onblur={(e) => {
-																const f = (e.target as HTMLInputElement).closest(
-																	'form'
-																) as HTMLFormElement | null;
-																f?.requestSubmit();
-															}}
-															class="admin-input w-16 py-0.5 text-xs"
-														/>
-														<span class="text-xs text-zinc-600">%</span>
-													</label>
-												</form>
-
-												<!-- Chance override (0-1 stored, shown as 0-100%) -->
-												<form
-													method="POST"
-													action="?/saveTypeConfig"
-													use:enhance={() =>
-														async ({ update }) =>
-															update({ reset: false })}
-												>
-													<input type="hidden" name="type_id" value={p.id} />
-													<label class="flex items-center gap-1.5">
-														<span class="text-xs text-zinc-500">Chance</span>
-														<input
-															type="number"
-															name="chance"
-															min="0"
-															max="100"
-															placeholder="100"
-															value={p.effective_chance != null
-																? Math.round(p.effective_chance * 100)
-																: ''}
-															onblur={(e) => {
-																const f = (e.target as HTMLInputElement).closest(
-																	'form'
-																) as HTMLFormElement | null;
-																f?.requestSubmit();
-															}}
-															class="admin-input w-16 py-0.5 text-xs"
-														/>
-														<span class="text-xs text-zinc-600">%</span>
-													</label>
 												</form>
 											{/if}
 										</div>
@@ -1572,6 +1559,294 @@
 						{/if}
 					</div>
 				{/each}
+			</div>
+
+			<!-- Advanced settings — one collapsible block for every per-type dial that
+			     used to live inline on the compact rows (threshold/chance) plus the
+			     five per-type strength knobs that previously had no UI at all and only
+			     existed via powerup_config JSONB. Collapsed by default; every write
+			     below is a `?/saveTypeConfig` submit, same merge-safe action and same
+			     mergeConfigPatch write path (+page.server.ts:saveTypeConfig) the compact
+			     on/off toggle above uses. -->
+			<div class="mt-4 rounded-lg border border-zinc-800">
+				<button
+					type="button"
+					onclick={() => toggleCollapsed('advanced')}
+					class="flex w-full items-center gap-2 px-3 py-2 text-left"
+				>
+					{#if isCollapsed('advanced', true)}
+						<ChevronRight size={14} class="shrink-0 text-zinc-500" />
+					{:else}
+						<ChevronDown size={14} class="shrink-0 text-zinc-500" />
+					{/if}
+					<span class="text-sm font-semibold text-zinc-300">Powerups advanced settings</span>
+					<span class="text-xs text-zinc-600">per-type earning + strength config</span>
+				</button>
+				{#if !isCollapsed('advanced', true)}
+					<div class="space-y-3 border-t border-zinc-800 p-3">
+						{#each powerupsByCategory as { powerups: catPowerups }}
+							{#each catPowerups.filter((p) => !p.coming_soon) as p (p.id)}
+								<div class="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
+									<div class="mb-2 flex items-center gap-2">
+										{#if p.icon}
+											<span class="text-base leading-none">{p.icon}</span>
+										{/if}
+										<span class="text-sm font-semibold text-zinc-200">{p.name}</span>
+									</div>
+
+									<!-- Earning group: threshold + chance, moved here from the compact row -->
+									<div class="mb-1 text-[10px] font-semibold tracking-widest text-zinc-600 uppercase">
+										Earning
+									</div>
+									<div class="flex flex-wrap items-center gap-3">
+										<form
+											method="POST"
+											action="?/saveTypeConfig"
+											use:enhance={() =>
+												async ({ update }) =>
+													update({ reset: false })}
+										>
+											<input type="hidden" name="type_id" value={p.id} />
+											<label
+												class="flex items-center gap-1.5"
+												title={p.is_inverse
+													? 'Awarded when score is BELOW this %'
+													: 'Awarded when score is AT/ABOVE this %'}
+											>
+												<span class="text-xs text-zinc-500"
+													>{p.is_inverse ? 'Earn below' : 'Threshold'}</span
+												>
+												<input
+													type="number"
+													name="threshold"
+													min="0"
+													max="100"
+													placeholder={String(
+														p.is_inverse ? p.default_max_score_pct : p.default_min_score_pct
+													)}
+													value={p.effective_threshold ?? ''}
+													onblur={(e) => {
+														const f = (e.target as HTMLInputElement).closest(
+															'form'
+														) as HTMLFormElement | null;
+														f?.requestSubmit();
+													}}
+													class="admin-input w-16 py-0.5 text-xs"
+												/>
+												<span class="text-xs text-zinc-600">%</span>
+											</label>
+										</form>
+
+										<form
+											method="POST"
+											action="?/saveTypeConfig"
+											use:enhance={() =>
+												async ({ update }) =>
+													update({ reset: false })}
+										>
+											<input type="hidden" name="type_id" value={p.id} />
+											<label class="flex items-center gap-1.5">
+												<span class="text-xs text-zinc-500">Chance</span>
+												<input
+													type="number"
+													name="chance"
+													min="0"
+													max="100"
+													placeholder="100"
+													value={p.effective_chance != null
+														? Math.round(p.effective_chance * 100)
+														: ''}
+													onblur={(e) => {
+														const f = (e.target as HTMLInputElement).closest(
+															'form'
+														) as HTMLFormElement | null;
+														f?.requestSubmit();
+													}}
+													class="admin-input w-16 py-0.5 text-xs"
+												/>
+												<span class="text-xs text-zinc-600">%</span>
+											</label>
+										</form>
+									</div>
+
+									<!-- Strength group: per-type knobs, one block per powerup id. Types
+									     without a strength dial (e.g. double_down) render only the earning
+									     group above. -->
+									{#if p.id === 'lucky_dice' || p.id === 'x_ray' || p.id === 'all_seeing_eye' || p.id === 'power_spin' || p.id === 'resurrection'}
+										<div
+											class="mt-3 mb-1 text-[10px] font-semibold tracking-widest text-zinc-600 uppercase"
+										>
+											Strength
+										</div>
+										<div class="flex flex-wrap items-center gap-3">
+											{#if p.id === 'lucky_dice'}
+												<form
+													method="POST"
+													action="?/saveTypeConfig"
+													use:enhance={() =>
+														async ({ update }) =>
+															update({ reset: false })}
+												>
+													<input type="hidden" name="type_id" value={p.id} />
+													<label class="flex items-center gap-1.5">
+														<span class="text-xs text-zinc-500">Dice min</span>
+														<input
+															type="number"
+															name="dice_min"
+															min="1"
+															placeholder="1"
+															value={p.effective_dice_min ?? ''}
+															onblur={(e) => {
+																const f = (e.target as HTMLInputElement).closest(
+																	'form'
+																) as HTMLFormElement | null;
+																f?.requestSubmit();
+															}}
+															class="admin-input w-16 py-0.5 text-xs"
+														/>
+													</label>
+												</form>
+												<form
+													method="POST"
+													action="?/saveTypeConfig"
+													use:enhance={() =>
+														async ({ update }) =>
+															update({ reset: false })}
+												>
+													<input type="hidden" name="type_id" value={p.id} />
+													<label class="flex items-center gap-1.5">
+														<span class="text-xs text-zinc-500">Dice max</span>
+														<input
+															type="number"
+															name="dice_max"
+															min="1"
+															placeholder="6"
+															value={p.effective_dice_max ?? ''}
+															onblur={(e) => {
+																const f = (e.target as HTMLInputElement).closest(
+																	'form'
+																) as HTMLFormElement | null;
+																f?.requestSubmit();
+															}}
+															class="admin-input w-16 py-0.5 text-xs"
+														/>
+													</label>
+												</form>
+											{:else if p.id === 'x_ray'}
+												<form
+													method="POST"
+													action="?/saveTypeConfig"
+													use:enhance={() =>
+														async ({ update }) =>
+															update({ reset: false })}
+												>
+													<input type="hidden" name="type_id" value={p.id} />
+													<label class="flex items-center gap-1.5">
+														<span class="text-xs text-zinc-500">Reveal budget</span>
+														<input
+															type="number"
+															name="reveal_budget"
+															min="1"
+															placeholder={String(X_RAY_DEFAULT_BUDGET)}
+															value={p.effective_reveal_budget ?? ''}
+															onblur={(e) => {
+																const f = (e.target as HTMLInputElement).closest(
+																	'form'
+																) as HTMLFormElement | null;
+																f?.requestSubmit();
+															}}
+															class="admin-input w-16 py-0.5 text-xs"
+														/>
+													</label>
+												</form>
+											{:else if p.id === 'all_seeing_eye'}
+												<form
+													method="POST"
+													action="?/saveTypeConfig"
+													use:enhance={() =>
+														async ({ update }) =>
+															update({ reset: false })}
+												>
+													<input type="hidden" name="type_id" value={p.id} />
+													<input
+														type="hidden"
+														name="show_scores"
+														value={String(!p.effective_show_scores)}
+													/>
+													<button
+														type="submit"
+														class="flex items-center gap-1.5 rounded border px-2 py-1 text-xs font-medium transition-colors
+															{p.effective_show_scores
+															? 'border-green-800 bg-green-950/40 text-green-400 hover:border-green-700'
+															: 'border-zinc-700 text-zinc-500 hover:border-zinc-500 hover:text-zinc-300'}"
+													>
+														Show scores: {p.effective_show_scores ? 'On' : 'Off'}
+													</button>
+												</form>
+											{:else if p.id === 'power_spin'}
+												<form
+													method="POST"
+													action="?/saveTypeConfig"
+													use:enhance={() =>
+														async ({ update }) =>
+															update({ reset: false })}
+												>
+													<input type="hidden" name="type_id" value={p.id} />
+													<label class="flex items-center gap-1.5">
+														<span class="text-xs text-zinc-500">Tier S chance</span>
+														<input
+															type="number"
+															name="tier_s_chance"
+															min="0"
+															max="1"
+															step="0.01"
+															placeholder={String(POWER_SPIN_DEFAULT_TIER_S_CHANCE)}
+															value={p.effective_tier_s_chance ?? ''}
+															onblur={(e) => {
+																const f = (e.target as HTMLInputElement).closest(
+																	'form'
+																) as HTMLFormElement | null;
+																f?.requestSubmit();
+															}}
+															class="admin-input w-20 py-0.5 text-xs"
+														/>
+													</label>
+												</form>
+											{:else if p.id === 'resurrection'}
+												<form
+													method="POST"
+													action="?/saveTypeConfig"
+													use:enhance={() =>
+														async ({ update }) =>
+															update({ reset: false })}
+												>
+													<input type="hidden" name="type_id" value={p.id} />
+													<label class="flex items-center gap-1.5">
+														<span class="text-xs text-zinc-500">Score mode</span>
+														<select
+															name="score_mode"
+															value={p.effective_score_mode ?? 'replace'}
+															onchange={(e) => {
+																const f = (e.target as HTMLSelectElement).closest(
+																	'form'
+																) as HTMLFormElement | null;
+																f?.requestSubmit();
+															}}
+															class="admin-input py-0.5 text-xs"
+														>
+															<option value="replace">Replace</option>
+															<option value="best">Best</option>
+														</select>
+													</label>
+												</form>
+											{/if}
+										</div>
+									{/if}
+								</div>
+							{/each}
+						{/each}
+					</div>
+				{/if}
 			</div>
 		{/if}
 	</section>

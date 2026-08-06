@@ -14,6 +14,7 @@ import {
 	fillConfigDefaults
 } from '$lib/server/powerups';
 import type {
+	PowerupCategory,
 	PowerupMode,
 	PowerupTypeConsoleRow,
 	PowerupTypeOverride,
@@ -131,7 +132,13 @@ export const load: PageServerLoad = async ({ params }) => {
 			effective_enabled: override?.enabled ?? p.enabled_by_default,
 			effective_threshold: override?.threshold ?? null,
 			effective_chance: override?.chance ?? 1,
-			has_override: !!override
+			has_override: !!override,
+			effective_dice_min: override?.dice_min ?? null,
+			effective_dice_max: override?.dice_max ?? null,
+			effective_reveal_budget: override?.reveal_budget ?? null,
+			effective_show_scores: override?.show_scores ?? false,
+			effective_tier_s_chance: override?.tier_s_chance ?? null,
+			effective_score_mode: override?.score_mode ?? null
 		};
 	});
 
@@ -629,6 +636,16 @@ export const actions: Actions = {
 		const enabledRaw = fd.get('enabled') as string | null;
 		const thresholdRaw = (fd.get('threshold') as string | null)?.trim();
 		const chanceRaw = (fd.get('chance') as string | null)?.trim();
+		// Strength config, piece 2b — one field per type, only ever sent by that
+		// type's own advanced-block control. Each is independently optional so a
+		// request that only carries `enabled` (the compact-overview toggle) leaves
+		// all five untouched, same as threshold/chance above.
+		const diceMinRaw = (fd.get('dice_min') as string | null)?.trim();
+		const diceMaxRaw = (fd.get('dice_max') as string | null)?.trim();
+		const revealBudgetRaw = (fd.get('reveal_budget') as string | null)?.trim();
+		const showScoresRaw = fd.get('show_scores') as string | null;
+		const tierSChanceRaw = (fd.get('tier_s_chance') as string | null)?.trim();
+		const scoreModeRaw = (fd.get('score_mode') as string | null)?.trim();
 
 		const patch: PowerupTypeOverride = {};
 		if (enabledRaw !== null) patch.enabled = enabledRaw === 'true';
@@ -641,6 +658,24 @@ export const actions: Actions = {
 			const pct = parseInt(chanceRaw, 10);
 			if (!isNaN(pct) && pct >= 0 && pct <= 100) patch.chance = pct / 100;
 		}
+		if (diceMinRaw) {
+			const v = parseInt(diceMinRaw, 10);
+			if (!isNaN(v) && v >= 1) patch.dice_min = v;
+		}
+		if (diceMaxRaw) {
+			const v = parseInt(diceMaxRaw, 10);
+			if (!isNaN(v) && v >= 1) patch.dice_max = v;
+		}
+		if (revealBudgetRaw) {
+			const v = parseInt(revealBudgetRaw, 10);
+			if (!isNaN(v) && v >= 1) patch.reveal_budget = v;
+		}
+		if (showScoresRaw !== null) patch.show_scores = showScoresRaw === 'true';
+		if (tierSChanceRaw !== undefined && tierSChanceRaw !== '') {
+			const v = parseFloat(tierSChanceRaw);
+			if (!isNaN(v) && v >= 0 && v <= 1) patch.tier_s_chance = v;
+		}
+		if (scoreModeRaw === 'replace' || scoreModeRaw === 'best') patch.score_mode = scoreModeRaw;
 
 		const { data: gameSet } = await db
 			.from('game_sets')
@@ -664,6 +699,28 @@ export const actions: Actions = {
 	// Category master toggle, piece 2. Replaces togglePowerupCategory's
 	// set_powerups upsert — writes into powerup_config.categories[cat] instead.
 	// Never touches coming_soon types (they have no working controls to enable).
+	//
+	// Master-switch behaviour: the category flag alone left every per-type
+	// `enabled` override untouched, so the compact-overview cards kept showing
+	// "On" for individually-enabled powerups after their category was switched
+	// off — confusing, since the category flag already suppresses their earning
+	// regardless of what the card said. Flipping the category now also stamps
+	// `enabled` onto every non-coming_soon type in it, so the cards agree with
+	// the category state they're grouped under.
+	//
+	// Category membership is looked up fresh from `powerup_types` server-side
+	// (not trusted from the client) so a crafted request can't target types
+	// outside the category or a stale list.
+	//
+	// Every write here goes through mergeConfigPatch — the merge-safe helper
+	// from the 3854d34 fix, same one saveTypeConfig uses — and each call is
+	// chained onto the OUTPUT of the previous one (`rawConfig` is reassigned
+	// every iteration), never re-read from the pre-loop snapshot. That's what
+	// keeps N sequential merges from collapsing into "last write wins": each
+	// merge lands on top of the one before it, so a category with 5 types
+	// produces 6 merges (1 for the category flag + 5 for the types) that all
+	// compose, then a single `.update()` persists the fully-merged object —
+	// never a wholesale overwrite, and never a partial one either.
 	toggleCategory: async ({ request, params }) => {
 		const db = createAdminClient();
 		const fd = await request.formData();
@@ -671,19 +728,29 @@ export const actions: Actions = {
 		const enabled = fd.get('enabled') === 'true';
 		if (!category) return fail(400, { error: 'Missing category' });
 
-		const { data: gameSet } = await db
-			.from('game_sets')
-			.select('powerup_config')
-			.eq('id', params.id)
-			.maybeSingle();
+		const [{ data: gameSet }, { data: categoryTypes }] = await Promise.all([
+			db.from('game_sets').select('powerup_config').eq('id', params.id).maybeSingle(),
+			db
+				.from('powerup_types')
+				.select('id')
+				.eq('category', category as PowerupCategory)
+				.eq('coming_soon', false)
+		]);
 
-		const nextConfig = mergeConfigPatch(gameSet?.powerup_config, {
+		let rawConfig: unknown = mergeConfigPatch(gameSet?.powerup_config, {
 			categories: { [category]: enabled }
 		});
 
+		for (const t of categoryTypes ?? []) {
+			const current = parseConfig(rawConfig);
+			rawConfig = mergeConfigPatch(rawConfig, {
+				types: { [t.id]: { ...current.types[t.id], enabled } }
+			});
+		}
+
 		const { error } = await db
 			.from('game_sets')
-			.update({ powerup_config: nextConfig as never })
+			.update({ powerup_config: rawConfig as never })
 			.eq('id', params.id);
 		if (error) return fail(500, { error: error.message });
 		return { success: true };

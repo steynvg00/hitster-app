@@ -473,4 +473,14 @@ export interface PowerupTypeConsoleRow {
 	effective_threshold: number | null;
 	effective_chance: number; // 0–1, defaults to 1.0
 	has_override: boolean;
+	// Strength config, piece 2b — the per-type override fields that only apply to
+	// one specific powerup (see PowerupTypeOverride). null means "no override
+	// stored"; the UI shows the resolver's default as a placeholder rather than
+	// baking the default in here, same pattern as effective_threshold above.
+	effective_dice_min: number | null; // lucky_dice
+	effective_dice_max: number | null; // lucky_dice
+	effective_reveal_budget: number | null; // x_ray
+	effective_show_scores: boolean; // all_seeing_eye — no override reads as false
+	effective_tier_s_chance: number | null; // power_spin
+	effective_score_mode: ResurrectionScoreMode | null; // resurrection
 }
