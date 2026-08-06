@@ -1,9 +1,9 @@
-// powerup_config write-safety: no write may replace the stored config.
+// powerup_config write-safety + the lifeline earn-chance fallback.
 //
 //   npm run bots:verify-config-merge-safe
 //
 // Pure/static harness — no database, no browser. Everything asserted here is a
-// property of the config WRITE BOUNDARY, so it
+// property of the config WRITE BOUNDARY and of the pure earning planner, so it
 // runs in milliseconds and reproduces exactly.
 //
 // ── Bug 1: the wholesale overwrite ──────────────────────────────────────────
@@ -38,6 +38,19 @@
 // part 2 pins the rule itself against the source, so a future action that
 // writes powerup_config without merging fails here rather than in a live game.
 //
+// ── Bug 2: lifeline's earn chance on a fresh set ────────────────────────────
+//
+// Lifeline is designed to drop on ~50% of qualifying (low-score) submissions.
+// That 0.5 existed ONLY as a per-set jsonb seed written by migration 0071 into
+// the rows that existed when it ran. planAwards resolves chance generically
+// (`?? 1`), so a set created AFTER that migration earned lifeline at 1.0 —
+// twice the designed rate, and no code path could ever notice.
+//
+// Contrast lucky_dice and power_spin: both carry a code constant + resolver
+// (LUCKY_DICE_DEFAULT_MIN/MAX, POWER_SPIN_DEFAULT_TIER_S_CHANCE), so their
+// identical seeds are belt-and-braces. Lifeline's seed was load-bearing.
+// Part 3 pins the fallback, and pins that a per-set override still wins.
+
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
@@ -45,8 +58,17 @@ import {
 	mergePowerupConfig,
 	mergeConfigPatch,
 	mergeConfigKeys,
-	fillConfigDefaults
+	fillConfigDefaults,
+	resolveTypeChance,
+	resolveDiceRange,
+	resolveSpinTierSChance,
+	resolveResurrectionScoreMode,
+	resolveEyeShowScores,
+	planAwards,
+	LIFELINE_DEFAULT_CHANCE,
+	type PowerupType
 } from '../../src/lib/server/powerups';
+import { setPresets } from '../../src/lib/presets/setPresets';
 
 // ── tiny assert harness (same shape as verify-power-spin.ts) ─────────────────
 type Check = { name: string; pass: boolean; detail: string };
@@ -302,10 +324,150 @@ function part2() {
 	);
 }
 
+// ── PART 3 — lifeline earns at the designed rate on a fresh set ─────────────
+function part3() {
+	console.log('\nPART 3 — lifeline earn chance without a per-set seed');
+
+	// A fresh set's config, taken from the two real creation paths rather than
+	// invented: `create` inserts no powerup_config at all, so the column default
+	// from migration 0033:18-20 applies; `createFromPreset` writes a preset
+	// literal. Neither carries a types subtree.
+	const dbColumnDefault = { thresholds_percent: [25, 50, 75] };
+	const presetConfigs = setPresets
+		.map((p) => p.defaults?.powerup_config)
+		.filter((c): c is object => !!c);
+	assertTrue(
+		'no set preset seeds types.lifeline.chance',
+		presetConfigs.every((c) => !('types' in (c as Record<string, unknown>))),
+		`${presetConfigs.length} preset configs, none with a types subtree`
+	);
+
+	const fresh = parseConfig(dbColumnDefault);
+	assert('fresh set has no per-type overrides at all', fresh.types, {});
+	assert('resolved lifeline chance on a fresh set', resolveTypeChance(fresh, 'lifeline'), 0.5);
+	assert('LIFELINE_DEFAULT_CHANCE is the designed 0.5', LIFELINE_DEFAULT_CHANCE, 0.5);
+	assert('every other type still defaults to 1', resolveTypeChance(fresh, 'shield'), 1);
+	assert('an unknown type still defaults to 1', resolveTypeChance(fresh, 'not_a_powerup'), 1);
+
+	// The discriminating test. lifeline is inverse (migration 0071:85), so it is
+	// planned by the inverse channel, which draws exactly ONE random number when
+	// no ladder band fires. Pin that draw between the designed chance and the
+	// generic fallback and the two are told apart:
+	//
+	//   rand = 0.6   chance 0.5 → no award      chance 1.0 → award  ← the bug
+	//   rand = 0.4   chance 0.5 → award         chance 1.0 → award
+	const lifeline = {
+		id: 'lifeline',
+		category: 'defensive',
+		coming_soon: false,
+		enabled_by_default: true,
+		default_inverse: true,
+		default_min_score_pct: 0,
+		default_max_score_pct: 40
+	} as unknown as PowerupType;
+
+	// submissionPct 30 is below lifeline's 40% bound and below the only band, so
+	// the ladder fires nothing and the single draw belongs to lifeline.
+	const ctx = {
+		submissionPct: 30,
+		cumulativePct: 0,
+		thresholdMode: 'per_challenge' as const,
+		bandMode: 'all_bands' as const,
+		lastThresholdCrossed: 0
+	};
+	const cfgFresh = parseConfig({ thresholds_percent: [50] });
+
+	const at06 = planAwards(cfgFresh, [lifeline], ctx, () => 0.6).awards.map((a) => a.typeId);
+	assert('fresh set, draw 0.6 → lifeline does NOT drop (chance is 0.5)', at06, []);
+
+	const at04 = planAwards(cfgFresh, [lifeline], ctx, () => 0.4).awards.map((a) => a.typeId);
+	assert('fresh set, draw 0.4 → lifeline drops', at04, ['lifeline']);
+
+	// A per-set value must still win over the fallback in both directions —
+	// otherwise this fix would have replaced one hardcoded number with another.
+	const cfgTunedUp = parseConfig({ types: { lifeline: { chance: 1 } } });
+	assert(
+		'host override 1.0 beats the fallback (draw 0.6 → drops)',
+		planAwards(cfgTunedUp, [lifeline], ctx, () => 0.6).awards.map((a) => a.typeId),
+		['lifeline']
+	);
+	const cfgTunedDown = parseConfig({ types: { lifeline: { chance: 0 } } });
+	assert(
+		'host override 0 beats the fallback (draw 0.4 → nothing)',
+		planAwards(cfgTunedDown, [lifeline], ctx, () => 0.4).awards.map((a) => a.typeId),
+		[]
+	);
+
+	// And the seeded sets migration 0071 already touched are unchanged.
+	const seeded = parseConfig({ types: { lifeline: { chance: 0.5 } } });
+	assert('a 0071-seeded set resolves to the same 0.5', resolveTypeChance(seeded, 'lifeline'), 0.5);
+
+	// ── the already-damaged set ────────────────────────────────────────────────
+	// This is not a hypothetical config. A read-only SELECT over the live database
+	// found "Vrienden Weekend 2026" holding exactly `{"thresholds_percent":[25,50,
+	// 75]}` — byte for byte the literal set_powerup_mode used to write — while
+	// every set created before AND after it still carries all five migration
+	// seeds. The landmine fired on a real set and took its seeds with it.
+	//
+	// No migration repairs it, and none is needed: each of the five seeded values
+	// is now backed by a code constant, so a stripped config resolves to exactly
+	// what the seeds said. That is the whole argument for fixing this in code
+	// rather than in SQL, so it is asserted rather than claimed.
+	const stripped = parseConfig({ thresholds_percent: [25, 50, 75] });
+	assert(
+		'stripped set: lifeline chance resolves to the seeded 0.5',
+		resolveTypeChance(stripped, 'lifeline'),
+		0.5
+	);
+	assert('stripped set: dice range resolves to the seeded 1–6', resolveDiceRange(stripped), {
+		min: 1,
+		max: 6
+	});
+	assert(
+		'stripped set: spin tier-S resolves to the seeded 0.15',
+		resolveSpinTierSChance(stripped),
+		0.15
+	);
+	assert(
+		'stripped set: resurrection resolves to the seeded "replace"',
+		resolveResurrectionScoreMode(stripped),
+		'replace'
+	);
+	assert(
+		'stripped set: eye show_scores resolves to the seeded false',
+		resolveEyeShowScores(stripped),
+		false
+	);
+
+	// The ladder channel reads chance through the same resolver, so a non-inverse
+	// type is unaffected by the lifeline entry.
+	const shield = {
+		id: 'shield',
+		category: 'defensive',
+		coming_soon: false,
+		enabled_by_default: true,
+		default_inverse: false,
+		default_min_score_pct: 60,
+		default_max_score_pct: 100
+	} as unknown as PowerupType;
+	const ladderCtx = { ...ctx, submissionPct: 80 };
+	assert(
+		'ladder channel unchanged for a normal type (draw 0.6 → drops)',
+		planAwards(
+			parseConfig({ thresholds_percent: [50] }),
+			[shield],
+			ladderCtx,
+			() => 0.6
+		).awards.map((a) => a.typeId),
+		['shield']
+	);
+}
+
 function main() {
-	console.log('powerup_config write-safety');
+	console.log('powerup_config write-safety + lifeline earn-chance fallback');
 	part1();
 	part2();
+	part3();
 
 	const failed = checks.filter((c) => !c.pass);
 	console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);

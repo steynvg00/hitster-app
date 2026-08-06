@@ -658,6 +658,49 @@ export type EarnedPowerup = {
 
 // ─── Earning v2: pure planner (piece 3a) ─────────────────────────────────────
 
+/**
+ * Lifeline's designed drop rate: it appears on about half the submissions that
+ * qualify for it (a LOW score — it is an inverse type, migration 0071:85).
+ *
+ * This constant exists because that 0.5 used to live in exactly one place: a
+ * per-set jsonb seed written by migration 0071:113-127. A migration can only
+ * reach rows that exist when it runs, and neither set-creation path writes a
+ * `types` subtree — `create` inserts no powerup_config at all (so the column
+ * default from migration 0033:18-20 applies) and `createFromPreset` writes a
+ * preset literal, none of which carries one. Every set made after that
+ * migration therefore fell through to the generic `?? 1` below and dropped
+ * Lifeline at DOUBLE the designed rate, silently.
+ *
+ * lucky_dice and power_spin never had this problem because each pairs its seed
+ * with a code constant and a resolver (LUCKY_DICE_DEFAULT_MIN/MAX above,
+ * POWER_SPIN_DEFAULT_TIER_S_CHANCE in $lib/powerups-meta). Their seeds are
+ * belt-and-braces; Lifeline's was load-bearing. This is Lifeline's half of that
+ * same pattern, and it is the fix rather than a migration for one reason: a
+ * migration cannot reach a set that does not exist yet.
+ */
+export const LIFELINE_DEFAULT_CHANCE = 0.5;
+
+/**
+ * Per-type earn-chance defaults, for the types whose designed rate is not 1.
+ * A type absent here keeps the historical `?? 1`, so this map changes nothing
+ * for the other nineteen.
+ */
+const DEFAULT_TYPE_CHANCE: Record<string, number> = {
+	lifeline: LIFELINE_DEFAULT_CHANCE
+};
+
+/**
+ * The probability one eligible type actually drops: the set's own value if the
+ * host (or a migration) set one, otherwise the type's designed default,
+ * otherwise 1. Used by BOTH earning channels so the ladder and the inverse
+ * channel can never disagree about a type's rate.
+ */
+export function resolveTypeChance(cfg: PowerupConfigV2, typeId: string): number {
+	const override = cfg.types?.[typeId]?.chance;
+	if (typeof override === 'number' && Number.isFinite(override)) return override;
+	return DEFAULT_TYPE_CHANCE[typeId] ?? 1;
+}
+
 export type PlannedAward = { typeId: string; channel: 'ladder' | 'inverse' };
 
 export type PlanContext = {
@@ -685,7 +728,8 @@ export type PlanContext = {
  *    enabled (override ?? enabled_by_default), category-on, and whose per-type
  *    threshold (override ?? default_min_score_pct) ≤ submissionPct ≤ default_max_score_pct.
  *  - x bands = up to x awards: each fired band rolls each pool type against its
- *    chance (override ?? 1); if any survive, one is randomly picked.
+ *    chance (resolveTypeChance: override ?? the type's designed default ?? 1); if
+ *    any survive, one is randomly picked.
  *  - Inverse channel (per submission, ladder-independent): each enabled inverse type
  *    whose submissionPct < its bound (override ?? default_max_score_pct) rolls its
  *    chance. "Inverse" is resolved as `override.inverse ?? type.default_inverse`
@@ -729,7 +773,7 @@ export function planAwards(
 
 	// Ladder channel: one roll-and-pick per fired band.
 	for (let i = 0; i < crossed.length; i++) {
-		const rolled = pool.filter((t) => rand() < (cfg.types[t.id]?.chance ?? 1));
+		const rolled = pool.filter((t) => rand() < resolveTypeChance(cfg, t.id));
 		if (rolled.length) {
 			const pick = rolled[Math.floor(rand() * rolled.length)];
 			awards.push({ typeId: pick.id, channel: 'ladder' });
@@ -744,7 +788,7 @@ export function planAwards(
 		if (!(ov?.enabled ?? t.enabled_by_default)) continue;
 		if (!(cfg.categories[t.category] ?? true)) continue;
 		const bound = ov?.threshold ?? t.default_max_score_pct;
-		if (ctx.submissionPct < bound && rand() < (ov?.chance ?? 1)) {
+		if (ctx.submissionPct < bound && rand() < resolveTypeChance(cfg, t.id)) {
 			awards.push({ typeId: t.id, channel: 'inverse' });
 		}
 	}
