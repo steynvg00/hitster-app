@@ -131,7 +131,13 @@ export const load: PageServerLoad = async ({ params }) => {
 			effective_enabled: override?.enabled ?? p.enabled_by_default,
 			effective_threshold: override?.threshold ?? null,
 			effective_chance: override?.chance ?? 1,
-			has_override: !!override
+			has_override: !!override,
+			effective_dice_min: override?.dice_min ?? null,
+			effective_dice_max: override?.dice_max ?? null,
+			effective_reveal_budget: override?.reveal_budget ?? null,
+			effective_show_scores: override?.show_scores ?? false,
+			effective_tier_s_chance: override?.tier_s_chance ?? null,
+			effective_score_mode: override?.score_mode ?? null
 		};
 	});
 
