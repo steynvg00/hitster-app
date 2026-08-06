@@ -28,12 +28,14 @@
 // (lucky_dice and x_ray's ACTIVATION branch are already covered in
 // verify-group-a-fixes.ts — not repeated here.)
 //
-// Borderline — all_seeing_eye (powerups.ts:2627-2687): only the refuse
-// condition (no finished team → stays held, powerups.ts:2648-2653) and the
-// strip (stripAnswersForEye, powerups.ts:255-294) are tested. The cross-team
+// Borderline — all_seeing_eye (powerups.ts:2627-2687): the refuse condition
+// (no finished team → stays held, powerups.ts:2648-2653), the HAPPY-PATH WRITE
+// (consumed snapshot row + status transition + stripped payload, both
+// show_scores stands — added for R1 gap 2, mutation-caught) and the strip
+// (stripAnswersForEye, powerups.ts:255-294) are tested. The cross-team
 // READ/DISPLAY itself (resolveAllSeeingEye's join across submissions+teams) is
-// deliberately NOT re-tested here — that is a live-DB read-only concern
-// already covered by tests/bots/verify-all-seeing-eye.ts.
+// deliberately NOT re-tested against a live DB here — that concern is covered
+// by tests/bots/verify-all-seeing-eye.ts.
 //
 // give_a_shot classification (powerups.ts:2944-2993): OFFENSIVE, not covered
 // here. Line 2947-2950 requires `options.targetTeamId`, rejects a missing
@@ -635,6 +637,122 @@ async function verifyAllSeeingEyeBorderline() {
 		assert('no finished team refuses activation', res.success === false && res.error, 'No other team has finished this challenge yet — the Eye sees nothing. Try again later.');
 		assert('nothing written', opsOn(log, 'team_effects', 'insert').length, 0);
 		assert('powerup stays held', opsOn(log, 'team_powerups', 'update').length, 0);
+	}
+
+	console.log('\n── all_seeing_eye: happy path — a CONSUMED snapshot, stripped at write ─');
+
+	// The write side the refusal test above never reaches (R1 gap 2). Raw answers
+	// another team submitted, deliberately carrying the decided half — so the
+	// "stored snapshot is stripped" assert below cannot pass vacuously on input
+	// that had nothing to strip.
+	const RAW_EYE_ANSWERS = [
+		{
+			tab_position: 0,
+			breakdown: { final: 30 },
+			source_answers: [
+				{
+					slot_index: 0,
+					field_values: { artist: 'Rooler', title: 'Sound Barrier' },
+					scored: { artist: 15, title: 15 },
+					total: 30,
+					matched_source_track_id: 'trk9'
+				}
+			]
+		}
+	];
+	const EYE_FORBIDDEN = ['scored', 'total', 'breakdown', 'matched_source_track_id', 'track_id'];
+	const keysDeep = (value: unknown, acc: Set<string> = new Set()): Set<string> => {
+		if (Array.isArray(value)) for (const v of value) keysDeep(v, acc);
+		else if (value && typeof value === 'object') {
+			for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+				acc.add(k);
+				keysDeep(v, acc);
+			}
+		}
+		return acc;
+	};
+	const forbiddenIn = (value: unknown) => EYE_FORBIDDEN.filter((k) => keysDeep(value).has(k));
+
+	const eyeWorld = (op: Op) => {
+		if (op.table === 'submissions' && op.kind === 'select')
+			return [{ team_id: 'team2', answers: RAW_EYE_ANSWERS, score: 30 }];
+		if (op.table === 'teams' && op.kind === 'select')
+			return [{ id: 'team2', display_name: 'Blauw', color: 'blue' }];
+		return undefined;
+	};
+
+	// show_scores at its default (off): the stored entries carry NO score key.
+	{
+		const respond = chain(baseRespond({ typeId: 'all_seeing_eye' }), eyeWorld);
+		const { db, log } = makeFake(respond);
+		const res = await activatePowerup(db, 'tp1', { currentChallengeId: 'ch1' });
+
+		assert('activation succeeds when another team has finished', res.success, true);
+		const ins = opsOn(log, 'team_effects', 'insert');
+		assert('exactly one snapshot row written (the write really fired)', ins.length, 1);
+		const v = ins[0].values as Record<string, unknown>;
+		assert('…effect_type all_seeing_eye', v.effect_type, 'all_seeing_eye');
+		// THE mutation-caught pair: the snapshot is written ALREADY consumed so it
+		// can never surface via loadActiveEffects, and the powerup is spent on the
+		// look — not parked 'active'.
+		assert('written ALREADY consumed — a snapshot, not a live effect', v.consumed_at != null, true);
+		assert('…consumed against this challenge', v.consumed_challenge_id, 'ch1');
+		assert('…traceable to the powerup', v.source_team_powerup_id, 'tp1');
+		assert(
+			'team_powerups → consumed (spent on the look)',
+			(opsOn(log, 'team_powerups', 'update')[0]?.values as { status?: string })?.status,
+			'consumed'
+		);
+
+		const payload = v.payload as {
+			challenge_id?: string;
+			teams?: Array<Record<string, unknown>>;
+		};
+		assert('payload addressed to this challenge', payload.challenge_id, 'ch1');
+		assert('payload carries the one finished team', payload.teams?.length, 1);
+		assert(
+			'…identified for the panel (id, name, color)',
+			{
+				teamId: payload.teams?.[0]?.teamId,
+				displayName: payload.teams?.[0]?.displayName,
+				color: payload.teams?.[0]?.color
+			},
+			{ teamId: 'team2', displayName: 'Blauw', color: 'blue' }
+		);
+		const slot = (
+			(payload.teams?.[0]?.tabs as Array<{ slots: Array<Record<string, unknown>> }>) ?? []
+		)[0]?.slots?.[0];
+		assert('typed values survive into the snapshot', slot?.fieldValues, {
+			artist: 'Rooler',
+			title: 'Sound Barrier'
+		});
+		// Anti-vacuity first, then the strip claim: the input demonstrably carried
+		// the decided half, and none of it reached the stored payload.
+		assert('the raw input really did carry scoring data', forbiddenIn(RAW_EYE_ANSWERS).length > 0, true);
+		assert('the STORED snapshot leaks no forbidden key', forbiddenIn(payload), []);
+		assert(
+			'show_scores default off → no score key stored',
+			payload.teams?.some((t) => 'score' in t),
+			false
+		);
+	}
+
+	// show_scores switched on for the set: the stored entry carries the score.
+	{
+		const respond = chain(
+			baseRespond({
+				typeId: 'all_seeing_eye',
+				powerupConfig: { types: { all_seeing_eye: { show_scores: true } } }
+			}),
+			eyeWorld
+		);
+		const { db, log } = makeFake(respond);
+		const res = await activatePowerup(db, 'tp1', { currentChallengeId: 'ch1' });
+		assert('activation succeeds with show_scores on', res.success, true);
+		const v = opsOn(log, 'team_effects', 'insert')[0]?.values as Record<string, unknown>;
+		const teams = (v?.payload as { teams?: Array<Record<string, unknown>> })?.teams;
+		assert('show_scores=true → the stored entry carries the score', teams?.[0]?.score, 30);
+		assert('…and still leaks nothing decided', forbiddenIn(v?.payload), []);
 	}
 
 	console.log('\n── all_seeing_eye: the strip is an allowlist, not a delete-list ───');
