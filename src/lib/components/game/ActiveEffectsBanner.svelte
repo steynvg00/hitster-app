@@ -43,7 +43,7 @@
 
 	const EFFECT_LABEL: Record<string, string> = {
 		bonus_points: '+5 ready',
-		single_event_mult: '1.5× ready',
+		single_event_mult: 'Multiplier ready',
 		hard_gaan: '🔥 Hard gaan',
 		shield: '🛡 Shield ready',
 		insurance: '🪙 Insurance ready',
@@ -63,7 +63,11 @@
 			return `${base} — ${fmtCountdown(e.expires_at)} left`;
 		}
 		if (e.effect_type === 'single_event_mult') {
-			const m = (e.payload.multiplier as number | undefined) ?? 1.5;
+			// The multiplier is ROLLED at activation (x1.2/x1.4/x1.6), so the pill
+			// must show what this team actually got. A row without one falls back to
+			// the generic base label rather than naming a number nobody rolled.
+			const m = e.payload.multiplier as number | undefined;
+			if (typeof m !== 'number') return base;
 			return `${m}× next submission`;
 		}
 		if (e.effect_type === 'bonus_points') {

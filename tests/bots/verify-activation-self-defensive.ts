@@ -214,18 +214,32 @@ async function verifyBonusPoints() {
 	assert('team_powerups → active', (tpu[0]?.values as { status?: string })?.status, 'active');
 }
 
-// ── 2. single_event_mult — one-shot ×1.5 ──────────────────────────────────────
+// ── 2. single_event_mult — one-shot ROLLED multiplier ─────────────────────────
 // powerups.ts:2152-2171: insert team_effects{effect_type:'single_event_mult',
-// payload:{multiplier:1.5}}, team_powerups → 'active'.
+// payload:{multiplier: <rolled>}}, team_powerups → 'active'. The multiplier is
+// rolled over x1.2/x1.4/x1.6 (the card's promise), so this file — which runs
+// activation with the REAL Math.random — asserts the roll lands inside the
+// promised set and nothing else about it. The three individual outcomes are
+// pinned with an injected rand in tests/bots/verify-constant-mismatches.ts.
 async function verifySingleEventMult() {
-	console.log('\n── single_event_mult: ×1.5, held → active ────────────────────────');
+	console.log('\n── single_event_mult: rolled ×1.2/1.4/1.6, held → active ─────────');
 	const respond = baseRespond({ typeId: 'single_event_mult' });
 	const { db, log } = makeFake(respond);
 	const res = await activatePowerup(db, 'tp1');
 
 	assert('activation succeeds', res.success, true);
-	assert('payload carries the multiplier', res.payload, { multiplier: 1.5 });
+	const rolled = (res.payload as { multiplier?: number })?.multiplier;
+	assert(
+		'payload carries a multiplier from the promised set',
+		[1.2, 1.4, 1.6].includes(rolled as number),
+		true
+	);
 	const ins = opsOn(log, 'team_effects', 'insert');
+	assert(
+		'…and team_effects carries the SAME rolled value',
+		((ins[0].values as Record<string, unknown>).payload as { multiplier?: number })?.multiplier,
+		rolled
+	);
 	assert('…effect_type single_event_mult', (ins[0].values as Record<string, unknown>).effect_type, 'single_event_mult');
 	assert('no expires_at (unlike hard_gaan)', (ins[0].values as Record<string, unknown>).expires_at, undefined);
 	const tpu = opsOn(log, 'team_powerups', 'update');

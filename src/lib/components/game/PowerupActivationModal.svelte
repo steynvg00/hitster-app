@@ -139,7 +139,9 @@
 			action: '+5 points added to your next submission total.'
 		},
 		single_event_mult: {
-			action: '1.5× multiplier applied to your next challenge final score.'
+			// Pre-activation copy: the multiplier is rolled at activation, so this
+			// can only promise the range the card promises — not a number.
+			action: 'Random multiplier (×1.2 / ×1.4 / ×1.6) applied to your next challenge final score.'
 		},
 		hard_gaan: {
 			action: '1.5× multiplier on ALL submissions for the next 15 minutes.'
