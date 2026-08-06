@@ -635,6 +635,16 @@ export const actions: Actions = {
 		const enabledRaw = fd.get('enabled') as string | null;
 		const thresholdRaw = (fd.get('threshold') as string | null)?.trim();
 		const chanceRaw = (fd.get('chance') as string | null)?.trim();
+		// Strength config, piece 2b — one field per type, only ever sent by that
+		// type's own advanced-block control. Each is independently optional so a
+		// request that only carries `enabled` (the compact-overview toggle) leaves
+		// all five untouched, same as threshold/chance above.
+		const diceMinRaw = (fd.get('dice_min') as string | null)?.trim();
+		const diceMaxRaw = (fd.get('dice_max') as string | null)?.trim();
+		const revealBudgetRaw = (fd.get('reveal_budget') as string | null)?.trim();
+		const showScoresRaw = fd.get('show_scores') as string | null;
+		const tierSChanceRaw = (fd.get('tier_s_chance') as string | null)?.trim();
+		const scoreModeRaw = (fd.get('score_mode') as string | null)?.trim();
 
 		const patch: PowerupTypeOverride = {};
 		if (enabledRaw !== null) patch.enabled = enabledRaw === 'true';
@@ -647,6 +657,24 @@ export const actions: Actions = {
 			const pct = parseInt(chanceRaw, 10);
 			if (!isNaN(pct) && pct >= 0 && pct <= 100) patch.chance = pct / 100;
 		}
+		if (diceMinRaw) {
+			const v = parseInt(diceMinRaw, 10);
+			if (!isNaN(v) && v >= 1) patch.dice_min = v;
+		}
+		if (diceMaxRaw) {
+			const v = parseInt(diceMaxRaw, 10);
+			if (!isNaN(v) && v >= 1) patch.dice_max = v;
+		}
+		if (revealBudgetRaw) {
+			const v = parseInt(revealBudgetRaw, 10);
+			if (!isNaN(v) && v >= 1) patch.reveal_budget = v;
+		}
+		if (showScoresRaw !== null) patch.show_scores = showScoresRaw === 'true';
+		if (tierSChanceRaw !== undefined && tierSChanceRaw !== '') {
+			const v = parseFloat(tierSChanceRaw);
+			if (!isNaN(v) && v >= 0 && v <= 1) patch.tier_s_chance = v;
+		}
+		if (scoreModeRaw === 'replace' || scoreModeRaw === 'best') patch.score_mode = scoreModeRaw;
 
 		const { data: gameSet } = await db
 			.from('game_sets')
