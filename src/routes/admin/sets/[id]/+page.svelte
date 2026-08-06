@@ -364,11 +364,18 @@
 
 	// Local UI-only collapse toggle — NOT the server toggleCategory action below
 	// (which persists powerup_config.categories). Different concepts, similar name.
-	function toggleCollapsed(cat: string) {
-		collapsedCategories = { ...collapsedCategories, [cat]: !collapsedCategories[cat] };
+	// Shared by category groups (default expanded) and the two non-category
+	// collapsibles below — the rules form and the advanced-settings block (default
+	// collapsed) — so collapse state and its localStorage persistence stay in one
+	// place regardless of what's being collapsed.
+	function toggleCollapsed(key: string) {
+		collapsedCategories = { ...collapsedCategories, [key]: !collapsedCategories[key] };
 		if (typeof localStorage !== 'undefined') {
 			localStorage.setItem(COLLAPSE_KEY, JSON.stringify(collapsedCategories));
 		}
+	}
+	function isCollapsed(key: string, defaultCollapsed: boolean): boolean {
+		return collapsedCategories[key] ?? defaultCollapsed;
 	}
 
 	// Powerup types grouped by category (piece 2: powerup_types, not the legacy
@@ -1183,8 +1190,24 @@
 				{/each}
 			</div>
 
-			<!-- Conditional rules form -->
-			<div class="mt-4 rounded-lg border border-zinc-700 bg-zinc-800/50 p-4">
+			<!-- Conditional rules form — collapsed by default, same collapse pattern as
+			     the category groups below (localStorage-persisted via toggleCollapsed) -->
+			<button
+				type="button"
+				onclick={() => toggleCollapsed('rules')}
+				class="mt-4 flex w-full items-center gap-2 text-left"
+			>
+				{#if isCollapsed('rules', true)}
+					<ChevronRight size={14} class="shrink-0 text-zinc-500" />
+				{:else}
+					<ChevronDown size={14} class="shrink-0 text-zinc-500" />
+				{/if}
+				<span class="text-xs font-semibold tracking-widest text-zinc-500 uppercase">
+					{powerupMode === 'threshold' ? 'Score threshold rules' : 'Token earning rules'}
+				</span>
+			</button>
+			{#if !isCollapsed('rules', true)}
+			<div class="mt-2 rounded-lg border border-zinc-700 bg-zinc-800/50 p-4">
 				{#if powerupMode === 'threshold'}
 					<div class="mb-1 flex items-center gap-1">
 						<h3 class="text-xs font-semibold tracking-widest text-zinc-500 uppercase">
@@ -1381,15 +1404,18 @@
 					</form>
 				{/if}
 			</div>
+			{/if}
 
-			<!-- Powerup grid — grouped by category -->
+			<!-- Powerup grid — grouped by category. Compact overview: icon + name +
+			     on/off only. Per-type threshold/chance config moves to the
+			     advanced-settings block. -->
 			<div class="mt-4 space-y-3">
 				<h3 class="text-xs font-semibold tracking-widest text-zinc-500 uppercase">
 					Powerup Config
 				</h3>
 				{#each powerupsByCategory as { category, powerups: catPowerups }}
 					{@const catEnabled = categoryEnabled(category)}
-					{@const collapsed = !!collapsedCategories[category]}
+					{@const collapsed = isCollapsed(category, false)}
 					{@const workingCount = catPowerups.filter((p) => !p.coming_soon).length}
 					{@const workingEnabledCount = catPowerups.filter(
 						(p) => !p.coming_soon && p.effective_enabled
@@ -1492,77 +1518,6 @@
 													>
 														{p.effective_enabled ? 'On' : 'Off'}
 													</button>
-												</form>
-
-												<!-- Threshold override -->
-												<form
-													method="POST"
-													action="?/saveTypeConfig"
-													use:enhance={() =>
-														async ({ update }) =>
-															update({ reset: false })}
-												>
-													<input type="hidden" name="type_id" value={p.id} />
-													<label
-														class="flex items-center gap-1.5"
-														title={p.is_inverse
-															? 'Awarded when score is BELOW this %'
-															: 'Awarded when score is AT/ABOVE this %'}
-													>
-														<span class="text-xs text-zinc-500"
-															>{p.is_inverse ? 'Earn below' : 'Threshold'}</span
-														>
-														<input
-															type="number"
-															name="threshold"
-															min="0"
-															max="100"
-															placeholder={String(
-																p.is_inverse ? p.default_max_score_pct : p.default_min_score_pct
-															)}
-															value={p.effective_threshold ?? ''}
-															onblur={(e) => {
-																const f = (e.target as HTMLInputElement).closest(
-																	'form'
-																) as HTMLFormElement | null;
-																f?.requestSubmit();
-															}}
-															class="admin-input w-16 py-0.5 text-xs"
-														/>
-														<span class="text-xs text-zinc-600">%</span>
-													</label>
-												</form>
-
-												<!-- Chance override (0-1 stored, shown as 0-100%) -->
-												<form
-													method="POST"
-													action="?/saveTypeConfig"
-													use:enhance={() =>
-														async ({ update }) =>
-															update({ reset: false })}
-												>
-													<input type="hidden" name="type_id" value={p.id} />
-													<label class="flex items-center gap-1.5">
-														<span class="text-xs text-zinc-500">Chance</span>
-														<input
-															type="number"
-															name="chance"
-															min="0"
-															max="100"
-															placeholder="100"
-															value={p.effective_chance != null
-																? Math.round(p.effective_chance * 100)
-																: ''}
-															onblur={(e) => {
-																const f = (e.target as HTMLInputElement).closest(
-																	'form'
-																) as HTMLFormElement | null;
-																f?.requestSubmit();
-															}}
-															class="admin-input w-16 py-0.5 text-xs"
-														/>
-														<span class="text-xs text-zinc-600">%</span>
-													</label>
 												</form>
 											{/if}
 										</div>
