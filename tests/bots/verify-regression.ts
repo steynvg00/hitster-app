@@ -27,14 +27,20 @@
 //     B2 insurance  → the 0 is floored to 50% of max; the insurance effect is
 //                     consumed (consumeEffects ran); current_streak RESET
 //
-// MANUAL-ONLY (inherently real-time — NOT automated here):
-//   - Grace window edge: start a challenge, let it expire, and within ~20s the
-//     backstop must NOT claim it; at ~25s past it must. (Sub-second timing can't
-//     be faked without backdating, which defeats the point of testing the window.)
-//   - time_boost: activate a time boost on a live challenge, let the ORIGINAL
-//     deadline pass, and confirm /api/auto-submit does NOT close the attempt until
-//     original+boost+grace elapses. (Requires a real running clock + a real
-//     activation through the UI.)
+// COVERED ELSEWHERE (no longer manual — see verify-timer-autosubmit.ts):
+//   - Grace window arithmetic: an attempt past its raw deadline but inside the
+//     20s window must NOT be claimed, and one past the window must. Case S1-B/S1-C
+//     straddle the claim point by backdating started_at.
+//   - time_boost: an attempt whose boost has moved its deadline must survive a
+//     fire that claims an unboosted attempt at the same offset, and fall on the
+//     next one past original+boost+grace. That is case S1-D.
+//
+// MANUAL-ONLY (inherently real-time — NOT automated anywhere):
+//   - Whether a THROTTLED PHONE actually benefits from the grace window: that a
+//     backgrounded tab whose timer interval was starved really does wake, fire its
+//     own `remaining <= 0` tick and submit the real draft before the backstop
+//     claims it. Backdating proves the server's arithmetic honours the window; it
+//     cannot prove a browser wakes up in time to use it.
 //
 // Requires: app running (BOT_BASE_URL) on feature/powerup-backstop-pipeline,
 // the Mechanics Test set seeded, and its fixture. Reuses the bot infra
@@ -448,7 +454,8 @@ async function main() {
 	const passed = checks.filter((c) => c.pass).length;
 	console.log(`\n${passed}/${checks.length} checks passed`);
 	console.log(
-		'\n(Manual-only: grace-window edge timing + time_boost deadline extension — see file header.)'
+		'\n(Grace window + time_boost are covered by verify-timer-autosubmit; only the ' +
+			'throttled-phone case stays manual — see file header.)'
 	);
 	if (passed !== checks.length) process.exit(1);
 }
