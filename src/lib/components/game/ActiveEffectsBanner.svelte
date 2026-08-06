@@ -42,7 +42,7 @@
 	}
 
 	const EFFECT_LABEL: Record<string, string> = {
-		bonus_points: '+15 ready',
+		bonus_points: '+5 ready',
 		single_event_mult: '1.5× ready',
 		hard_gaan: '🔥 Hard gaan',
 		shield: '🛡 Shield ready',
@@ -67,7 +67,7 @@
 			return `${m}× next submission`;
 		}
 		if (e.effect_type === 'bonus_points') {
-			const v = (e.payload.value as number | undefined) ?? 15;
+			const v = (e.payload.value as number | undefined) ?? 5;
 			return `+${v} next submission`;
 		}
 		if (e.effect_type === 'x_ray') {

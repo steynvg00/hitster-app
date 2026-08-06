@@ -191,25 +191,25 @@ function challengeWorld(opts: {
 
 // ── 1. bonus_points — immediate flat effect ───────────────────────────────────
 // powerups.ts:1969-1988: insert team_effects{effect_type:'bonus_points',
-// payload:{value:15}}, team_powerups → 'active'. Value 15 is read directly off
+// payload:{value:5}}, team_powerups → 'active'. Value 5 is read directly off
 // the line (not imported) — this is exactly what deriveEffectModifiers reads
-// back at powerups.ts:906 (`?? 15`), a second independent confirmation of the
-// literal.
+// back at powerups.ts:906 (`?? 5`), a second independent confirmation of the
+// literal, and it matches the card ("+5 points to your team immediately.").
 async function verifyBonusPoints() {
-	console.log('\n── bonus_points: flat +15, held → active ─────────────────────────');
+	console.log('\n── bonus_points: flat +5, held → active ──────────────────────────');
 	const respond = baseRespond({ typeId: 'bonus_points' });
 	const { db, log } = makeFake(respond);
 	const res = await activatePowerup(db, 'tp1');
 
 	assert('activation succeeds', res.success, true);
-	assert('payload is the flat value', res.payload, { value: 15 });
+	assert('payload is the flat value', res.payload, { value: 5 });
 	const ins = opsOn(log, 'team_effects', 'insert');
 	assert('one team_effects insert', ins.length, 1);
 	assert('…effect_type bonus_points, source tagged', {
 		effect_type: (ins[0].values as Record<string, unknown>).effect_type,
 		payload: (ins[0].values as Record<string, unknown>).payload,
 		source_team_powerup_id: (ins[0].values as Record<string, unknown>).source_team_powerup_id
-	}, { effect_type: 'bonus_points', payload: { value: 15 }, source_team_powerup_id: 'tp1' });
+	}, { effect_type: 'bonus_points', payload: { value: 5 }, source_team_powerup_id: 'tp1' });
 	const tpu = opsOn(log, 'team_powerups', 'update');
 	assert('team_powerups → active', (tpu[0]?.values as { status?: string })?.status, 'active');
 }

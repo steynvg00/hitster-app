@@ -136,7 +136,7 @@
 
 	const EFFECT_COPY: Record<string, { action: string; warning?: string }> = {
 		bonus_points: {
-			action: '+15 points added to your next submission total.'
+			action: '+5 points added to your next submission total.'
 		},
 		single_event_mult: {
 			action: '1.5× multiplier applied to your next challenge final score.'

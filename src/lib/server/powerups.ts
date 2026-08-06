@@ -1033,7 +1033,7 @@ export function deriveEffectModifiers(effects: ActiveEffect[]): {
 				break;
 			}
 			case 'bonus_points': {
-				bonusPoints += (e.payload.value as number | undefined) ?? 15;
+				bonusPoints += (e.payload.value as number | undefined) ?? 5;
 				toConsume.push(e);
 				break;
 			}
@@ -2097,7 +2097,9 @@ export async function activatePowerup(
 	// 3. Type-specific activation
 	switch (typeId) {
 		case 'bonus_points': {
-			const payload = { value: 15 };
+			// 5, not 15: powerup_types.description promises "+5 points to your team
+			// immediately" (seeded in 0044) and the card is what the team reads.
+			const payload = { value: 5 };
 			const { data: eff, error } = await supabase
 				.from('team_effects')
 				.insert({
