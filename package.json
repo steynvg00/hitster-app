@@ -25,6 +25,7 @@
 		"bots:verify-group-a-fixes": "tsx tests/bots/verify-group-a-fixes.ts",
 		"bots:verify-activation-self-defensive": "tsx tests/bots/verify-activation-self-defensive.ts",
 		"bots:verify-earning-inverse": "tsx tests/bots/verify-earning-inverse.ts",
+		"bots:verify-offensive-timedrain": "tsx tests/bots/verify-offensive-timedrain.ts",
 		"bots:verify-regression": "tsx tests/bots/verify-regression.ts",
 		"bots:verify-power-spin": "tsx tests/bots/verify-power-spin.ts",
 		"bots:verify-all-seeing-eye": "tsx tests/bots/verify-all-seeing-eye.ts",
