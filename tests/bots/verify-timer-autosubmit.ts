@@ -51,6 +51,13 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { assert, checks, reportAndExit, softReset } from './offensive-harness';
 import {
+	AUTO_SUBMIT_PATH,
+	checkGuardPosition,
+	falsifyGuardPosition,
+	readAutoSubmitSource,
+	robustnessGuardPosition
+} from './auto-submit-structure';
+import {
 	FOREIGN_SET_ID,
 	SET_ID,
 	bootstrapTimer,
@@ -310,6 +317,45 @@ async function sectionTwo(ctx: TimerCtx) {
 	assert('S2: foreign set untouched (still recap)', foreign?.play_state, 'recap');
 }
 
+// ── SECTION 2, structural half ───────────────────────────────────────────────
+//
+// A STRUCTURE assert, not a behaviour test: it reads the handler's source and
+// asserts a property of its shape. sectionTwo() above proves the flip fires
+// today; this proves the historical early return cannot come back unnoticed —
+// the one guarantee that cannot be bought behaviourally on a database where 17
+// challenges carry a timer. Source is read-only; the falsification cases mutate
+// a string in memory. See auto-submit-structure.ts for the full rationale.
+function sectionTwoStructure() {
+	console.log('\n══ SECTION 2 (structural) — guard position in the handler source ══');
+
+	const src = readAutoSubmitSource();
+	const verdict = checkGuardPosition(src);
+	console.log(
+		`  ${AUTO_SUBMIT_PATH}: section 2 anchored at line ${verdict.detail.anchorLine} ` +
+			`(${verdict.detail.anchorsMatched.join(', ')}); handler-level return(s) at line(s) ` +
+			`${verdict.detail.handlerReturnLines.join(', ') || 'none'}; challenges guard spans ` +
+			`${verdict.detail.guardLines.map(([a, b]) => `${a}-${b}`).join(', ') || 'none'}`
+	);
+	for (const r of verdict.reasons) console.log(`    ! ${r}`);
+	assert(
+		'S2 structure: no handler return precedes section 2, and it sits outside the guard',
+		verdict.ok,
+		true
+	);
+
+	// Falsification, executed rather than promised: re-introduce each failure
+	// mode in memory and require the checker to go red on both. These are not
+	// decoration — on the first draft they caught the anchor resolving to the
+	// import on line 6, which had made the whole check pass vacuously.
+	for (const f of falsifyGuardPosition(src)) {
+		assert(`S2 structure falsification: ${f.name}`, f.ok, true);
+	}
+	// And the negative control: formatting churn must NOT move the verdict.
+	for (const r of robustnessGuardPosition(src)) {
+		assert(`S2 structure robustness: ${r.name}`, r.ok, true);
+	}
+}
+
 async function main() {
 	console.log('▶ verify-timer-autosubmit — server-side timer/backstop verification\n');
 	const ctx = await bootstrapTimer();
@@ -318,6 +364,7 @@ async function main() {
 	try {
 		await sectionOne(ctx);
 		await sectionTwo(ctx);
+		sectionTwoStructure();
 	} finally {
 		// Always restore: a red run must not leave the Mechanics set mid-flight.
 		await softReset(ctx.db);
