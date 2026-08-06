@@ -1584,22 +1584,22 @@
 			     below is a `?/saveTypeConfig` submit, same merge-safe action and same
 			     mergeConfigPatch write path (+page.server.ts:saveTypeConfig) the compact
 			     on/off toggle above uses. -->
-			<div class="mt-4 rounded-lg border border-zinc-800">
-				<button
-					type="button"
-					onclick={() => toggleCollapsed('advanced')}
-					class="flex w-full items-center gap-2 px-3 py-2 text-left"
-				>
-					{#if isCollapsed('advanced', true)}
-						<ChevronRight size={14} class="shrink-0 text-zinc-500" />
-					{:else}
-						<ChevronDown size={14} class="shrink-0 text-zinc-500" />
-					{/if}
-					<span class="text-sm font-semibold text-zinc-300">Powerups advanced settings</span>
-					<span class="text-xs text-zinc-600">per-type earning + strength config</span>
-				</button>
-				{#if !isCollapsed('advanced', true)}
-					<div class="space-y-3 border-t border-zinc-800 p-3">
+			<button
+				type="button"
+				onclick={() => toggleCollapsed('advanced')}
+				class="mt-4 flex w-full items-center gap-2 text-left"
+			>
+				{#if isCollapsed('advanced', true)}
+					<ChevronRight size={14} class="shrink-0 text-zinc-500" />
+				{:else}
+					<ChevronDown size={14} class="shrink-0 text-zinc-500" />
+				{/if}
+				<span class="text-xs font-semibold tracking-widest text-zinc-500 uppercase">
+					Powerups advanced settings
+				</span>
+			</button>
+			{#if !isCollapsed('advanced', true)}
+				<div class="mt-2 space-y-3 rounded-lg border border-zinc-800 p-3">
 						{#each powerupsByCategory as { powerups: catPowerups }}
 							{#each catPowerups.filter((p) => !p.coming_soon) as p (p.id)}
 								<div class="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
@@ -1863,7 +1863,6 @@
 						{/each}
 					</div>
 				{/if}
-			</div>
 		{/if}
 	</section>
 
