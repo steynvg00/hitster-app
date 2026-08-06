@@ -28,7 +28,11 @@
 // Step 2 is what makes this more than a literal check: it rules out the failure
 // where activation rolls 1.2 but the scorer still applies something else.
 
-import { activatePowerup, deriveEffectModifiers, type ActiveEffect } from '../../src/lib/server/powerups';
+import {
+	activatePowerup,
+	deriveEffectModifiers,
+	type ActiveEffect
+} from '../../src/lib/server/powerups';
 import { computeBreakdown, type BonusParams } from '../../src/lib/server/scoring';
 import { makeFake, makeAsserter, opsOn, type Op, type Responder } from './fake-supabase';
 
@@ -106,7 +110,9 @@ async function verifyBonusPoints() {
 
 	// Through the scorer: deriveEffectModifiers → bonusPoints → flat add after
 	// the multiplied total (scoring.ts:1291-1292).
-	const mods = deriveEffectModifiers([asEffect('bonus_points', inserted.payload as Record<string, unknown>)]);
+	const mods = deriveEffectModifiers([
+		asEffect('bonus_points', inserted.payload as Record<string, unknown>)
+	]);
 	assert('deriveEffectModifiers reads +5 back', mods.bonusPoints, 5);
 	const b = computeBreakdown(100, neutralBonus({ bonusPoints: mods.bonusPoints }));
 	assert('base 100 + 5 → final 105', b.final, 105);
@@ -148,7 +154,11 @@ async function verifySingleEventMult() {
 			r.want
 		]);
 		const b = computeBreakdown(100, neutralBonus({ extraMultipliers: mods.extraMultipliers }));
-		assert(`${r.note}: base 100 → final ${Math.round(100 * r.want)}`, b.final, Math.round(100 * r.want));
+		assert(
+			`${r.note}: base 100 → final ${Math.round(100 * r.want)}`,
+			b.final,
+			Math.round(100 * r.want)
+		);
 		assert(`${r.note}: breakdown shows the ROLLED multiplier`, b.powerup_multipliers, [r.want]);
 	}
 
@@ -183,16 +193,33 @@ async function verifyHardGaanUnchanged() {
 	const { db, log } = makeFake((op: Op) => {
 		const base = baseRespond('hard_gaan')(op);
 		if (op.table === 'game_sets' && op.kind === 'select') {
-			return { status: 'active', play_state: 'playing', powerup_config: {}, hard_gaan_window_minutes: 15 };
+			return {
+				status: 'active',
+				play_state: 'playing',
+				powerup_config: {},
+				hard_gaan_window_minutes: 15
+			};
 		}
 		return base;
 	});
 	const res = await activatePowerup(db, 'tp1');
 	assert('activation succeeds', res.success, true);
-	assert('multiplier is ×1.5, matching the new card text', (res.payload as { multiplier?: number })?.multiplier, 1.5);
-	assert('window is 15 minutes, matching the card text', (res.payload as { window_minutes?: number })?.window_minutes, 15);
+	assert(
+		'multiplier is ×1.5, matching the new card text',
+		(res.payload as { multiplier?: number })?.multiplier,
+		1.5
+	);
+	assert(
+		'window is 15 minutes, matching the card text',
+		(res.payload as { window_minutes?: number })?.window_minutes,
+		15
+	);
 	const ins = opsOn(log, 'team_effects', 'insert');
-	assert('window effect carries expires_at', typeof (ins[0]?.values as Record<string, unknown>)?.expires_at, 'string');
+	assert(
+		'window effect carries expires_at',
+		typeof (ins[0]?.values as Record<string, unknown>)?.expires_at,
+		'string'
+	);
 }
 
 async function main() {
