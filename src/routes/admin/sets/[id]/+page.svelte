@@ -328,7 +328,22 @@
 	let bandMode = $state<BandMode>(data.powerupConfigV2.band_mode);
 
 	// Token shop config state
-	const initShop = () => data.powerupSetConfig as TokenShopConfig;
+	// initShop() casts the stored config to TokenShopConfig, but a set whose
+	// powerup_mode is token_shop can still be missing the token-shop keys (any
+	// config predating fillConfigDefaults, or written by a path that doesn't seed
+	// them) — the cast doesn't make them exist. streak_bonuses.map() below is the
+	// sharp edge: without a fallback it dereferences undefined and crashes the
+	// console on page load.
+	const initShop = () => {
+		const cfg = data.powerupSetConfig as Partial<TokenShopConfig>;
+		return {
+			starting_tokens: cfg.starting_tokens ?? 0,
+			per_correct_challenge: cfg.per_correct_challenge ?? 1,
+			streak_bonuses: cfg.streak_bonuses ?? [],
+			time_tick_minutes: cfg.time_tick_minutes ?? null,
+			tokens_per_tick: cfg.tokens_per_tick ?? 1
+		} satisfies TokenShopConfig;
+	};
 	let earningStarting = $state(data.powerupMode === 'token_shop' ? initShop().starting_tokens : 0);
 	let earningPerCorrect = $state(
 		data.powerupMode === 'token_shop' ? initShop().per_correct_challenge : 1
