@@ -1,4 +1,6 @@
 // Fase 1b, step 2 — the earning GAP: lifeline + penalty_shot's inverse channel.
+// Plus (R1 gap 4): the category switch's POSITIVE control — see
+// verifyCategorySwitch() below for why that cannot live in the live harness.
 //
 //   npm run bots:verify-earning-inverse
 //
@@ -142,8 +144,92 @@ async function verifyInverseEarning() {
 	}
 }
 
+// ── the category switch, BOTH directions (R1 gap 4) ─────────────────────────
+//
+// verify-earning.ts's live scenario 5 asserts only the NEGATIVE half
+// (categories.self=false → selfCount 0) — which also passes if the ladder never
+// awards self types under ANY config. Which type drops per band is random live,
+// so the positive control belongs here: pure planAwards, injected rand,
+// single-type pools that force the pick. Expectations are design facts (the
+// switch governs exactly its own category; absent means ON), hand-written — not
+// read back from the planner.
+async function verifyCategorySwitch() {
+	console.log('\n── category switch: self types CAN drop; only the switch stops them ──');
+
+	const selfType = {
+		id: 'bonus_points',
+		category: 'self',
+		coming_soon: false,
+		enabled_by_default: true,
+		default_inverse: false,
+		default_min_score_pct: 0,
+		default_max_score_pct: 100
+	};
+	const defensiveType = {
+		id: 'shield',
+		category: 'defensive',
+		coming_soon: false,
+		enabled_by_default: true,
+		default_inverse: false,
+		default_min_score_pct: 0,
+		default_max_score_pct: 100
+	};
+
+	const cfgWith = (categories: Record<string, boolean>) => ({
+		version: 2 as const,
+		threshold_mode: 'per_challenge' as const,
+		band_mode: 'all_bands' as const,
+		thresholds_percent: [25], // one band, crossed by the 100% below → exactly one pick
+		types: {},
+		categories
+	});
+	const ctx: PlanContext = {
+		submissionPct: 100,
+		cumulativePct: 0,
+		thresholdMode: 'per_challenge',
+		bandMode: 'all_bands',
+		lastThresholdCrossed: 0
+	};
+
+	// THE POSITIVE CONTROL — the missing half. One band, a pool of exactly one
+	// self type: the award MUST land on it. A planner that silently never deals
+	// self types goes red here and nowhere else.
+	{
+		const { awards } = planAwards(cfgWith({}), [selfType] as never[], ctx, () => 0);
+		assert('categories untouched: a self type DOES drop off the ladder', awards, [
+			{ typeId: 'bonus_points', channel: 'ladder' }
+		]);
+	}
+	// Boundary: explicitly true behaves like absent (the `?? true` default).
+	{
+		const { awards } = planAwards(cfgWith({ self: true }), [selfType] as never[], ctx, () => 0);
+		assert('categories.self=true: still drops', awards, [
+			{ typeId: 'bonus_points', channel: 'ladder' }
+		]);
+	}
+	// The negative half, now deterministic instead of statistical.
+	{
+		const { awards } = planAwards(cfgWith({ self: false }), [selfType] as never[], ctx, () => 0);
+		assert('categories.self=false: nothing drops', awards, []);
+	}
+	// Contrast: the switch removes ONLY its own category — a defensive type in
+	// the same pool still fires. Guards against a switch that kills the pool.
+	{
+		const { awards } = planAwards(
+			cfgWith({ self: false }),
+			[selfType, defensiveType] as never[],
+			ctx,
+			() => 0
+		);
+		assert('self off: the defensive type in the same pool still drops', awards, [
+			{ typeId: 'shield', channel: 'ladder' }
+		]);
+	}
+}
+
 async function main() {
 	await verifyInverseEarning();
+	await verifyCategorySwitch();
 
 	const failed = checks.filter((c) => !c.pass);
 	console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);
