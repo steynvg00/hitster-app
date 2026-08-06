@@ -821,9 +821,10 @@ async function verifyResurrection() {
 			if (op.table === 'team_effects' && op.kind === 'select') return [{ id: 'open-ticket' }];
 			return undefined;
 		});
-		const { db } = makeFake(respond);
+		const { db, log } = makeFake(respond);
 		const res = await activatePowerup(db, 'tp1', { currentChallengeId: 'ch1' });
 		assert('an already-open retry refuses a second one', res.success === false && res.error, 'You already have a challenge back from the dead — finish that one first');
+		assert('a refusal logs no resurrection_opened', opsOn(log, 'activity_log', 'insert').length, 0);
 	}
 
 	{
@@ -880,7 +881,23 @@ async function verifyResurrection() {
 		}, { values: { is_final: false }, filters: { id: 'sub1', is_final: true } });
 		assert('attempt restarted via upsert', opsOn(log, 'challenge_attempts', 'upsert').length, 1);
 		assert('team_powerups → active (spent only when the retry settles)', (opsOn(log, 'team_powerups', 'update')[0]?.values as { status?: string })?.status, 'active');
-		assert('resurrection_opened logged', opsOn(log, 'activity_log', 'insert').length, 1);
+		// Bound on NAME and CONTENT, not just counted (R1 gap 3): any stray
+		// activity_log insert used to satisfy this. Oracle hand-derived from the
+		// fixture: old_final 42 (the breakdown the responder serves), default
+		// score_mode 'replace', retry 90s/3 = 30s.
+		const logged = opsOn(log, 'activity_log', 'insert');
+		assert('exactly one activity_log row', logged.length, 1);
+		assert(
+			'…logged as resurrection_opened carrying the ticket facts',
+			{
+				event_type: (logged[0]?.values as { event_type?: string })?.event_type,
+				payload: (logged[0]?.values as { payload?: Record<string, unknown> })?.payload
+			},
+			{
+				event_type: 'resurrection_opened',
+				payload: { old_final: 42, score_mode: 'replace', retry_seconds: 30 }
+			}
+		);
 	}
 
 	{
@@ -903,6 +920,7 @@ async function verifyResurrection() {
 		assert('the ticket is rolled back with a delete', opsOn(log, 'team_effects', 'delete').length, 1);
 		assert('no attempt restart happened', opsOn(log, 'challenge_attempts', 'upsert').length, 0);
 		assert('powerup stays held', opsOn(log, 'team_powerups', 'update').length, 0);
+		assert('a lost CAS logs no resurrection_opened', opsOn(log, 'activity_log', 'insert').length, 0);
 	}
 
 	{

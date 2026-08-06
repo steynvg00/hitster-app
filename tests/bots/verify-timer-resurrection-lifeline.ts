@@ -428,8 +428,16 @@ async function sectionResurrectionEndToEnd(ctx: TimerCtx) {
 
 	await fabricateFinalSubmission(db, team.id, challengeId, OLD_FINAL);
 	const tpId = await grantHeld(db, team.id, 'resurrection');
+	// Delta over the ACTIVATION, against the real DB — binds the event NAME the
+	// fake harness can only echo (R1 gap 3: the delta was printed, never read).
+	const beforeActivation = await logCounts(db, LOG_TYPES);
 	const res = await activatePowerup(db as never, tpId, { currentChallengeId: challengeId });
 	assert('R-D: resurrection activates', res.success, true);
+	assert(
+		'R-D: exactly one resurrection_opened logged by the activation (delta)',
+		logDelta(beforeActivation, await logCounts(db, LOG_TYPES)).resurrection_opened,
+		1
+	);
 
 	// What the real activation left behind.
 	const sub = await readSubmission(db, team.id, challengeId);
