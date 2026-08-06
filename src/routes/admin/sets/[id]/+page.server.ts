@@ -14,6 +14,7 @@ import {
 	fillConfigDefaults
 } from '$lib/server/powerups';
 import type {
+	PowerupCategory,
 	PowerupMode,
 	PowerupTypeConsoleRow,
 	PowerupTypeOverride,
@@ -698,6 +699,28 @@ export const actions: Actions = {
 	// Category master toggle, piece 2. Replaces togglePowerupCategory's
 	// set_powerups upsert — writes into powerup_config.categories[cat] instead.
 	// Never touches coming_soon types (they have no working controls to enable).
+	//
+	// Master-switch behaviour: the category flag alone left every per-type
+	// `enabled` override untouched, so the compact-overview cards kept showing
+	// "On" for individually-enabled powerups after their category was switched
+	// off — confusing, since the category flag already suppresses their earning
+	// regardless of what the card said. Flipping the category now also stamps
+	// `enabled` onto every non-coming_soon type in it, so the cards agree with
+	// the category state they're grouped under.
+	//
+	// Category membership is looked up fresh from `powerup_types` server-side
+	// (not trusted from the client) so a crafted request can't target types
+	// outside the category or a stale list.
+	//
+	// Every write here goes through mergeConfigPatch — the merge-safe helper
+	// from the 3854d34 fix, same one saveTypeConfig uses — and each call is
+	// chained onto the OUTPUT of the previous one (`rawConfig` is reassigned
+	// every iteration), never re-read from the pre-loop snapshot. That's what
+	// keeps N sequential merges from collapsing into "last write wins": each
+	// merge lands on top of the one before it, so a category with 5 types
+	// produces 6 merges (1 for the category flag + 5 for the types) that all
+	// compose, then a single `.update()` persists the fully-merged object —
+	// never a wholesale overwrite, and never a partial one either.
 	toggleCategory: async ({ request, params }) => {
 		const db = createAdminClient();
 		const fd = await request.formData();
@@ -705,19 +728,29 @@ export const actions: Actions = {
 		const enabled = fd.get('enabled') === 'true';
 		if (!category) return fail(400, { error: 'Missing category' });
 
-		const { data: gameSet } = await db
-			.from('game_sets')
-			.select('powerup_config')
-			.eq('id', params.id)
-			.maybeSingle();
+		const [{ data: gameSet }, { data: categoryTypes }] = await Promise.all([
+			db.from('game_sets').select('powerup_config').eq('id', params.id).maybeSingle(),
+			db
+				.from('powerup_types')
+				.select('id')
+				.eq('category', category as PowerupCategory)
+				.eq('coming_soon', false)
+		]);
 
-		const nextConfig = mergeConfigPatch(gameSet?.powerup_config, {
+		let rawConfig: unknown = mergeConfigPatch(gameSet?.powerup_config, {
 			categories: { [category]: enabled }
 		});
 
+		for (const t of categoryTypes ?? []) {
+			const current = parseConfig(rawConfig);
+			rawConfig = mergeConfigPatch(rawConfig, {
+				types: { [t.id]: { ...current.types[t.id], enabled } }
+			});
+		}
+
 		const { error } = await db
 			.from('game_sets')
-			.update({ powerup_config: nextConfig as never })
+			.update({ powerup_config: rawConfig as never })
 			.eq('id', params.id);
 		if (error) return fail(500, { error: error.message });
 		return { success: true };
