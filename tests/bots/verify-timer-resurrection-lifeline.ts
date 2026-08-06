@@ -57,7 +57,15 @@
 // unchanged in a finally-teardown so even a red run restores it.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { assert, checks, grantHeld, reportAndExit, softReset, statusOf } from './offensive-harness';
+import {
+	assert,
+	checks,
+	grantHeld,
+	newestLog,
+	reportAndExit,
+	softReset,
+	statusOf
+} from './offensive-harness';
 import {
 	FOREIGN_SET_ID,
 	ORACLE_GRACE_MS,
@@ -216,6 +224,25 @@ async function readLifelineEffect(db: SupabaseClient, teamId: string, challengeI
 		.eq('effect_type', 'lifeline')
 		.eq('set_id', SET_ID);
 	return (data ?? []).find((r) => r.consumed_challenge_id === challengeId);
+}
+
+/** teams.score, read back for the settlement oracle. */
+async function teamScore(db: SupabaseClient, teamId: string): Promise<number | null> {
+	const { data } = await db.from('teams').select('score').eq('id', teamId).maybeSingle();
+	return (data?.score as number | null) ?? null;
+}
+
+/**
+ * Park the crown on ANOTHER team with an untouchable score, so the settlement's
+ * maybeTransferCrown is a deterministic no-op and the score assertions measure
+ * the resurrection delta ALONE. Without this, the first settlement that leaves
+ * the team above 0 would take the crown and book a +1 steal bonus on top of the
+ * delta (the +1 verify-regression.ts:293-296 has to account for — parked away
+ * here instead of accounted).
+ */
+async function parkCrownElsewhere(db: SupabaseClient, crownTeamId: string) {
+	await db.from('teams').update({ score: 999 }).eq('id', crownTeamId);
+	await db.from('game_sets').update({ crown_holder_team_id: crownTeamId }).eq('id', SET_ID);
 }
 
 /**
@@ -381,6 +408,24 @@ async function sectionResurrectionEndToEnd(ctx: TimerCtx) {
 	const team = teams[3];
 	const OLD_FINAL = 40;
 
+	// ── The score oracle, stated by hand ─────────────────────────────────────
+	// teams.score already CONTAINS old_final (the first submission booked it).
+	// The team starts on 100; the abandoned retry scores 0; under 'replace' the
+	// settlement must book the DIFFERENCE (0 − 40) = −40, so the team ENDS on
+	// 60. The double-count failure mode — old points left standing, new score
+	// added beside them — books +0 instead and leaves the team on 100. Literals
+	// on purpose: computing them via resurrectionDelta() would import the code
+	// under test as its own oracle.
+	//
+	// Earning cannot perturb this number: a 0% retry reaches only the INVERSE
+	// channel, and neither inverse type touches teams.score (lifeline → pending
+	// row; penalty_shot → activity_log only, powerups.ts:2928-2942). The crown
+	// is parked on another team so maybeTransferCrown is a no-op.
+	const TEAM_SCORE_BEFORE = 100;
+	const EXPECT_SCORE_AFTER = 60; // 100 + (0 − 40), hand-computed
+	await parkCrownElsewhere(db, teams[0].id);
+	await db.from('teams').update({ score: TEAM_SCORE_BEFORE }).eq('id', team.id);
+
 	await fabricateFinalSubmission(db, team.id, challengeId, OLD_FINAL);
 	const tpId = await grantHeld(db, team.id, 'resurrection');
 	const res = await activatePowerup(db as never, tpId, { currentChallengeId: challengeId });
@@ -439,15 +484,161 @@ async function sectionResurrectionEndToEnd(ctx: TimerCtx) {
 	);
 	assert('R-D: powerup spent by the settlement', await statusOf(db, tpId), 'consumed');
 
+	// THE score assertion this section existed without: the team's total moved
+	// by the DIFFERENCE (new − old), not by the full new score. 100 → 60 under
+	// 'replace' with an empty retry; the double-count leaves 100.
+	const scoreAfter = await teamScore(db, team.id);
+	console.log(
+		`  · teams.score across the settlement: ${TEAM_SCORE_BEFORE} → ${scoreAfter} ` +
+			`(oracle: ${EXPECT_SCORE_AFTER}; double-count would leave ${TEAM_SCORE_BEFORE})`
+	);
+	assert(
+		'R-D: teams.score booked the DIFFERENCE (100 → 60), not the full new score',
+		scoreAfter,
+		EXPECT_SCORE_AFTER
+	);
+
 	const delta = logDelta(before, await logCounts(db, LOG_TYPES));
 	console.log(`  activity_log DELTA across the settlement: ${JSON.stringify(delta)}`);
 	assert('R-D: exactly one resurrection_settled (delta)', delta.resurrection_settled, 1);
+
+	// Bind the settlement log's SEMANTICS, not just its count (R1 flagged the
+	// count-only pattern): the newest resurrection_settled row must carry the
+	// hand-computed delta against the fabricated old_final. Field-by-field —
+	// jsonb does not preserve key order, so a whole-object compare would be
+	// asserting Postgres' key sorting, not the payload.
+	const settled = (await newestLog(db, 'resurrection_settled'))?.payload as {
+		old_final?: number;
+		new_final?: number;
+		delta?: number;
+		score_mode?: string;
+	} | null;
+	assert(
+		'R-D: settlement log books delta −40 against old_final 40',
+		{
+			old_final: settled?.old_final,
+			new_final: settled?.new_final,
+			delta: settled?.delta,
+			score_mode: settled?.score_mode
+		},
+		{ old_final: OLD_FINAL, new_final: 0, delta: -40, score_mode: 'replace' }
+	);
 
 	vacuityGuard(
 		'R-D abandoned retry',
 		(k) => oracleExpectsClaim({ ...input, nowMs: fire.nowMs }, k),
 		{ useOverride: false }
 	);
+}
+
+// ── SECTION R-B — score_mode 'best': a worse retry books NOTHING ─────────────
+//
+// The other settlement path (max(0, new − old) instead of new − old), driven
+// end to end like R-D. HONESTY NOTE on what this discriminates: with an empty
+// retry (new = 0) the correct 'best' outcome (score unchanged) coincides with
+// the double-count outcome (also unchanged — it books +0). The double-count
+// DISCRIMINATOR is therefore R-D's 'replace' case alone; this section pins the
+// 'best' semantics end to end — a worse retry must never cost points — and the
+// score_mode plumbing from set config through ticket to settlement log.
+async function sectionResurrectionBestMode(ctx: TimerCtx) {
+	const { db, teams, challengeIds, timerSeconds } = ctx;
+	console.log("\n══ SECTION R-B — score_mode 'best': a worse retry costs nothing ══");
+
+	await softReset(db);
+	await positionSetClock(db, { playState: 'playing', startedSecondsAgo: null });
+
+	const challengeId = challengeIds[1];
+	const team = teams[2];
+	const OLD_FINAL = 40;
+	const TEAM_SCORE_BEFORE = 100;
+	const EXPECT_SCORE_AFTER = 100; // 100 + max(0, 0 − 40) = +0, hand-computed
+	await parkCrownElsewhere(db, teams[0].id);
+	await db.from('teams').update({ score: TEAM_SCORE_BEFORE }).eq('id', team.id);
+
+	// Flip the SET to 'best', snapshotting the config so the state the next
+	// harness inherits is untouched even on a red run. The restore can happen
+	// right after activation — the mode rides in the TICKET from there
+	// (auto-submit reads it back out of the ticket payload, +server.ts:164-173),
+	// but the finally keeps it safe on any exit path.
+	const { data: gsRow } = await db
+		.from('game_sets')
+		.select('powerup_config')
+		.eq('id', SET_ID)
+		.maybeSingle();
+	const cfgBefore = (gsRow?.powerup_config ?? {}) as Record<string, unknown>;
+	const cfgTypes = (cfgBefore.types ?? {}) as Record<string, unknown>;
+	try {
+		await db
+			.from('game_sets')
+			.update({
+				powerup_config: {
+					...cfgBefore,
+					types: {
+						...cfgTypes,
+						resurrection: {
+							...((cfgTypes.resurrection ?? {}) as Record<string, unknown>),
+							score_mode: 'best'
+						}
+					}
+				}
+			})
+			.eq('id', SET_ID);
+
+		await fabricateFinalSubmission(db, team.id, challengeId, OLD_FINAL);
+		const tpId = await grantHeld(db, team.id, 'resurrection');
+		const res = await activatePowerup(db as never, tpId, { currentChallengeId: challengeId });
+		assert('R-B: resurrection activates', res.success, true);
+		assert('R-B: activation picked up score_mode=best', res.resurrection?.scoreMode, 'best');
+
+		const override = await readOverrideSeconds(db, team.id, challengeId);
+		const { startedAtMs } = await positionAttempt(db, {
+			teamId: team.id,
+			challengeId,
+			secondsAgo: 65,
+			overrideSeconds: override
+		});
+
+		const before = await logCounts(db, LOG_TYPES);
+		const fire = await fireAutoSubmit();
+		assert('R-B fire: /api/auto-submit ok', fire.ok, true);
+		const expect = oracleExpectsClaim({
+			startedAtMs,
+			timerSeconds,
+			overrideSeconds: override,
+			addedSeconds: 0,
+			nowMs: fire.nowMs
+		});
+		assert('R-B: abandoned retry claimed on the short clock', expect, true);
+
+		const subAfter = await readSubmission(db, team.id, challengeId);
+		assert('R-B: submission RE-LOCKED (is_final true)', subAfter?.isFinal, true);
+		assert('R-B: powerup spent by the settlement', await statusOf(db, tpId), 'consumed');
+
+		const scoreAfter = await teamScore(db, team.id);
+		console.log(
+			`  · teams.score across the settlement: ${TEAM_SCORE_BEFORE} → ${scoreAfter} ` +
+				`(oracle: ${EXPECT_SCORE_AFTER} — 'best' floors the delta at 0)`
+		);
+		assert(
+			"R-B: teams.score unchanged (100 → 100) — 'best' never costs points",
+			scoreAfter,
+			EXPECT_SCORE_AFTER
+		);
+
+		const delta = logDelta(before, await logCounts(db, LOG_TYPES));
+		assert('R-B: exactly one resurrection_settled (delta)', delta.resurrection_settled, 1);
+		const settled = (await newestLog(db, 'resurrection_settled'))?.payload as {
+			delta?: number;
+			score_mode?: string;
+		} | null;
+		assert(
+			'R-B: settlement log books delta 0 under score_mode best',
+			{ delta: settled?.delta, score_mode: settled?.score_mode },
+			{ delta: 0, score_mode: 'best' }
+		);
+	} finally {
+		await db.from('game_sets').update({ powerup_config: cfgBefore }).eq('id', SET_ID);
+	}
 }
 
 // ── SECTION L — the Lifeline half-way gate ───────────────────────────────────
@@ -575,6 +766,7 @@ async function main() {
 	try {
 		await sectionResurrection(ctx);
 		await sectionResurrectionEndToEnd(ctx);
+		await sectionResurrectionBestMode(ctx);
 		await sectionLifeline(ctx);
 	} finally {
 		await softReset(ctx.db);
