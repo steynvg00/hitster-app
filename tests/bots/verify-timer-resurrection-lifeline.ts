@@ -1,13 +1,13 @@
-// Resurrection retry-clock verification (fase 3b).
+// Resurrection retry-clock + Lifeline time-gate verification (fase 3b).
 //
 //   npm run dev                      # needed for the /api/auto-submit half
 //   npm run bots:verify-timer-resurrection-lifeline
-//   FALSIFY=grace|override npm run …                   # each must go RED
+//   FALSIFY=grace|override|lifeline|boost npm run …    # each must go RED
 //
 // Built on the fase-3a fundament (timer-harness.ts): nothing waits, every clock
 // is written into the past. No new fundament here.
 //
-// ── The retry clock ─────────────────────────────────────────────────────────
+// ── The two remaining timer paths ────────────────────────────────────────────
 //
 // R. RESURRECTION opens a retry on a THIRD of the original clock, stored per
 //    attempt in challenge_attempts.timer_override_seconds (powerups.ts:2814-2827,
@@ -18,6 +18,12 @@
 //        started_at, one carrying the override and one not, in one fire;
 //      * end to end, by driving the real activatePowerup() and letting the
 //        backstop settle the retry it opened.
+//
+// L. LIFELINE is the one time-gated activation in the system: refused below half
+//    the (boost-adjusted) clock (powerups.ts:2869). Driven through the real
+//    activatePowerup() directly — powerups.ts imports no $env, so unlike
+//    /api/auto-submit it needs no running server (precedent:
+//    verify-offensive-timedrain.ts:50).
 //
 // ── The gap this pins down ───────────────────────────────────────────────────
 //
@@ -59,6 +65,7 @@ import {
 	bootstrapTimer,
 	fireAutoSubmit,
 	globalOpenAttemptCount,
+	grantTimerEffect,
 	logCounts,
 	logDelta,
 	positionAttempt,
@@ -75,14 +82,16 @@ const LOG_TYPES = ['resurrection_opened', 'resurrection_settled', 'crown_stolen'
 // ── independent oracle knobs ─────────────────────────────────────────────────
 //
 // Hand-copied from the spec, never imported from the code under test.
-// powerups-meta.ts:366 declares the retry fraction; if it drifts from this
-// literal the assertions go red, which is the whole point. `useOverride` is not a constant in the source at all — it
+// powerups-meta.ts:366 declares the retry fraction and :227 the Lifeline
+// threshold; if either drifts from these literals the assertions go red, which
+// is the whole point. `useOverride` is not a constant in the source at all — it
 // is the BEHAVIOUR that +server.ts:71 prefers the attempt's own clock, expressed
 // as a knob so a case can prove it depends on it.
 
 export type Knobs = {
 	graceMs: number;
 	retryFraction: number;
+	lifelineThreshold: number;
 	useOverride: boolean;
 	boostScale: number;
 };
@@ -90,6 +99,7 @@ export type Knobs = {
 const TRUE_KNOBS: Knobs = {
 	graceMs: ORACLE_GRACE_MS,
 	retryFraction: 1 / 3,
+	lifelineThreshold: 0.5,
 	useOverride: true,
 	boostScale: 1
 };
@@ -101,6 +111,8 @@ function activeKnobs(): Knobs {
 			return { ...TRUE_KNOBS, graceMs: 0 };
 		case 'override':
 			return { ...TRUE_KNOBS, useOverride: false };
+		case 'lifeline':
+			return { ...TRUE_KNOBS, lifelineThreshold: 0.05 };
 		case 'boost':
 			return { ...TRUE_KNOBS, boostScale: 0 };
 		default:
@@ -131,6 +143,22 @@ function oracleExpectsClaim(i: ClaimInput, k: Knobs = K): boolean {
 	const base = k.useOverride && i.overrideSeconds != null ? i.overrideSeconds : i.timerSeconds;
 	const claimAt = i.startedAtMs + (base + i.addedSeconds * k.boostScale) * 1000 + k.graceMs;
 	return claimAt < i.nowMs;
+}
+
+/** LIFELINE ORACLE: elapsed / (timer + Σ added_seconds) ≥ 0.5 (powerups.ts:1580). */
+function oracleElapsedFraction(
+	i: { startedAtMs: number; timerSeconds: number; addedSeconds: number; nowMs: number },
+	k: Knobs = K
+): number {
+	const total = i.timerSeconds + i.addedSeconds * k.boostScale;
+	return (i.nowMs - i.startedAtMs) / (total * 1000);
+}
+
+function oracleAllowsLifeline(
+	i: Parameters<typeof oracleElapsedFraction>[0],
+	k: Knobs = K
+): boolean {
+	return oracleElapsedFraction(i, k) >= k.lifelineThreshold;
 }
 
 // ── the vacuum guard ─────────────────────────────────────────────────────────
@@ -178,6 +206,16 @@ async function readTicket(db: SupabaseClient, teamId: string, challengeId: strin
 	return (data ?? []).find(
 		(r) => (r.payload as { challenge_id?: string } | null)?.challenge_id === challengeId
 	);
+}
+
+async function readLifelineEffect(db: SupabaseClient, teamId: string, challengeId: string) {
+	const { data } = await db
+		.from('team_effects')
+		.select('id, payload, consumed_at, consumed_challenge_id')
+		.eq('team_id', teamId)
+		.eq('effect_type', 'lifeline')
+		.eq('set_id', SET_ID);
+	return (data ?? []).find((r) => r.consumed_challenge_id === challengeId);
 }
 
 /**
@@ -412,8 +450,120 @@ async function sectionResurrectionEndToEnd(ctx: TimerCtx) {
 	);
 }
 
+// ── SECTION L — the Lifeline half-way gate ───────────────────────────────────
+//
+// No HTTP at all: activatePowerup is driven directly. L2 and L3 share an elapsed
+// time and differ only in a time_boost, which is the clean direction to show —
+// the boost sits in the DENOMINATOR (powerups.ts:1577-1580), so it makes the
+// same wall-clock moment a SMALLER fraction and pushes the gate LATER.
+async function sectionLifeline(ctx: TimerCtx) {
+	const { db, teams, challengeIds, timerSeconds } = ctx;
+	console.log('\n══ SECTION L — Lifeline refused below half the (boosted) clock ══');
+
+	await softReset(db);
+	await positionSetClock(db, { playState: 'playing', startedSecondsAgo: null });
+
+	const challengeId = challengeIds[0];
+	const half = TRUE_KNOBS.lifelineThreshold;
+	console.log(
+		`  oracle: threshold ${half * 100}% → unlocks at ${timerSeconds * half}s unboosted, ` +
+			`at ${(timerSeconds + 30) * half}s with a +30s boost`
+	);
+
+	const cases = [
+		{ label: 'L1 just BELOW half', team: teams[0], ago: 38, boost: 0 },
+		{ label: 'L2 just ABOVE half', team: teams[1], ago: 52, boost: 0 },
+		{ label: 'L3 same clock as L2, +30s boost', team: teams[2], ago: 52, boost: 30 }
+	];
+
+	const before = await logCounts(db, LOG_TYPES);
+
+	for (const c of cases) {
+		const { startedAtMs } = await positionAttempt(db, {
+			teamId: c.team.id,
+			challengeId,
+			secondsAgo: c.ago
+		});
+		if (c.boost) {
+			await grantTimerEffect(db, {
+				teamId: c.team.id,
+				challengeId,
+				effectType: 'time_boost',
+				addedSeconds: c.boost
+			});
+		}
+
+		const tpId = await grantHeld(db, c.team.id, 'lifeline');
+		const nowMs = Date.now();
+		const input = { startedAtMs, timerSeconds, addedSeconds: c.boost, nowMs };
+		const expectAllow = oracleAllowsLifeline(input);
+		const fraction = oracleElapsedFraction(input);
+
+		const res = await activatePowerup(db as never, tpId, { currentChallengeId: challengeId });
+
+		console.log(
+			`  · ${c.label} (${c.team.color}): ${c.ago}s of ${timerSeconds + c.boost}s → ` +
+				`fraction ${fraction.toFixed(3)} → oracle: ${expectAllow ? 'ALLOW' : 'REFUSE'}` +
+				(res.success ? '' : `   [server: "${res.error}"]`)
+		);
+
+		assert(
+			`${c.label}: activation ${expectAllow ? 'succeeds' : 'refused'}`,
+			res.success,
+			expectAllow
+		);
+		// A refusal must cost nothing — the same posture free_answer takes.
+		assert(
+			`${c.label}: powerup ${expectAllow ? 'consumed' : 'still held'}`,
+			await statusOf(db, tpId),
+			expectAllow ? 'consumed' : 'held'
+		);
+		const effect = await readLifelineEffect(db, c.team.id, challengeId);
+		assert(
+			`${c.label}: hint effect ${expectAllow ? 'written' : 'absent'}`,
+			effect != null,
+			expectAllow
+		);
+		if (expectAllow) {
+			// Written already-consumed, exactly like free_answer's reveal row, so it
+			// can never ride into scoring (powerups.ts:2894-2919).
+			assert(`${c.label}: hint row is stored consumed`, effect?.consumed_at != null, true);
+		} else {
+			assert(`${c.label}: refusal says "too early"`, res.error?.startsWith('Too early'), true);
+		}
+	}
+
+	console.log(
+		`  activity_log DELTA: ${JSON.stringify(logDelta(before, await logCounts(db, LOG_TYPES)))}`
+	);
+
+	// ── vacuity ───────────────────────────────────────────────────────────────
+	const nowRef = Date.now();
+	const at = (ago: number, boost: number) => ({
+		startedAtMs: nowRef - ago * 1000,
+		timerSeconds,
+		addedSeconds: boost,
+		nowMs: nowRef
+	});
+	vacuityGuard('L1 (38s, no boost)', (k) => oracleAllowsLifeline(at(38, 0), k), {
+		lifelineThreshold: 0.05
+	});
+	vacuityGuard('L2 (52s, no boost)', (k) => oracleAllowsLifeline(at(52, 0), k), {
+		lifelineThreshold: 0.95
+	});
+	// L3 is the boost case: with the boost it is below half, without it above.
+	vacuityGuard('L3 (52s, +30s boost)', (k) => oracleAllowsLifeline(at(52, 30), k), {
+		boostScale: 0
+	});
+	vacuityGuard(
+		'L2/L3 contrast (boost pushes the gate later)',
+		(k) => oracleAllowsLifeline(at(52, 0), k) && !oracleAllowsLifeline(at(52, 30), k),
+		{ boostScale: 0 }
+	);
+}
+
 async function main() {
-	console.log('▶ verify-timer-resurrection-lifeline — Resurrection retry clock\n');
+	console.log('▶ verify-timer-resurrection-lifeline — retry clock + Lifeline gate\n');
 	const ctx = await bootstrapTimer();
 	const foreignBefore = await readSet(ctx.db, FOREIGN_SET_ID);
 	if (process.env.FALSIFY) {
@@ -425,6 +575,7 @@ async function main() {
 	try {
 		await sectionResurrection(ctx);
 		await sectionResurrectionEndToEnd(ctx);
+		await sectionLifeline(ctx);
 	} finally {
 		await softReset(ctx.db);
 		const restored = await readSet(ctx.db, SET_ID);
