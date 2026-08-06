@@ -33,7 +33,8 @@
 		"bots:verify-resurrection": "tsx tests/bots/verify-resurrection.ts",
 		"bots:fixtures": "tsx scripts/gen-fixtures.ts",
 		"seed:mechanics": "tsx scripts/seed-mechanics-set.ts",
-		"bots:verify-timer-autosubmit": "tsx tests/bots/verify-timer-autosubmit.ts"
+		"bots:verify-timer-autosubmit": "tsx tests/bots/verify-timer-autosubmit.ts",
+		"bots:verify-timer-resurrection-lifeline": "tsx tests/bots/verify-timer-resurrection-lifeline.ts"
 	},
 	"devDependencies": {
 		"@eslint/compat": "^2.0.4",
