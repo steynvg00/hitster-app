@@ -7,7 +7,12 @@ import { awardCrownPayout } from '$lib/server/crown';
 import { getRevealableBattles, resolveBattlesForRecap } from '$lib/server/battle';
 import { planRecapEntry } from '$lib/recap-flow';
 import { resetGameState } from '$lib/server/reset';
-import { parseConfig, mergePowerupConfig } from '$lib/server/powerups';
+import {
+	parseConfig,
+	mergeConfigPatch,
+	mergeConfigKeys,
+	fillConfigDefaults
+} from '$lib/server/powerups';
 import type {
 	PowerupMode,
 	PowerupTypeConsoleRow,
@@ -201,10 +206,7 @@ export const actions: Actions = {
 			position: i,
 			// parseFloat (not parseInt) so half-steps like 1.5 / 2.5 survive.
 			// DB CHECK enforces the 1–2.5 range; UI enforces the 0.5 step.
-			challenge_multiplier: Math.max(
-				1,
-				parseFloat(String(multipliersMap[challenge_id] ?? 1)) || 1
-			),
+			challenge_multiplier: Math.max(1, parseFloat(String(multipliersMap[challenge_id] ?? 1)) || 1),
 			created_by: locals.user?.id ?? null
 		}));
 		const { error: replaceError } = await (db as SupabaseClient).rpc('replace_set_challenges', {
@@ -425,6 +427,19 @@ export const actions: Actions = {
 		return { success: true };
 	},
 
+	// Switching mode SEEDS that mode's defaults; it does not impose them.
+	//
+	// This used to write `powerup_config: defaults[mode]` — the whole column
+	// replaced by a bare literal. One click (including a click on the mode that
+	// was already active, which the UI happily submits) erased every per-type
+	// override, every category flag, the threshold/band settings and the earn
+	// chances migrations 0070/0071/0072 seeded.
+	//
+	// fillConfigDefaults inverts that: a stored key always beats a default, so
+	// the write only ever ADDS what is missing. The seeding still matters — the
+	// token-shop form dereferences `initShop().streak_bonuses.map()` unchecked
+	// (+page.svelte:332), so a token_shop set that never received those keys
+	// would break the console on load.
 	set_powerup_mode: async ({ request, params }) => {
 		const db = createAdminClient();
 		const fd = await request.formData();
@@ -446,9 +461,20 @@ export const actions: Actions = {
 			}
 		};
 
+		const { data: gameSet } = await db
+			.from('game_sets')
+			.select('powerup_config')
+			.eq('id', params.id)
+			.maybeSingle();
+
+		const nextConfig = fillConfigDefaults(
+			gameSet?.powerup_config,
+			defaults[mode] as unknown as Record<string, unknown>
+		);
+
 		const { error } = await db
 			.from('game_sets')
-			.update({ powerup_mode: mode, powerup_config: defaults[mode] as never })
+			.update({ powerup_mode: mode, powerup_config: nextConfig as never })
 			.eq('id', params.id);
 		if (error) return fail(500, { error: 'Could not set powerup mode' });
 		return { success: true };
@@ -509,9 +535,24 @@ export const actions: Actions = {
 			return fail(400, { error: 'Invalid powerup mode' });
 		}
 
+		// Merged onto the STORED config, not written over it. The token-shop keys
+		// are exactly the family parseConfig does not model, so this uses
+		// mergeConfigKeys (a plain key merge) rather than the v2-aware
+		// mergeConfigPatch — a token save has no business rewriting the ladder.
+		const { data: gameSet } = await db
+			.from('game_sets')
+			.select('powerup_config')
+			.eq('id', params.id)
+			.maybeSingle();
+
+		const nextConfig = mergeConfigKeys(
+			gameSet?.powerup_config,
+			config as unknown as Record<string, unknown>
+		);
+
 		const { error } = await db
 			.from('game_sets')
-			.update({ powerup_config: config as never })
+			.update({ powerup_config: nextConfig as never })
 			.eq('id', params.id);
 		if (error) return fail(500, { error: 'Could not save powerup config' });
 		return { success: true };
@@ -523,7 +564,7 @@ export const actions: Actions = {
 	// types/categories subtrees). This action reads the current config, merges
 	// only the threshold-ladder fields, and writes the merged v2 object back —
 	// every sibling key survives. save_powerup_config is left in place for the
-	// token_shop form (unchanged, out of scope for this piece).
+	// token_shop form.
 	saveThresholds: async ({ request, params }) => {
 		const db = createAdminClient();
 		const fd = await request.formData();
@@ -549,8 +590,7 @@ export const actions: Actions = {
 			.eq('id', params.id)
 			.maybeSingle();
 
-		const current = parseConfig(gameSet?.powerup_config);
-		const merged = mergePowerupConfig(current, {
+		const nextConfig = mergeConfigPatch(gameSet?.powerup_config, {
 			thresholds_percent: sorted,
 			threshold_mode: thresholdMode,
 			band_mode: bandMode
@@ -558,7 +598,7 @@ export const actions: Actions = {
 
 		const { error } = await db
 			.from('game_sets')
-			.update({ powerup_config: merged as never })
+			.update({ powerup_config: nextConfig as never })
 			.eq('id', params.id);
 		if (error) return fail(500, { error: 'Could not save thresholds' });
 		return { success: true };
@@ -609,13 +649,13 @@ export const actions: Actions = {
 			.maybeSingle();
 
 		const current = parseConfig(gameSet?.powerup_config);
-		const merged = mergePowerupConfig(current, {
+		const nextConfig = mergeConfigPatch(gameSet?.powerup_config, {
 			types: { [typeId]: { ...current.types[typeId], ...patch } }
 		});
 
 		const { error } = await db
 			.from('game_sets')
-			.update({ powerup_config: merged as never })
+			.update({ powerup_config: nextConfig as never })
 			.eq('id', params.id);
 		if (error) return fail(500, { error: 'Could not save powerup config' });
 		return { success: true };
@@ -637,14 +677,13 @@ export const actions: Actions = {
 			.eq('id', params.id)
 			.maybeSingle();
 
-		const current = parseConfig(gameSet?.powerup_config);
-		const merged = mergePowerupConfig(current, {
+		const nextConfig = mergeConfigPatch(gameSet?.powerup_config, {
 			categories: { [category]: enabled }
 		});
 
 		const { error } = await db
 			.from('game_sets')
-			.update({ powerup_config: merged as never })
+			.update({ powerup_config: nextConfig as never })
 			.eq('id', params.id);
 		if (error) return fail(500, { error: error.message });
 		return { success: true };
