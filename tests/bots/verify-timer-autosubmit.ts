@@ -62,6 +62,8 @@ import {
 	logDelta,
 	oracleClaimAtMs,
 	oracleExpectsClaim,
+	oracleExpectsFlip,
+	oracleSetFlipDueMs,
 	positionAttempt,
 	positionSetClock,
 	readAttempt,
@@ -222,6 +224,92 @@ async function sectionOne(ctx: TimerCtx) {
 	assert('S1: foreign set untouched (still recap)', foreign?.play_state, 'recap');
 }
 
+// ── SECTION 2 — game-set total-timer flip ────────────────────────────────────
+//
+// This is the historical bug's territory. The old code opened with
+// `if (!challenges?.length) return`, which meant a set whose per-challenge
+// timers had nothing to contribute never reached the game-set check at all and
+// sat in 'playing' forever. Today the challenge block is a GUARD that closes
+// before this section (+server.ts:185) and the handler's only return is at :218,
+// after both.
+//
+// SCOPE LIMIT, stated plainly: the bug's literal precondition was an EMPTY
+// challenges query, and that query is database-wide (17 rows carry
+// timer_seconds > 0 here). Emptying it would mean deleting production challenge
+// rows, so this harness reproduces the semantically equivalent state instead —
+// section 1 with nothing whatsoever to do — and asserts the flip happens anyway.
+// The `created: 0` assertion below is what carries that claim: the flip cannot
+// be a side effect of the challenge path if the challenge path settled nothing.
+// The remaining gap (a re-introduced early return) is closed structurally by
+// assertGuardPosition() rather than behaviourally.
+async function sectionTwo(ctx: TimerCtx) {
+	const { db, setTotalTimerSeconds: total } = ctx;
+	console.log('\n══ SECTION 2 — game-set total-timer flip (no attempts in play) ══');
+
+	await softReset(db);
+
+	// The precondition that gives this section its meaning: not one open attempt
+	// exists anywhere, so section 1 has literally nothing to settle.
+	const openBefore = await globalOpenAttemptCount(db);
+	assert('S2 precondition: zero open attempts anywhere (section 1 is idle)', openBefore, 0);
+
+	// ── S2-A: timer NOT yet up — must stay in 'playing' ───────────────────────
+	const notYetAgo = total - 120;
+	const startedA = await positionSetClock(db, {
+		playState: 'playing',
+		startedSecondsAgo: notYetAgo
+	});
+	const beforeA = await logCounts(db, LOG_TYPES);
+	const fireA = await fireAutoSubmit();
+	assert('S2-A fire: /api/auto-submit ok', fireA.ok, true);
+
+	const expectFlipA = oracleExpectsFlip(startedA ?? 0, total, fireA.nowMs);
+	console.log(
+		`  · set started ${notYetAgo}s ago, total timer ${total}s → ` +
+			`${Math.round((oracleSetFlipDueMs(startedA ?? 0, total) - fireA.nowMs) / 1000)}s remaining ` +
+			`→ oracle: ${expectFlipA ? 'FLIP' : 'stay playing'}`
+	);
+	const setA = await readSet(db, SET_ID);
+	assert('S2-A: set still playing', setA?.play_state, expectFlipA ? 'recap' : 'playing');
+	assert('S2-A: ended_at still clear', setA?.ended_at, null);
+	assert('S2-A: section 1 settled nothing', fireA.created, 0);
+	console.log(
+		`  activity_log DELTA across fire A: ${JSON.stringify(logDelta(beforeA, await logCounts(db, LOG_TYPES)))}`
+	);
+
+	// ── S2-B: timer up — must flip even though section 1 is idle ──────────────
+	const expiredAgo = total + 60;
+	const startedB = await positionSetClock(db, {
+		playState: 'playing',
+		startedSecondsAgo: expiredAgo
+	});
+	const openAtFire = await globalOpenAttemptCount(db);
+	assert('S2-B precondition: still zero open attempts', openAtFire, 0);
+
+	const beforeB = await logCounts(db, LOG_TYPES);
+	const fireB = await fireAutoSubmit();
+	assert('S2-B fire: /api/auto-submit ok', fireB.ok, true);
+
+	const expectFlipB = oracleExpectsFlip(startedB ?? 0, total, fireB.nowMs);
+	console.log(
+		`  · set started ${expiredAgo}s ago, total timer ${total}s → ` +
+			`${Math.round((fireB.nowMs - oracleSetFlipDueMs(startedB ?? 0, total)) / 1000)}s past due ` +
+			`→ oracle: ${expectFlipB ? 'FLIP' : 'stay playing'}`
+	);
+	const setB = await readSet(db, SET_ID);
+	assert('S2-B: set flipped to recap', setB?.play_state, expectFlipB ? 'recap' : 'playing');
+	assert('S2-B: ended_at stamped', setB?.ended_at != null, expectFlipB);
+	// The independence claim, in one number: nothing was settled by section 1,
+	// and the flip happened regardless.
+	assert('S2-B: flip happened with section 1 idle (created 0)', fireB.created, 0);
+	console.log(
+		`  activity_log DELTA across fire B: ${JSON.stringify(logDelta(beforeB, await logCounts(db, LOG_TYPES)))}`
+	);
+
+	const foreign = await readSet(db, FOREIGN_SET_ID);
+	assert('S2: foreign set untouched (still recap)', foreign?.play_state, 'recap');
+}
+
 async function main() {
 	console.log('▶ verify-timer-autosubmit — server-side timer/backstop verification\n');
 	const ctx = await bootstrapTimer();
@@ -229,6 +317,7 @@ async function main() {
 
 	try {
 		await sectionOne(ctx);
+		await sectionTwo(ctx);
 	} finally {
 		// Always restore: a red run must not leave the Mechanics set mid-flight.
 		await softReset(ctx.db);
