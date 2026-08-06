@@ -1485,26 +1485,36 @@
 							{/if}
 						</div>
 
-						<!-- Powerup rows (collapsible body) -->
+						<!-- Powerup cards (collapsible body) -->
 						{#if !collapsed}
 							{#if catPowerups.length === 0}
 								<div class="border-t border-zinc-800 px-4 py-3 text-xs text-zinc-600">
 									No {category} powerups yet.
 								</div>
 							{:else}
-								<div class="border-t border-zinc-800">
+								<div
+									class="grid grid-cols-2 gap-2 border-t border-zinc-800 p-3 sm:grid-cols-3 lg:grid-cols-4"
+								>
 									{#each catPowerups as p (p.id)}
 										<div
-											class="flex flex-wrap items-center gap-3 border-b border-zinc-800/60 px-4 py-3 last:border-0
+											class="flex flex-col gap-2 rounded-lg border border-zinc-800 bg-zinc-950/40 p-3
 												{p.coming_soon || !p.effective_enabled ? 'opacity-50' : ''}"
 										>
-											<!-- Icon + name -->
-											<div class="min-w-0 flex-1">
-												<div class="flex items-center gap-2">
+											<!-- Icon + name + info button (description hidden until clicked) -->
+											<div class="flex items-start justify-between gap-1">
+												<div class="flex min-w-0 items-center gap-1.5">
 													{#if p.icon}
 														<span class="text-base leading-none">{p.icon}</span>
 													{/if}
-													<span class="text-sm font-semibold text-zinc-200">{p.name}</span>
+													<span class="truncate text-sm font-semibold text-zinc-200">{p.name}</span>
+												</div>
+												{#if p.description}
+													<HelpTooltip text={p.description} />
+												{/if}
+											</div>
+
+											{#if p.has_override || p.coming_soon}
+												<div class="flex flex-wrap items-center gap-1">
 													{#if p.has_override}
 														<span class="text-xs text-amber-400">edited</span>
 													{/if}
@@ -1516,23 +1526,24 @@
 														</span>
 													{/if}
 												</div>
-												<p class="mt-0.5 text-xs text-zinc-500">{p.description}</p>
-											</div>
+											{/if}
 
 											{#if !p.coming_soon}
-												<!-- Enabled toggle -->
+												<!-- Enabled toggle — same ?/saveTypeConfig form/handler as before, only
+												     moved to the bottom of the card. -->
 												<form
 													method="POST"
 													action="?/saveTypeConfig"
 													use:enhance={() =>
 														async ({ update }) =>
 															update({ reset: false })}
+													class="mt-auto"
 												>
 													<input type="hidden" name="type_id" value={p.id} />
 													<input type="hidden" name="enabled" value={String(!p.effective_enabled)} />
 													<button
 														type="submit"
-														class="flex items-center gap-1.5 rounded border px-2 py-1 text-xs font-medium transition-colors
+														class="flex w-full items-center justify-center gap-1.5 rounded border px-2 py-1 text-xs font-medium transition-colors
 															{p.effective_enabled
 															? 'border-green-800 bg-green-950/40 text-green-400 hover:border-green-700'
 															: 'border-zinc-700 text-zinc-500 hover:border-zinc-500 hover:text-zinc-300'}"
