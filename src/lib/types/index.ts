@@ -406,6 +406,13 @@ export interface PowerupTypeOverride {
 	threshold?: number;
 	chance?: number;
 	inverse?: boolean;
+	// How often this type is drawn RELATIVE to the others in the same pool, once
+	// chance has decided who takes part. Absent (the default) reads as 1 via
+	// resolveTypeWeight() — and with every type neutral the weighted draw is the
+	// same draw the uniform pick made, so this key is inert until set. 0 is valid
+	// (never drawn); negative/non-finite fall back to 1. Ladder only: the inverse
+	// channel has no pool to be relative to. No console control writes it yet.
+	weight?: number;
 	// lucky_dice only: the inclusive range the roll is drawn from. Kept here, in
 	// the per-type override map, rather than as a constant in the activation
 	// branch — a later settings UI edits it the same way it edits `threshold` or
