@@ -25,8 +25,9 @@
 
 	/**
 	 * What an override input shows. Empty while nothing is stored, so the
-	 * placeholder (the resolved default) stays visible and blurring an untouched
-	 * field keeps posting nothing — the write path is unchanged by this step.
+	 * placeholder (the resolved default) stays visible — and, since the earn form
+	 * landed, so that emptying a box is a CLEAR rather than a no-op: the server
+	 * reads "present and empty" as "remove this key".
 	 *
 	 * A REJECTED override ('invalid') shows the value the game actually uses, not
 	 * the stored nonsense: the box must not display a setting the runtime ignores.
@@ -34,6 +35,12 @@
 	function settingInputValue(s: { value: number; source: string } | null | undefined): string {
 		if (!s || s.source === 'default') return '';
 		return String(s.value);
+	}
+
+	/** Save-on-blur: submit the form the blurred control belongs to. */
+	function submitOwnForm(e: FocusEvent) {
+		const f = (e.target as HTMLElement).closest('form') as HTMLFormElement | null;
+		f?.requestSubmit();
 	}
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -1654,106 +1661,142 @@
 									{/if}
 								</div>
 
-								<!-- Earning group: chance, plus the settings that are now RESOLVED and
-									     shown read-only (range, weight, safety net). The editors for those
-									     land in the later UI steps; this step only stops the console from
-									     showing something other than what the game does. -->
+								<!-- Earning group: the four generic knobs, in ONE form.
+									     One form rather than one per input, for two reasons. The range is a
+									     cross-field rule (min ≤ max), which cannot be judged by a control that
+									     only knows its own value. And every input saves on blur, so four
+									     separate forms means four overlapping requests each merging onto the
+									     same pre-edit config — the race ?/saveTypeConfig now serialises. One
+									     submit carrying all four is simply the version of that with no race to
+									     lose. Every box is empty while nothing is stored: the placeholder is
+									     then the resolved default, and emptying a box CLEARS the override. -->
 								<div class="mb-1 text-[10px] font-semibold tracking-widest text-zinc-600 uppercase">
 									Earning
 								</div>
-								<div class="flex flex-wrap items-center gap-3">
-									<form
-										method="POST"
-										action="?/saveTypeConfig"
-										use:enhance={() =>
-											async ({ update }) =>
-												update({ reset: false })}
-									>
-										<input type="hidden" name="type_id" value={p.id} />
-										<label class="flex items-center gap-1.5">
-											<span class="text-xs text-zinc-500">Chance</span>
-											<input
-												type="number"
-												name="chance"
-												min="0"
-												max="100"
-												placeholder={String(Math.round(p.chance.fallback * 100))}
-												value={Math.round(p.chance.value * 100)}
-												onblur={(e) => {
-													const f = (e.target as HTMLInputElement).closest(
-														'form'
-													) as HTMLFormElement | null;
-													f?.requestSubmit();
-												}}
-												class="admin-input w-16 py-0.5 text-xs"
-											/>
-											<span class="text-xs text-zinc-600">%</span>
-										</label>
-									</form>
+								<form
+									method="POST"
+									action="?/saveTypeConfig"
+									use:enhance={() =>
+										async ({ update }) =>
+											update({ reset: false })}
+									class="flex flex-wrap items-center gap-3"
+								>
+									<input type="hidden" name="type_id" value={p.id} />
 
-									<!-- Read-only until their editor lands (UI step 2). Shown because the
-										     row now carries what the runtime resolves, and a host tuning a set
-										     needs to see the bounds a powerup is actually earned between. -->
-									<span class="flex items-center gap-1.5 text-xs text-zinc-500">
-										Range
-										<span class="text-zinc-300">
-											{p.min_score_pct.value}–{p.max_score_pct.value}%
-										</span>
-										{#if p.min_score_pct.source !== 'default' || p.max_score_pct.source !== 'default'}
-											<span class="text-amber-400">set</span>
-										{/if}
-										{#if p.min_score_pct.value > p.max_score_pct.value}
-											<span class="text-red-400" title="An inverted range admits nothing">
-												never earns
+									<label class="flex items-center gap-1.5">
+										<span class="text-xs text-zinc-500">Chance</span>
+										<input
+											type="number"
+											name="chance"
+											min="0"
+											max="100"
+											step="1"
+											placeholder={String(Math.round(p.chance.fallback * 100))}
+											value={p.chance.source === 'default'
+												? ''
+												: String(Math.round(p.chance.value * 100))}
+											onblur={submitOwnForm}
+											class="admin-input w-16 py-0.5 text-xs"
+										/>
+										<span class="text-xs text-zinc-600">%</span>
+										{#if p.chance.source === 'invalid'}
+											<span class="text-xs text-red-400" title="Stored value rejected">
+												ignored → {Math.round(p.chance.value * 100)}%
 											</span>
 										{/if}
-									</span>
+									</label>
 
-									<span class="flex items-center gap-1.5 text-xs text-zinc-500">
-										Weight
-										<span class="text-zinc-300">{p.weight.value}</span>
-										{#if p.weight.source === 'override'}
-											<span class="text-amber-400">set</span>
-										{:else if p.weight.source === 'invalid'}
+									<label class="flex items-center gap-1.5">
+										<span class="text-xs text-zinc-500">Weight</span>
+										<input
+											type="number"
+											name="weight"
+											min="0"
+											step="0.1"
+											placeholder={String(p.weight.fallback)}
+											value={settingInputValue(p.weight)}
+											onblur={submitOwnForm}
+											class="admin-input w-16 py-0.5 text-xs"
+										/>
+										{#if p.weight.source === 'invalid'}
+											<span class="text-xs text-red-400" title="Stored value rejected">
+												ignored → {p.weight.value}
+											</span>
+										{:else if p.is_inverse}
 											<span
-												class="text-red-400"
-												title="Stored value rejected — the game uses the default"
+												class="text-xs text-zinc-600"
+												title="The inverse channel has no draw pool, so a weight has nothing to be relative to"
 											>
-												ignored
-											</span>
-										{/if}
-										{#if p.is_inverse}
-											<span class="text-zinc-600" title="The inverse channel has no draw pool">
 												(unused — inverse)
 											</span>
 										{/if}
-									</span>
+									</label>
 
-									<span class="text-xs text-zinc-500">
-										Channel
-										<span class="text-zinc-300">
-											{p.is_inverse ? 'inverse (earned on a low score)' : 'ladder'}
-										</span>
-									</span>
-
-									{#if p.modifier_endpoint === 'weight' ? p.weight_modifier : p.chance_modifier}
-										{@const mod =
-											p.modifier_endpoint === 'weight' ? p.weight_modifier : p.chance_modifier}
-										<span class="flex items-center gap-1.5 text-xs text-zinc-500">
-											Safety net
-											<span class="text-zinc-300">
-												×{mod?.factor} on {mod?.conditions
-													?.map(
-														(c) =>
-															`${c.axis} ${c.gte != null ? `≥${c.gte}` : ''}${
-																c.gte != null && c.lte != null ? ' & ' : ''
-															}${c.lte != null ? `≤${c.lte}` : ''}`
-													)
-													.join(mod?.combine === 'or' ? ' OR ' : ' AND ')}
+									<label class="flex items-center gap-1.5">
+										<span class="text-xs text-zinc-500">Earn between</span>
+										<input
+											type="number"
+											name="min_score_pct"
+											min="0"
+											max="100"
+											step="1"
+											placeholder={String(p.min_score_pct.fallback)}
+											value={settingInputValue(p.min_score_pct)}
+											onblur={submitOwnForm}
+											class="admin-input w-16 py-0.5 text-xs"
+										/>
+										<span class="text-xs text-zinc-600">–</span>
+										<input
+											type="number"
+											name="max_score_pct"
+											min="0"
+											max="100"
+											step="1"
+											placeholder={String(p.max_score_pct.fallback)}
+											value={settingInputValue(p.max_score_pct)}
+											onblur={submitOwnForm}
+											class="admin-input w-16 py-0.5 text-xs"
+										/>
+										<span class="text-xs text-zinc-600">%</span>
+										{#if p.min_score_pct.value > p.max_score_pct.value}
+											<span
+												class="text-xs text-red-400"
+												title="An inverted range admits nothing — this powerup can never be earned"
+											>
+												never earns
 											</span>
+										{/if}
+									</label>
+
+									<!-- What the game will actually do with the four boxes above, which is
+										     not the same thing as what is typed in them: an empty box means a
+										     default, and a rejected value means the default too. -->
+									<span class="text-xs text-zinc-600">
+										in play: {p.min_score_pct.value}–{p.max_score_pct.value}% ·
+										{Math.round(p.chance.value * 100)}% chance
+										{#if !p.is_inverse}· weight {p.weight.value}{/if}
+										· {p.is_inverse ? 'inverse channel' : 'ladder'}
+									</span>
+								</form>
+
+								{#if p.modifier_endpoint === 'weight' ? p.weight_modifier : p.chance_modifier}
+									{@const mod =
+										p.modifier_endpoint === 'weight' ? p.weight_modifier : p.chance_modifier}
+									<!-- Read-only: the safety-net editor is the next UI step. -->
+									<div class="mt-1 flex items-center gap-1.5 text-xs text-zinc-500">
+										Safety net
+										<span class="text-zinc-300">
+											×{mod?.factor} on {mod?.conditions
+												?.map(
+													(c) =>
+														`${c.axis} ${c.gte != null ? `≥${c.gte}` : ''}${
+															c.gte != null && c.lte != null ? ' & ' : ''
+														}${c.lte != null ? `≤${c.lte}` : ''}`
+												)
+												.join(mod?.combine === 'or' ? ' OR ' : ' AND ')}
 										</span>
-									{/if}
-								</div>
+									</div>
+								{/if}
 
 								<!-- Strength group: per-type knobs. Which type has which dial is
 									     decided by the ROW (a strength setting is null on every type it does
