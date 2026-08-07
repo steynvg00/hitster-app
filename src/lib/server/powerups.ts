@@ -729,6 +729,117 @@ export function resolveTypeChance(cfg: PowerupConfigV2, typeId: string): number 
 	return DEFAULT_TYPE_CHANCE[typeId] ?? 1;
 }
 
+/**
+ * The neutral weight. 1 for every type until a host sets otherwise, which is
+ * what makes the weighted pick bit-identical to the uniform one it replaced.
+ */
+export const DEFAULT_TYPE_WEIGHT = 1;
+
+/**
+ * How OFTEN a type is drawn relative to the others that made it into the same
+ * pool — powerup_config.types[id].weight, read exactly like `chance` above.
+ *
+ * chance and weight answer DIFFERENT questions and neither replaces the other:
+ *
+ *   chance  does this type take part in this band at all, and (because a band
+ *           whose candidate list comes up empty awards nothing) how often the
+ *           band pays out at all.
+ *   weight  given that it and others are taking part, how the draw splits
+ *           between them. Changing it moves the RATIO without touching the
+ *           drop-rate — which is precisely what chance cannot express: lowering
+ *           a type's chance to make it rarer also makes empty bands commoner.
+ *
+ * Only the ladder's pick consults this. The inverse channel has no pool and no
+ * pick — every inverse type decides for itself against its own chance — so a
+ * weight there would have nothing to be relative TO, and is ignored by design.
+ *
+ * 0 is a VALID setting (never drawn, while the rest keep their ratio). Negative,
+ * non-finite and absent all fall back to the neutral 1: a negative weight would
+ * corrupt the cumulative sum and could make later candidates unreachable, which
+ * is a silently wrong lottery rather than a loud one.
+ */
+export function resolveTypeWeight(cfg: PowerupConfigV2, typeId: string): number {
+	const override = cfg.types?.[typeId]?.weight;
+	if (typeof override === 'number' && Number.isFinite(override) && override >= 0) return override;
+	return DEFAULT_TYPE_WEIGHT;
+}
+
+// ─── Weighted lottery (earning laag 3) ───────────────────────────────────────
+//
+// The generic weighted draw. Pure and rand-injectable like rollDice /
+// rollSingleEventMult / rollSpinTier above, and written as ONE draw for a reason
+// that matters beyond elegance: the uniform pick it replaces also consumed
+// exactly one rand(), so every pinned-RNG test keeps its sequence alignment.
+//
+// ── Why a cumulative sum, and not a fixed ratio table ───────────────────────
+// The candidate list is DIFFERENT on every draw — it is whatever survived the
+// pool filter and then the per-type chance roll. A fixed "shield is 20% of all
+// awards" table cannot express that, because 20% of what depends on who else
+// showed up. A cumulative sum over the candidates ACTUALLY PRESENT normalizes
+// itself: weight 3 against weight 1 is 3:1 among those two whenever both are
+// there, and 3 alone takes everything when the other is filtered out. That is
+// the property the wandering pool needs.
+//
+// ── Neutral weights are bit-identical, not merely equivalent ────────────────
+// With every weight 1 the running total after i+1 candidates is exactly i+1, so
+// `draw < acc` first holds at i = floor(draw) = floor(rand() * n) — the very
+// index the old `rolled[Math.floor(rand() * rolled.length)]` computed. Same
+// index, same single rand() call, for every n and every draw. The strict `<` is
+// load-bearing: `<=` would land on the wrong candidate whenever draw falls
+// exactly on a boundary (n=2, rand()=0.5 → draw 1.0 → index 1, not 0).
+// tests/bots/verify-weighted-lottery.ts pins this exhaustively rather than
+// trusting the argument.
+
+export type WeightedCandidate<T> = { item: T; weight: number };
+
+/**
+ * Draw one candidate, with probability proportional to its weight.
+ *
+ * Three edges, each resolved the way the rest of this module resolves a
+ * malformed setting — fall back to something sane rather than produce nonsense
+ * (see resolveDiceRange / resolveSpinTierSChance):
+ *
+ *   empty list      → null. The caller keeps its existing "nothing to pick"
+ *                     branch; this function does not invent an award.
+ *   total weight 0  → uniform. Every candidate having weight 0 is a
+ *                     misconfiguration, not an instruction to award nothing:
+ *                     "never hand this out" is what `enabled` and `chance` are
+ *                     for. Silently dropping the award would make a mis-typed
+ *                     config look like bad luck for a whole evening.
+ *   one candidate   → that one, always (it takes the whole interval).
+ *
+ * A single weight of 0 alongside positive ones is NOT an edge case — it is a
+ * meaningful setting and works: a zero-width interval can never contain the
+ * draw, so that candidate is never picked while the others keep their ratio.
+ */
+export function weightedPick<T>(
+	candidates: WeightedCandidate<T>[],
+	rand: () => number = Math.random
+): T | null {
+	if (!candidates.length) return null;
+
+	let total = 0;
+	for (const c of candidates) total += c.weight;
+
+	// Written as `!(total > 0)` so NaN — which every comparison answers false —
+	// takes the uniform branch too, instead of falling through to a draw that no
+	// interval can ever contain.
+	if (!(total > 0)) {
+		const i = Math.min(candidates.length - 1, Math.floor(rand() * candidates.length));
+		return candidates[i].item;
+	}
+
+	const draw = rand() * total;
+	let acc = 0;
+	for (const c of candidates) {
+		acc += c.weight;
+		if (draw < acc) return c.item;
+	}
+	// Unreachable for finite weights (draw < total, and acc ends at total), but a
+	// float-rounding backstop is cheaper than a null the caller must handle.
+	return candidates[candidates.length - 1].item;
+}
+
 export type PlannedAward = { typeId: string; channel: 'ladder' | 'inverse' };
 
 export type PlanContext = {
@@ -800,11 +911,21 @@ export function planAwards(
 	const awards: PlannedAward[] = [];
 
 	// Ladder channel: one roll-and-pick per fired band.
+	//
+	// The chance roll below is UNCHANGED — it still decides, per type per band,
+	// who takes part (and so whether this band pays out at all). What changed is
+	// only how one winner is drawn from the survivors: a weighted lottery instead
+	// of a uniform index. With every weight at its default 1 the two are the same
+	// draw (see weightedPick), so this is inert until a weight is set.
 	for (let i = 0; i < crossed.length; i++) {
 		const rolled = pool.filter((t) => rand() < resolveTypeChance(cfg, t.id));
 		if (rolled.length) {
-			const pick = rolled[Math.floor(rand() * rolled.length)];
-			awards.push({ typeId: pick.id, channel: 'ladder' });
+			const pick = weightedPick(
+				rolled.map((t) => ({ item: t, weight: resolveTypeWeight(cfg, t.id) })),
+				rand
+			);
+			// Non-null for a non-empty list; the guard is for the type, not a case.
+			if (pick) awards.push({ typeId: pick.id, channel: 'ladder' });
 		}
 	}
 
