@@ -571,6 +571,40 @@ export interface PowerupConfigV2 {
 // One row per powerup_types entry, merged with its per-set override from
 // powerup_config.types[id] (via parseConfig). Replaces the legacy PowerupConfig
 // (powerups + set_powerups) as the console's data source.
+
+/**
+ * One setting as the console must present it: what the runtime ACTUALLY uses,
+ * what it would use without an override, and where that value came from.
+ *
+ * The row used to carry the raw override instead (`override?.chance ?? 1`), and
+ * that is exactly how the console came to lie: a fresh set stores no `types`
+ * subtree, so lifeline read as 100% while awardPowerups rolled it at the 50% its
+ * resolver supplies (LIFELINE_DEFAULT_CHANCE). A raw override cannot express a
+ * designed default, so the console could not show one.
+ *
+ * `value` is therefore ALWAYS the resolver's answer — never a re-derivation. The
+ * builder calls the same function the earning runtime calls, which is what makes
+ * a drift between console and game impossible rather than merely unlikely (pinned
+ * per type per field by tests/bots/verify-console-row-resolved.ts).
+ */
+export interface ResolvedSetting<T> {
+	/** What the runtime uses, straight from the resolver. */
+	value: T;
+	/** What the runtime would use with nothing stored — the UI's placeholder. */
+	fallback: T;
+	/**
+	 * 'default'  — nothing stored for this key.
+	 * 'override' — stored and honoured (the resolver returned the stored value).
+	 * 'invalid'  — stored but REJECTED by the resolver, so `value` is the fallback.
+	 *
+	 * The third state is not pedantry: every resolver validates (a negative weight,
+	 * an inverted dice range, a chance outside 0–1 all fall back), and the old row
+	 * rendered such a value as if it were live. A host could stare at a setting the
+	 * game was ignoring with nothing to tell them apart.
+	 */
+	source: 'default' | 'override' | 'invalid';
+}
+
 export interface PowerupTypeConsoleRow {
 	id: string;
 	name: string;
@@ -579,8 +613,14 @@ export interface PowerupTypeConsoleRow {
 	icon: string | null;
 	enabled_by_default: boolean;
 	coming_soon: boolean;
-	default_min_score_pct: number;
-	default_max_score_pct: number;
+	// Fixed catalog traits, not per-set settings. `tier` drives power_spin's roll
+	// pool, `holdable` whether an earned copy can be stored rather than fired at
+	// once, `immediate_use` whether it fires on earning. Restated inline rather
+	// than imported from $lib/powerups-meta for the reason database.ts restates it:
+	// this file declares types and imports nothing.
+	tier: 'S' | 'A' | 'B' | 'C' | 'D';
+	holdable: boolean;
+	immediate_use: boolean;
 	// Piece 4: whether this type earns via the inverse channel (score BELOW a
 	// bound) rather than the normal ladder (score AT/ABOVE a bound). A fixed
 	// trait of the type (powerup_types.default_inverse) — the console has no
@@ -588,22 +628,39 @@ export interface PowerupTypeConsoleRow {
 	// Threshold field's label/placeholder ("earn below" vs "earn at/above").
 	is_inverse: boolean;
 	effective_enabled: boolean;
-	// The score range's two halves. null = no override stored, so the matching
-	// catalog column applies and the UI shows it as a placeholder. Since laag 1
-	// these mean the same thing for every type — no inverse-dependent reading, and
-	// no single `effective_threshold` that changed sides depending on is_inverse.
-	effective_min_score_pct: number | null;
-	effective_max_score_pct: number | null;
-	effective_chance: number; // 0–1, defaults to 1.0
 	has_override: boolean;
-	// Strength config, piece 2b — the per-type override fields that only apply to
-	// one specific powerup (see PowerupTypeOverride). null means "no override
-	// stored"; the UI shows the resolver's default as a placeholder rather than
-	// baking the default in here, same pattern as the range fields above.
-	effective_dice_min: number | null; // lucky_dice
-	effective_dice_max: number | null; // lucky_dice
-	effective_reveal_budget: number | null; // x_ray
-	effective_show_scores: boolean; // all_seeing_eye — no override reads as false
-	effective_tier_s_chance: number | null; // power_spin
-	effective_score_mode: ResurrectionScoreMode | null; // resurrection
+
+	// ── Earn-requirements, resolved ───────────────────────────────────────────
+	// The four generic knobs every type has. `chance` is a 0–1 fraction (the UI
+	// renders it as a percentage); `weight` is the ladder's relative draw weight,
+	// ignored on the inverse channel; the range is inclusive at both ends.
+	chance: ResolvedSetting<number>;
+	weight: ResolvedSetting<number>;
+	min_score_pct: ResolvedSetting<number>;
+	max_score_pct: ResolvedSetting<number>;
+
+	// ── Strength, resolved ────────────────────────────────────────────────────
+	// Each applies to exactly one powerup, so every other row carries null — the
+	// UI can ask the row what a type has instead of matching on its id.
+	dice_min: ResolvedSetting<number> | null; // lucky_dice
+	dice_max: ResolvedSetting<number> | null; // lucky_dice
+	reveal_budget: ResolvedSetting<number> | null; // x_ray
+	show_scores: ResolvedSetting<boolean> | null; // all_seeing_eye
+	tier_s_chance: ResolvedSetting<number> | null; // power_spin
+	score_mode: ResolvedSetting<ResurrectionScoreMode> | null; // resurrection
+
+	// ── Safety net (laag 4) ───────────────────────────────────────────────────
+	// The stored RULE, not a resolved factor: resolveModifierFactor answers "does
+	// this fire for THIS team right now", which needs a PlanContext the console
+	// does not have and would not want — a host configures the rule, not one
+	// team's momentary reading of it. null = no rule stored.
+	weight_modifier: SafetyNetModifier | null;
+	chance_modifier: SafetyNetModifier | null;
+	/**
+	 * Which of the two a rule on this type would actually be read from: the
+	 * channels have different knobs, so the ladder nets a weight and the inverse
+	 * channel nets a chance, and a rule parked on the other key does nothing.
+	 * Derived from is_inverse so the editor cannot offer the dead one.
+	 */
+	modifier_endpoint: 'weight' | 'chance';
 }
