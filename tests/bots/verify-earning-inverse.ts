@@ -95,8 +95,18 @@ async function verifyInverseEarning() {
 		assert('the ladder never crossed anything (thresholds_percent is empty)', newHighwater, null);
 	}
 
-	// At/above the bound: submissionPct < bound is a strict inequality
-	// (powerups.ts:669, `ctx.submissionPct < bound`) — exactly 40% must NOT fire.
+	// The upper edge of the range, and the ONE place laag 1 deliberately changed
+	// behaviour.
+	//
+	// This channel used to compare with a strict `<` against a bound that the
+	// ambiguous `threshold` key set, so exactly 40% did NOT fire. Laag 1 replaced
+	// that with scoreInRange (src/lib/server/powerups.ts) — `min <= score% <= max`,
+	// inclusive at both ends and identical for every type — so the bound itself is
+	// now inside the range and 40% DOES fire.
+	//
+	// That is the only earn-outcome anywhere that moved; tests/bots/verify-
+	// threshold-range.ts proves it exhaustively by diffing the old predicate
+	// against the new one over the whole live catalog at every score.
 	{
 		const cfg = {
 			version: 2 as const,
@@ -107,9 +117,16 @@ async function verifyInverseEarning() {
 			categories: {}
 		};
 		const atBound = planAwards(cfg, types, { ...baseCtx, submissionPct: 40 }, () => 0);
-		assert('submissionPct exactly AT the bound (40%) does not fire (strict <)', atBound.awards, []);
+		assert(
+			'submissionPct exactly AT the upper bound (40%) NOW fires — inclusive range',
+			atBound.awards.length,
+			2
+		);
 		const justUnder = planAwards(cfg, types, { ...baseCtx, submissionPct: 39 }, () => 0);
 		assert('one point under the bound (39%) fires both', justUnder.awards.length, 2);
+		// The far side is untouched: one point ABOVE the bound is still out.
+		const justOver = planAwards(cfg, types, { ...baseCtx, submissionPct: 41 }, () => 0);
+		assert('one point over the bound (41%) still fires nothing', justOver.awards, []);
 	}
 
 	// penalty_shot's enabled_by_default=false means it needs the per-set
