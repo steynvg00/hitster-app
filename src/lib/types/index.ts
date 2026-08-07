@@ -403,9 +403,21 @@ export type ResurrectionScoreMode = 'replace' | 'best';
 
 // ─── Vangnet-modifiers (earning laag 4) ──────────────────────────────────────
 //
-// A weight modifier lets a powerup be drawn MORE OFTEN for a team that is having
-// a bad time — the safety net. It multiplies that type's weight in the ladder's
-// weighted lottery, and nothing else.
+// A modifier lets a powerup reach a team that is having a bad time MORE OFTEN —
+// the safety net. One shape (factor + conditions), two endpoints, because the two
+// earn channels have different knobs to turn:
+//
+//   weight_modifier  ladder only. Multiplies the type's weight in the weighted
+//                    lottery: it wins more often WHEN SOMETHING DROPS, without
+//                    making drops more frequent.
+//   chance_modifier  inverse channel only. Multiplies the type's drop-rate
+//                    directly, because that channel has no pool and no draw — a
+//                    weight there would have nothing to be relative to, so a
+//                    rate is the only thing a safety net can move.
+//
+// Both are resolved through the SAME condition evaluation
+// (resolveModifierFactor, src/lib/server/powerups.ts), which is why they share
+// this type rather than each carrying a near-copy that can drift.
 //
 // Two axes, both read from PlanContext and both a FRACTION 0–1 (deliberately not
 // the 0–100 that submissionPct/cumulativePct use — see the note on PlanContext):
@@ -420,7 +432,7 @@ export type ResurrectionScoreMode = 'replace' | 'best';
 // the field always qualifies no matter how hard the night is; performance is
 // ABSOLUTE, so on a brutal night everyone can fall below it. Which is why the
 // host picks how they combine, per powerup — this type does not default it.
-export type WeightModifierAxis = 'position' | 'performance';
+export type SafetyNetAxis = 'position' | 'performance';
 
 /**
  * One bound on one axis. Inclusive at both ends, like every other range in this
@@ -428,15 +440,17 @@ export type WeightModifierAxis = 'position' | 'performance';
  * both = a band. Neither is a condition that constrains nothing, and is treated
  * as no match rather than as "always".
  */
-export interface WeightModifierCondition {
-	axis: WeightModifierAxis;
+export interface SafetyNetCondition {
+	axis: SafetyNetAxis;
 	lte?: number;
 	gte?: number;
 }
 
 /**
- * The per-powerup safety-net rule: when the conditions hold, this type's lottery
- * weight is multiplied by `factor`; otherwise it is left alone.
+ * The per-powerup safety-net rule: when the conditions hold, the quantity this
+ * modifier is attached to is multiplied by `factor`; otherwise it is left alone.
+ * WHICH quantity is the config key's job, not this type's — see the two keys on
+ * PowerupTypeOverride.
  *
  * `combine` is NOT defaulted. With one condition it cannot matter and may be
  * omitted; with two or more it must be stated, or the modifier does nothing. A
@@ -444,15 +458,15 @@ export interface WeightModifierCondition {
  * ("behind AND playing badly" vs "behind OR playing badly") that belongs to the
  * host — and choosing it in the direction that hands the net to more teams.
  *
- * Resolved by resolveWeightModifier (src/lib/server/powerups.ts), which falls
+ * Resolved by resolveModifierFactor (src/lib/server/powerups.ts), which falls
  * back to a neutral 1 on every malformed shape. No console control writes this
  * yet — set by hand in the jsonb until the UI step lands, same as `weight` and
  * the range keys above it.
  */
-export interface WeightModifier {
+export interface SafetyNetModifier {
 	factor: number;
 	combine?: 'and' | 'or';
-	conditions: WeightModifierCondition[];
+	conditions: SafetyNetCondition[];
 }
 
 export interface PowerupTypeOverride {
@@ -486,10 +500,25 @@ export interface PowerupTypeOverride {
 	// channel has no pool to be relative to. No console control writes it yet.
 	weight?: number;
 	// Laag 4: the safety net. Multiplies `weight` above when this team is behind
-	// and/or playing badly (see WeightModifier). Absent — which it is for every
+	// and/or playing badly (see SafetyNetModifier). Absent — which it is for every
 	// set today — resolves to a neutral 1, so the drawn candidate weights are the
 	// same numbers laag 3 produced. Ladder only, for the same reason `weight` is.
-	weight_modifier?: WeightModifier;
+	weight_modifier?: SafetyNetModifier;
+	// The same safety net aimed at the OTHER channel: multiplies `chance` above
+	// when this team is behind and/or playing badly. INVERSE CHANNEL ONLY — that
+	// channel rolls each type against its own chance with no pool behind it (see
+	// planAwards' inverse loop), so a RATE is the only thing a net can move there;
+	// `weight_modifier` is the ladder's equivalent and the two never overlap.
+	//
+	// The product is self-clamping rather than clamped: the roll is
+	// `rand() < chance × factor` and rand() lives in [0, 1), so a product at or
+	// above 1 simply always fires. Absent resolves to a neutral 1, and that is an
+	// exact no-op — multiplying a float by 1 returns the same float.
+	//
+	// Set by hand in the jsonb; no console control writes it yet. Only an inverse
+	// type can use it, and of the two only lifeline is a rescue — penalty_shot is
+	// a punishment, and deliberately carries no modifier.
+	chance_modifier?: SafetyNetModifier;
 	// lucky_dice only: the inclusive range the roll is drawn from. Kept here, in
 	// the per-type override map, rather than as a constant in the activation
 	// branch — a later settings UI edits it the same way it edits `threshold` or
