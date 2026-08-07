@@ -250,7 +250,13 @@ function part1() {
 	// The scenario from the brief, end to end: set an override, click the mode,
 	// save the config, and look for the override afterwards.
 	let cfg: Record<string, unknown> = { thresholds_percent: [25, 50, 75] };
-	cfg = mergeConfigPatch(cfg, { types: { freeze: { enabled: true, threshold: 65, chance: 0.4 } } });
+	// min_score_pct stands in for "some per-type override" here — this assertion is
+	// about the MERGE surviving a mode click, not about what the key means. It used
+	// to be `threshold`, the one key laag 1 removed for being a lower bound on a
+	// normal type and an upper bound on an inverse one.
+	cfg = mergeConfigPatch(cfg, {
+		types: { freeze: { enabled: true, min_score_pct: 65, chance: 0.4 } }
+	});
 	cfg = fillConfigDefaults(cfg, modeDefaults); // ?/set_powerup_mode
 	cfg = mergeConfigKeys(cfg, { starting_tokens: 4 }); // ?/save_powerup_config
 	cfg = fillConfigDefaults(cfg, { thresholds_percent: [25, 50, 75] }); // mode clicked back
@@ -259,7 +265,7 @@ function part1() {
 		(cfg.types as Record<string, unknown>).freeze,
 		{
 			enabled: true,
-			threshold: 65,
+			min_score_pct: 65,
 			chance: 0.4
 		}
 	);

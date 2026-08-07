@@ -1610,49 +1610,24 @@
 										<span class="text-sm font-semibold text-zinc-200">{p.name}</span>
 									</div>
 
-									<!-- Earning group: threshold + chance, moved here from the compact row -->
+									<!-- Earning group: chance (+ the score range, once its UI lands) -->
 									<div class="mb-1 text-[10px] font-semibold tracking-widest text-zinc-600 uppercase">
 										Earning
 									</div>
-									<div class="flex flex-wrap items-center gap-3">
-										<form
-											method="POST"
-											action="?/saveTypeConfig"
-											use:enhance={() =>
-												async ({ update }) =>
-													update({ reset: false })}
-										>
-											<input type="hidden" name="type_id" value={p.id} />
-											<label
-												class="flex items-center gap-1.5"
-												title={p.is_inverse
-													? 'Awarded when score is BELOW this %'
-													: 'Awarded when score is AT/ABOVE this %'}
-											>
-												<span class="text-xs text-zinc-500"
-													>{p.is_inverse ? 'Earn below' : 'Threshold'}</span
-												>
-												<input
-													type="number"
-													name="threshold"
-													min="0"
-													max="100"
-													placeholder={String(
-														p.is_inverse ? p.default_max_score_pct : p.default_min_score_pct
-													)}
-													value={p.effective_threshold ?? ''}
-													onblur={(e) => {
-														const f = (e.target as HTMLInputElement).closest(
-															'form'
-														) as HTMLFormElement | null;
-														f?.requestSubmit();
-													}}
-													class="admin-input w-16 py-0.5 text-xs"
-												/>
-												<span class="text-xs text-zinc-600">%</span>
-											</label>
-										</form>
+									<!--
+										The single "Threshold / Earn below" input used to sit here. It posted one
+										`threshold` key whose meaning flipped between a lower and an upper bound
+										depending on whether the type was inverse — the ambiguity laag 1 removed.
+										Nothing reads that key any more, so the control was taken out rather than
+										left as a box that silently saves nothing.
 
+										Its replacement is a real min/max range (effective_min_score_pct /
+										effective_max_score_pct are already loaded above, and the planner already
+										reads both). The two inputs land with the range UI step; until then a
+										range is set by hand in powerup_config. No host setting was lost — no live
+										set had ever stored a threshold override.
+									-->
+									<div class="flex flex-wrap items-center gap-3">
 										<form
 											method="POST"
 											action="?/saveTypeConfig"
