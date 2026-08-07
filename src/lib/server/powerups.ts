@@ -873,7 +873,12 @@ export function weightedPick<T>(
  */
 export function resolveMinScorePct(cfg: PowerupConfigV2, type: PowerupType): number {
 	const override = cfg.types?.[type.id]?.min_score_pct;
-	if (typeof override === 'number' && Number.isFinite(override) && override >= 0 && override <= 100) {
+	if (
+		typeof override === 'number' &&
+		Number.isFinite(override) &&
+		override >= 0 &&
+		override <= 100
+	) {
 		return override;
 	}
 	return type.default_min_score_pct;
@@ -886,7 +891,12 @@ export function resolveMinScorePct(cfg: PowerupConfigV2, type: PowerupType): num
  */
 export function resolveMaxScorePct(cfg: PowerupConfigV2, type: PowerupType): number {
 	const override = cfg.types?.[type.id]?.max_score_pct;
-	if (typeof override === 'number' && Number.isFinite(override) && override >= 0 && override <= 100) {
+	if (
+		typeof override === 'number' &&
+		Number.isFinite(override) &&
+		override >= 0 &&
+		override <= 100
+	) {
 		return override;
 	}
 	return type.default_max_score_pct;
@@ -943,6 +953,106 @@ function typeIsAvailable(cfg: PowerupConfigV2, type: PowerupType): boolean {
 	return true;
 }
 
+// ─── Vangnet-modifiers (earning laag 4) ──────────────────────────────────────
+//
+// Two axes describing how badly this team is doing, folded into ONE number: a
+// multiplier on a type's lottery weight. Everything below is pure; the reads
+// that feed the axes live in awardPowerups.
+//
+// ── Why a weight and not a chance ───────────────────────────────────────────
+// Same split resolveTypeWeight documents: chance decides whether a type takes
+// part in a band (and so how often a band pays out at all), weight decides how
+// the draw splits between the ones that did. A safety net expressed as a weight
+// makes the rescue powerups WIN MORE OFTEN WHEN SOMETHING DROPS — it does not
+// make drops more frequent, and it cannot reach the inverse channel, which has
+// no pool to be relative to (see the inverse loop in planAwards).
+
+/**
+ * Where a team sits in its set's standings, as a fraction: 1 = leader, 0 = last,
+ * independent of how many teams are playing.
+ *
+ * ── Ties take the midrank, and that is load-bearing ─────────────────────────
+ * The obvious formula — "fraction of teams strictly below me" — has a trap at
+ * exactly the moment the game starts: every team is on 0, every team has nobody
+ * below it, so every team reads as 0 = dead last, and a "bottom 30%" safety net
+ * fires for the ENTIRE field. That is the "everyone qualifies" failure this
+ * whole laag exists to avoid, arriving through the tie rule rather than through
+ * the threshold.
+ *
+ * Midrank — below + half of the teams level with you — puts a fully tied field
+ * at 0.5, which is the honest answer: nobody is behind anybody.
+ *
+ * Returns undefined when the answer is unknown (empty standings, or this team
+ * is not among them). Undefined never satisfies a condition — see
+ * resolveWeightModifier. A single team returns 1 rather than dividing by zero:
+ * a lone team leads, and a safety net must not fire for it.
+ */
+export function computePositionPercentile(
+	standings: Array<{ id: string; score: number }>,
+	teamId: string
+): number | undefined {
+	const n = standings.length;
+	if (n === 0) return undefined;
+	const self = standings.find((t) => t.id === teamId);
+	if (!self) return undefined;
+	if (n === 1) return 1;
+
+	let below = 0;
+	let equal = 0;
+	for (const t of standings) {
+		if (t.score < self.score) below++;
+		else if (t.score === self.score) equal++;
+	}
+	return (below + (equal - 1) / 2) / (n - 1);
+}
+
+/**
+ * The team's share of fields it got FULLY right, as a fraction 0–1, folded from
+ * the per-submission counts migration 0077 persists.
+ *
+ * SUM/SUM, not the mean of per-challenge percentages — 0077's own reasoning:
+ * summing weights every field equally, while averaging percentages would let a
+ * one-field challenge count as much as a five-field one.
+ *
+ * Rows written before 0077 carry NULL and are skipped, exactly as the SQL SUM()
+ * the migration described would skip them. A row with fields_total = 0 is
+ * skipped too — it contributes nothing and would only risk a divide-by-zero.
+ *
+ * Returns undefined when NOTHING was measured, and that is deliberate: 0 would
+ * read as "got everything wrong" and hand the safety net to a team that has not
+ * played yet. It is the same trap 0077 avoided by making the columns nullable
+ * instead of DEFAULT 0, and it must not come back one layer up.
+ */
+export function computeFieldsCorrectFraction(
+	rows: Array<{ fields_correct: number | null; fields_total: number | null }>
+): number | undefined {
+	let correct = 0;
+	let total = 0;
+	for (const r of rows) {
+		const c = r.fields_correct;
+		const t = r.fields_total;
+		if (typeof c !== 'number' || typeof t !== 'number') continue;
+		if (!Number.isFinite(c) || !Number.isFinite(t) || t <= 0) continue;
+		correct += c;
+		total += t;
+	}
+	if (total <= 0) return undefined;
+	return correct / total;
+}
+
+/**
+ * Does ANY type in this set carry a safety-net modifier? The gate that keeps
+ * this laag free for every set that does not use it — which is every set today.
+ * When false, awardPowerups skips the axis work entirely (no extra query), and
+ * resolveWeightModifier would have returned 1 for every type anyway.
+ */
+export function hasAnyWeightModifier(cfg: PowerupConfigV2): boolean {
+	for (const ov of Object.values(cfg.types ?? {})) {
+		if (ov?.weight_modifier) return true;
+	}
+	return false;
+}
+
 export type PlannedAward = { typeId: string; channel: 'ladder' | 'inverse' };
 
 export type PlanContext = {
@@ -951,6 +1061,18 @@ export type PlanContext = {
 	thresholdMode: ThresholdMode;
 	bandMode: BandMode;
 	lastThresholdCrossed: number; // teams.last_threshold_crossed (cumulative highwater)
+	// ── Safety-net axes (laag 4) ──────────────────────────────────────────────
+	// BOTH are FRACTIONS 0–1, unlike the two `…Pct` fields above which are 0–100.
+	// The names say so on purpose: a `positionPct` sitting next to `submissionPct`
+	// with a different unit is a bug waiting to be written.
+	//
+	// Optional, and absent is a real state rather than a gap to be filled: it
+	// means the axis could not be measured (no standings, or the team has no
+	// scored submissions yet). An absent axis never satisfies a condition, so a
+	// context without either — which is every caller that does not opt in, and
+	// every existing test that builds this object — behaves exactly as before.
+	positionPercentile?: number; // 1 = leader, 0 = last, ties at midrank
+	fieldsCorrectFraction?: number; // SUM(fields_correct) / SUM(fields_total)
 };
 
 /**
@@ -1020,6 +1142,18 @@ export function planAwards(
 	// only how one winner is drawn from the survivors: a weighted lottery instead
 	// of a uniform index. With every weight at its default 1 the two are the same
 	// draw (see weightedPick), so this is inert until a weight is set.
+	//
+	// Laag 4 adds ONE multiplication inside that same map: the host's static
+	// weight times this team's safety-net modifier. It is the whole of the
+	// mechanism, and it is deliberately here rather than inside resolveTypeWeight
+	// so the two stay separable — a weight is a property of the TYPE, a modifier
+	// is a property of the type AND this team's situation.
+	//
+	// Neutrality is exact, not approximate: with no weight_modifier configured
+	// resolveWeightModifier returns 1 for every type, so these are the same
+	// numbers laag 3 built, so the cumulative-sum argument above weightedPick
+	// (which reasons only about the weights) carries over untouched — same
+	// candidate array, same single rand(), same index.
 	for (let i = 0; i < crossed.length; i++) {
 		const rolled = pool.filter((t) => rand() < resolveTypeChance(cfg, t.id));
 		if (rolled.length) {
@@ -1126,6 +1260,42 @@ async function getOrComputeSetMax(
 }
 
 /**
+ * The performance axis, read for one team in one set (laag 4).
+ *
+ * Set-scoped through set_challenges because `submissions` carries no set_id — it
+ * is keyed on (challenge_id, team_id) only. Without that scoping this would pool
+ * together every set the team has ever played. In practice the reset SQL clears
+ * submissions between games so the two rarely differ, but "rarely differ" is not
+ * a property to build an earning rule on.
+ *
+ * Runs AFTER this submission's row is written (scoreAndPersistSubmission inserts
+ * before it calls awardPowerups), so the current challenge is included — the
+ * team's performance as of now, not as of a moment ago.
+ *
+ * Two queries, and only when a modifier is configured — see the gate in
+ * awardPowerups.
+ */
+async function loadFieldsCorrectFraction(
+	supabase: SupabaseClient<Database>,
+	teamId: string,
+	setId: string
+): Promise<number | undefined> {
+	const { data: setChallengeRows } = await supabase
+		.from('set_challenges')
+		.select('challenge_id')
+		.eq('set_id', setId);
+	const challengeIds = [...new Set((setChallengeRows ?? []).map((s) => s.challenge_id))];
+	if (challengeIds.length === 0) return undefined;
+
+	const { data: rows } = await supabase
+		.from('submissions')
+		.select('fields_correct, fields_total')
+		.eq('team_id', teamId)
+		.in('challenge_id', challengeIds);
+	return computeFieldsCorrectFraction(rows ?? []);
+}
+
+/**
  * Award powerups for a scored submission (piece 3a). Reads the v2 config, plans
  * awards via the pure planner, and materializes them — returning ALL awards from
  * this submission (x crossed bands = up to x awards, plus any inverse award).
@@ -1138,7 +1308,12 @@ export async function awardPowerups(
 	setId: string,
 	challengeId: string,
 	submissionPct: number,
-	forcePowerupTypeId?: string
+	forcePowerupTypeId?: string,
+	// Laag 4: the set's teams with their current scores, in canonical order. The
+	// caller has these already (scoreAndPersistSubmission loads them for the
+	// leader score), so the position axis costs no query here. Absent → that axis
+	// is simply unknown, and an unknown axis never satisfies a condition.
+	standings?: Array<{ id: string; score: number }>
 ): Promise<EarnedPowerup[]> {
 	const { data: gameSet } = await supabase
 		.from('game_sets')
@@ -1177,6 +1352,18 @@ export async function awardPowerups(
 		cumulativePct = setMax > 0 ? ((team?.score ?? 0) / setMax) * 100 : 0;
 	}
 
+	// ── Safety-net axes (laag 4) ──────────────────────────────────────────────
+	// Gated on the config actually using them. With no type carrying a modifier —
+	// every set today — nothing below runs, so this laag adds zero queries and
+	// both axes stay undefined, which is exactly what a context without them
+	// already meant.
+	let positionPercentile: number | undefined;
+	let fieldsCorrectFraction: number | undefined;
+	if (hasAnyWeightModifier(cfg)) {
+		positionPercentile = standings ? computePositionPercentile(standings, teamId) : undefined;
+		fieldsCorrectFraction = await loadFieldsCorrectFraction(supabase, teamId, setId);
+	}
+
 	const plan = planAwards(
 		cfg,
 		types as PowerupType[],
@@ -1185,7 +1372,9 @@ export async function awardPowerups(
 			cumulativePct,
 			thresholdMode: cfg.threshold_mode,
 			bandMode: cfg.band_mode,
-			lastThresholdCrossed
+			lastThresholdCrossed,
+			positionPercentile,
+			fieldsCorrectFraction
 		},
 		Math.random
 	);

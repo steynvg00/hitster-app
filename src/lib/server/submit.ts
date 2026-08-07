@@ -484,7 +484,20 @@ export async function scoreAndPersistSubmission(
 			playerSetId,
 			challengeId,
 			scorePercent,
-			input.forcePowerupTypeId
+			input.forcePowerupTypeId,
+			// The set-scoped standings loaded above for the leader score, reused for
+			// the safety net's position axis so it costs no second query — with THIS
+			// team's entry advanced to the score it just reached.
+			//
+			// That patch matters. `standings` was read before the score update, so
+			// using it raw would measure a team that just leapt into the lead as
+			// still being last, and hand it the safety net. The other teams' scores
+			// cannot have moved meaningfully in between, so patching the one entry we
+			// know the new value for is both free and the honest reading: the
+			// standings as they are now. It also lines the two axes up — the
+			// performance axis is read after this submission's row is inserted, so it
+			// counts this challenge too.
+			standings.map((t) => (t.id === teamId ? { ...t, score: newTeamScore } : t))
 		);
 	}
 
