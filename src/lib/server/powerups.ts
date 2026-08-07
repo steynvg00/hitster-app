@@ -6,7 +6,8 @@ import type {
 	ThresholdMode,
 	BandMode,
 	PowerupTypeOverride,
-	ResurrectionScoreMode
+	ResurrectionScoreMode,
+	WeightModifierCondition
 } from '$lib/types';
 import {
 	artistTargets,
@@ -1053,6 +1054,74 @@ export function hasAnyWeightModifier(cfg: PowerupConfigV2): boolean {
 	return false;
 }
 
+/** The axis value this condition reads, or undefined when it is unknown. */
+function axisValue(axis: unknown, ctx: PlanContext): number | undefined {
+	if (axis === 'position') return ctx.positionPercentile;
+	if (axis === 'performance') return ctx.fieldsCorrectFraction;
+	return undefined; // unknown axis name — a config from the future, or a typo
+}
+
+/**
+ * One condition. FALSE on anything it cannot positively confirm — an unknown
+ * axis, an axis the context does not carry, a bound that is not a number, or no
+ * bound at all. Unknown must never trigger the safety net: a team with no
+ * measurable performance yet is not a team that is doing badly.
+ */
+function conditionHolds(c: WeightModifierCondition, ctx: PlanContext): boolean {
+	if (!c || typeof c !== 'object') return false;
+	const value = axisValue(c.axis, ctx);
+	if (typeof value !== 'number' || !Number.isFinite(value)) return false;
+
+	const hasLte = typeof c.lte === 'number' && Number.isFinite(c.lte);
+	const hasGte = typeof c.gte === 'number' && Number.isFinite(c.gte);
+	// A condition with no bound constrains nothing. Reading it as "always true"
+	// would let a half-written config multiply everything.
+	if (!hasLte && !hasGte) return false;
+
+	if (hasLte && !(value <= (c.lte as number))) return false;
+	if (hasGte && !(value >= (c.gte as number))) return false;
+	return true;
+}
+
+/**
+ * The multiplier this type's lottery weight gets, from the set's config and this
+ * submission's context. 1 = untouched.
+ *
+ * Every malformed or incomplete shape resolves to 1, the same posture
+ * resolveTypeWeight / resolveDiceRange take: a mis-typed config should behave
+ * like no config, not like a silently different game. Three of those fallbacks
+ * are not merely defensive — they are the ones that would otherwise misfire:
+ *
+ *   empty conditions   `[].every()` is TRUE, so an and-modifier with nothing in
+ *                      it would multiply EVERY draw. Caught explicitly.
+ *   missing combine    with two or more conditions there is no safe default (see
+ *                      WeightModifier) — the modifier stays off until the host
+ *                      says which. With exactly one condition and/or cannot
+ *                      differ, so it is allowed to be absent.
+ *   negative factor    would corrupt weightedPick's cumulative sum and could make
+ *                      later candidates unreachable — a silently wrong lottery.
+ *                      0 is fine and meaningful (never drawn).
+ */
+export function resolveWeightModifier(
+	cfg: PowerupConfigV2,
+	typeId: string,
+	ctx: PlanContext
+): number {
+	const mod = cfg.types?.[typeId]?.weight_modifier;
+	if (!mod || typeof mod !== 'object') return 1;
+
+	const factor = mod.factor;
+	if (typeof factor !== 'number' || !Number.isFinite(factor) || factor < 0) return 1;
+
+	const conditions = Array.isArray(mod.conditions) ? mod.conditions : [];
+	if (conditions.length === 0) return 1;
+	if (conditions.length > 1 && mod.combine !== 'and' && mod.combine !== 'or') return 1;
+
+	const held = conditions.map((c) => conditionHolds(c, ctx));
+	const matched = mod.combine === 'or' ? held.some(Boolean) : held.every(Boolean);
+	return matched ? factor : 1;
+}
+
 export type PlannedAward = { typeId: string; channel: 'ladder' | 'inverse' };
 
 export type PlanContext = {
@@ -1158,7 +1227,10 @@ export function planAwards(
 		const rolled = pool.filter((t) => rand() < resolveTypeChance(cfg, t.id));
 		if (rolled.length) {
 			const pick = weightedPick(
-				rolled.map((t) => ({ item: t, weight: resolveTypeWeight(cfg, t.id) })),
+				rolled.map((t) => ({
+					item: t,
+					weight: resolveTypeWeight(cfg, t.id) * resolveWeightModifier(cfg, t.id, ctx)
+				})),
 				rand
 			);
 			// Non-null for a non-empty list; the guard is for the type, not a case.
