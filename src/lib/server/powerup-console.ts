@@ -114,7 +114,12 @@ export function buildPowerupConsoleRows(
 			// `override ?? enabled_by_default`, and this is the same expression rather
 			// than a different one.
 			effective_enabled: ov?.enabled ?? type.enabled_by_default,
-			has_override: !!ov,
+			// Counted, not just tested for presence. Clearing the last override
+			// leaves types[<id>] as an EMPTY object rather than removing it —
+			// mergePowerupConfig merges the map one level deep, so it can replace an
+			// entry but never delete one — and `!!ov` would call that empty husk
+			// "edited" forever, with nothing the host could do to clear the badge.
+			has_override: !!ov && Object.keys(ov).length > 0,
 
 			chance: setting(
 				ov?.chance,

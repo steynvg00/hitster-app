@@ -14,6 +14,8 @@ import {
 	fillConfigDefaults
 } from '$lib/server/powerups';
 import { buildPowerupConsoleRows } from '$lib/server/powerup-console';
+import { parseEarnFields, applyOverridePatch } from '$lib/server/powerup-save';
+import { withRowLock } from '$lib/server/config-lock';
 import type {
 	PowerupCategory,
 	PowerupMode,
@@ -620,11 +622,16 @@ export const actions: Actions = {
 		if (type.coming_soon) return fail(400, { error: 'This powerup is not yet available' });
 
 		const enabledRaw = fd.get('enabled') as string | null;
-		const chanceRaw = (fd.get('chance') as string | null)?.trim();
 		// Strength config, piece 2b — one field per type, only ever sent by that
 		// type's own advanced-block control. Each is independently optional so a
 		// request that only carries `enabled` (the compact-overview toggle) leaves
-		// all five untouched, same as threshold/chance above.
+		// all five untouched.
+		//
+		// These still SKIP an empty value rather than clearing it, unlike the four
+		// earn fields below. Not an oversight: the earn form is what this step
+		// built, and giving the strength knobs the same treatment means moving them
+		// onto the same form, which is the later restructuring step. Until then a
+		// strength override is changed here and removed by hand, as before.
 		const diceMinRaw = (fd.get('dice_min') as string | null)?.trim();
 		const diceMaxRaw = (fd.get('dice_max') as string | null)?.trim();
 		const revealBudgetRaw = (fd.get('reveal_budget') as string | null)?.trim();
@@ -634,17 +641,6 @@ export const actions: Actions = {
 
 		const patch: PowerupTypeOverride = {};
 		if (enabledRaw !== null) patch.enabled = enabledRaw === 'true';
-		// The old `threshold` field is gone from this parse along with the control
-		// that posted it: its meaning depended on the type being inverse, which is
-		// exactly the ambiguity laag 1 removed. min_score_pct / max_score_pct
-		// replace it and are read by the planner today; the console inputs for them
-		// arrive with the range UI step, so until then a range is set by hand in the
-		// jsonb. Nothing was lost in the swap — no live set had a threshold override.
-		if (chanceRaw !== undefined && chanceRaw !== '') {
-			// Console UI is a 0–100% input; stored as a 0–1 float.
-			const pct = parseInt(chanceRaw, 10);
-			if (!isNaN(pct) && pct >= 0 && pct <= 100) patch.chance = pct / 100;
-		}
 		if (diceMinRaw) {
 			const v = parseInt(diceMinRaw, 10);
 			if (!isNaN(v) && v >= 1) patch.dice_min = v;
@@ -664,21 +660,43 @@ export const actions: Actions = {
 		}
 		if (scoreModeRaw === 'replace' || scoreModeRaw === 'best') patch.score_mode = scoreModeRaw;
 
-		const { data: gameSet } = await db
-			.from('game_sets')
-			.select('powerup_config')
-			.eq('id', params.id)
-			.maybeSingle();
+		// The four generic earn knobs (chance / weight / min_score_pct /
+		// max_score_pct), parsed by $lib/server/powerup-save so that "absent means
+		// leave alone, empty means CLEAR" is one rule in one testable place. The
+		// old `threshold` key these replaced is gone for good: its meaning depended
+		// on the type being inverse, the ambiguity laag 1 removed.
+		const earn = parseEarnFields((name) => fd.get(name) as string | null);
 
-		const current = parseConfig(gameSet?.powerup_config);
-		const nextConfig = mergeConfigPatch(gameSet?.powerup_config, {
-			types: { [typeId]: { ...current.types[typeId], ...patch } }
+		// Read → merge → write, serialised per set (see $lib/server/config-lock).
+		// The merge is what keeps every other key safe; the lock is what keeps the
+		// merge honest, by making sure the config this reads already contains the
+		// save before it. Without it, blur-saving across four inputs fires four
+		// overlapping requests that all merge onto the same pre-edit snapshot and
+		// the last one silently wins.
+		const { error } = await withRowLock(`powerup_config:${params.id}`, async () => {
+			const { data: gameSet } = await db
+				.from('game_sets')
+				.select('powerup_config')
+				.eq('id', params.id)
+				.maybeSingle();
+
+			const current = parseConfig(gameSet?.powerup_config);
+			// Strength/enabled first, then the earn patch — which is the half that
+			// can DELETE a key. Handing mergeConfigPatch the whole next override is
+			// what makes a clear possible at all: it replaces types[typeId] wholesale
+			// (merging one level deep, by type id), so a key left out here is a key
+			// gone, while every other type and every unmodelled top-level key rides
+			// along untouched.
+			const nextOverride = applyOverridePatch({ ...current.types[typeId], ...patch }, earn);
+			const nextConfig = mergeConfigPatch(gameSet?.powerup_config, {
+				types: { [typeId]: nextOverride }
+			});
+
+			return await db
+				.from('game_sets')
+				.update({ powerup_config: nextConfig as never })
+				.eq('id', params.id);
 		});
-
-		const { error } = await db
-			.from('game_sets')
-			.update({ powerup_config: nextConfig as never })
-			.eq('id', params.id);
 		if (error) return fail(500, { error: 'Could not save powerup config' });
 		return { success: true };
 	},
