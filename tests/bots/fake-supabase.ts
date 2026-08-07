@@ -150,7 +150,11 @@ export const TABLE_COLUMNS: Record<string, string[]> = {
 		'created_at',
 		'status',
 		'is_final',
-		'battle_raw_score'
+		'battle_raw_score',
+		// Migration 0077 (the performance axis). Re-read read-only from the live
+		// PostgREST spec on 2026-08-07 — the list above predates that migration.
+		'fields_correct',
+		'fields_total'
 	],
 	activity_log: ['id', 'event_type', 'team_id', 'challenge_id', 'payload', 'created_at'],
 	// Added for fase 1b (self/defensive activation coverage): every table the

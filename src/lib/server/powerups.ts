@@ -958,16 +958,30 @@ function typeIsAvailable(cfg: PowerupConfigV2, type: PowerupType): boolean {
 // ─── Vangnet-modifiers (earning laag 4) ──────────────────────────────────────
 //
 // Two axes describing how badly this team is doing, folded into ONE number: a
-// multiplier on a type's lottery weight. Everything below is pure; the reads
-// that feed the axes live in awardPowerups.
+// multiplier. Everything below is pure; the reads that feed the axes live in
+// awardPowerups.
 //
-// ── Why a weight and not a chance ───────────────────────────────────────────
-// Same split resolveTypeWeight documents: chance decides whether a type takes
-// part in a band (and so how often a band pays out at all), weight decides how
-// the draw splits between the ones that did. A safety net expressed as a weight
-// makes the rescue powerups WIN MORE OFTEN WHEN SOMETHING DROPS — it does not
-// make drops more frequent, and it cannot reach the inverse channel, which has
-// no pool to be relative to (see the inverse loop in planAwards).
+// ── One evaluation, two endpoints ───────────────────────────────────────────
+// The rule is a statement about the TEAM ("behind, and playing badly"), so it is
+// evaluated once, by resolveModifierFactor. What that factor then multiplies
+// depends on which channel the type earns through, because the two channels do
+// not have the same knob — the split resolveTypeWeight documents:
+//
+//   ladder           has a pool and a draw, so a net is a WEIGHT
+//                    (weight_modifier → resolveWeightModifier, applied in the
+//                    band loop). The rescue WINS MORE OFTEN WHEN SOMETHING
+//                    DROPS; it does not make drops more frequent.
+//   inverse channel  has neither — every inverse type decides for itself against
+//                    its own chance — so there is nothing for a weight to be
+//                    relative to and a net must be a RATE (chance_modifier →
+//                    resolveChanceModifier, applied in the inverse loop).
+//
+// Each key is ignored on the channel it does not belong to, which is why the
+// same team profile can safely carry both.
+//
+// Today only lifeline uses the chance endpoint. penalty_shot is the other
+// inverse type and deliberately carries no modifier: a safety net that hands out
+// punishments faster the worse you are doing is not a safety net.
 
 /**
  * Where a team sits in its set's standings, as a fraction: 1 = leader, 0 = last,
@@ -1043,16 +1057,41 @@ export function computeFieldsCorrectFraction(
 }
 
 /**
- * Does ANY type in this set carry a safety-net modifier? The gate that keeps
- * this laag free for every set that does not use it — which is every set today.
- * When false, awardPowerups skips the axis work entirely (no extra query), and
- * resolveWeightModifier would have returned 1 for every type anyway.
+ * Does ANY type in this set carry a weight modifier — the ladder's endpoint?
  */
 export function hasAnyWeightModifier(cfg: PowerupConfigV2): boolean {
 	for (const ov of Object.values(cfg.types ?? {})) {
 		if (ov?.weight_modifier) return true;
 	}
 	return false;
+}
+
+/**
+ * Does ANY type in this set carry a chance modifier — the inverse channel's?
+ */
+export function hasAnyChanceModifier(cfg: PowerupConfigV2): boolean {
+	for (const ov of Object.values(cfg.types ?? {})) {
+		if (ov?.chance_modifier) return true;
+	}
+	return false;
+}
+
+/**
+ * Does this set need the axes measured at all? The gate that keeps this laag
+ * free for every set that does not use it — which is every set today. When
+ * false, awardPowerups skips the axis work entirely (no extra query), and every
+ * modifier would have resolved to 1 anyway.
+ *
+ * It exists as ONE function rather than an `||` at the call site because of the
+ * failure it prevents, which is silent: a modifier whose axes were never
+ * measured reads every condition as unknown, and an unknown axis never matches
+ * (conditionHolds), so the modifier resolves to a neutral 1 and looks exactly
+ * like a host who configured nothing. Nothing errors and nothing logs. EVERY
+ * endpoint that reads an axis must be OR'd in here — adding a reader without
+ * adding it to this line is how that failure gets shipped.
+ */
+export function needsSafetyNetAxes(cfg: PowerupConfigV2): boolean {
+	return hasAnyWeightModifier(cfg) || hasAnyChanceModifier(cfg);
 }
 
 /** The axis value this condition reads, or undefined when it is unknown. */
@@ -1138,6 +1177,24 @@ export function resolveWeightModifier(
 	ctx: PlanContext
 ): number {
 	return resolveModifierFactor(cfg.types?.[typeId]?.weight_modifier, ctx);
+}
+
+/**
+ * The multiplier this type's DROP-RATE gets — the inverse channel's endpoint.
+ * Read from powerup_config.types[id].chance_modifier; absent resolves to a
+ * neutral 1, which is an exact no-op because `chance × 1` returns the same float.
+ *
+ * Only the inverse loop consults this, and a type is only reached there when it
+ * is on that channel, so a chance_modifier parked on a ladder type does nothing.
+ * That is the mirror of `weight_modifier` being ignored on an inverse type, and
+ * both follow from the same fact: the two channels have different knobs.
+ */
+export function resolveChanceModifier(
+	cfg: PowerupConfigV2,
+	typeId: string,
+	ctx: PlanContext
+): number {
+	return resolveModifierFactor(cfg.types?.[typeId]?.chance_modifier, ctx);
 }
 
 export type PlannedAward = { typeId: string; channel: 'ladder' | 'inverse' };
@@ -1266,11 +1323,29 @@ export function planAwards(
 	//
 	// The range is checked BEFORE the chance roll, exactly as the old `<` was: a
 	// type out of range must not consume a rand() draw.
+	//
+	// Laag 4's second endpoint is the multiplication below, and it is the mirror
+	// of the ladder's: the host's static rate times this team's safety-net
+	// modifier. A RATE rather than a weight because this channel has no pool —
+	// there is nothing here for a weight to be relative to, so making the rescue
+	// arrive more often is the only thing a net can do (see resolveTypeWeight).
+	//
+	// Three properties, none of them accidental:
+	//   exact when neutral   with no chance_modifier the factor is 1, and
+	//                        `chance × 1` returns the same float — not merely a
+	//                        close one. The comparison is bit-identical.
+	//   self-clamping        rand() lives in [0, 1), so a product at or above 1
+	//                        always fires and one at or below 0 never does. No
+	//                        clamp is needed for the roll to stay a probability.
+	//   same rand() budget   still exactly one draw per eligible type, so every
+	//                        pinned-RNG test keeps its sequence alignment (the
+	//                        property weightedPick's neutrality proof relies on).
 	for (const t of types) {
 		if (!isInverseChannel(cfg, t)) continue;
 		if (!typeIsAvailable(cfg, t)) continue;
 		if (!scoreInRange(cfg, t, ctx.submissionPct)) continue;
-		if (rand() < resolveTypeChance(cfg, t.id)) {
+		const chance = resolveTypeChance(cfg, t.id) * resolveChanceModifier(cfg, t.id, ctx);
+		if (rand() < chance) {
 			awards.push({ typeId: t.id, channel: 'inverse' });
 		}
 	}
@@ -1447,9 +1522,14 @@ export async function awardPowerups(
 	// every set today — nothing below runs, so this laag adds zero queries and
 	// both axes stay undefined, which is exactly what a context without them
 	// already meant.
+	//
+	// The gate asks needsSafetyNetAxes, NOT any single endpoint's own predicate:
+	// a set whose only modifier is a chance_modifier needs these axes just as
+	// much, and gating on the weight endpoint alone would leave them undefined,
+	// silently neutralising the modifier the host did configure.
 	let positionPercentile: number | undefined;
 	let fieldsCorrectFraction: number | undefined;
-	if (hasAnyWeightModifier(cfg)) {
+	if (needsSafetyNetAxes(cfg)) {
 		positionPercentile = standings ? computePositionPercentile(standings, teamId) : undefined;
 		fieldsCorrectFraction = await loadFieldsCorrectFraction(supabase, teamId, setId);
 	}
