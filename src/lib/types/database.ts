@@ -609,6 +609,12 @@ export type Database = {
 					submitted_at: string;
 					created_at: string;
 					battle_raw_score: number | null;
+					// Migration 0077: how many non-bonus, non-grouping fields this
+					// submission got FULL points on, out of how many there were. NULL on
+					// rows written before that migration — the verdict is unrecoverable
+					// afterwards, so NULL means "unknown" and drops out of any average.
+					fields_correct: number | null;
+					fields_total: number | null;
 				};
 				Insert: {
 					id?: string;
@@ -621,6 +627,8 @@ export type Database = {
 					submitted_at?: string;
 					created_at?: string;
 					battle_raw_score?: number | null;
+					fields_correct?: number | null;
+					fields_total?: number | null;
 				};
 				Update: {
 					id?: string;
@@ -633,6 +641,8 @@ export type Database = {
 					submitted_at?: string;
 					created_at?: string;
 					battle_raw_score?: number | null;
+					fields_correct?: number | null;
+					fields_total?: number | null;
 				};
 				Relationships: [];
 			};

@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/types/database.js';
 import { parseArtistTags } from '$lib/artist-tags';
-import { thresholdOfFields } from '$lib/threshold';
+import { thresholdOfFields, correctCountOfFields, fieldResultIsFullyCorrect } from '$lib/threshold';
 import { doubleDownMultiplier } from '$lib/powerups-meta';
 import type {
 	AnswerField,
@@ -763,6 +763,13 @@ export function scoreField(
  * guessed a bonus artist could reach maxPoints without having the answer right.
  * Subtracting bonusScore leaves exactly scoreArtistField's mainScore, which is
  * the part measured against maxPoints.
+ *
+ * The comparison itself now lives in fieldResultIsFullyCorrect ($lib/threshold),
+ * shared with the 0077 field count. This function keeps ONLY the part the count
+ * cannot reuse: running the scorer. The early guards are retained so the control
+ * flow is unchanged (a blank or 0-point field still short-circuits without
+ * calling scoreField); the predicate re-checks them, which is why they can be
+ * kept without either copy being able to drift into being load-bearing alone.
  */
 export function fieldIsFullyCorrect(
 	field: AnswerField,
@@ -785,8 +792,15 @@ export function fieldIsFullyCorrect(
 	if (maxPoints <= 0) return false;
 
 	const r = scoreField(field, submitted, track, mode, maxPoints, artistBonus);
-	const mainScore = r.score - (r.bonusScore ?? 0);
-	return mainScore >= maxPoints;
+	// maxScore: buildFieldResults sets a FieldResult's maxScore to the very
+	// fieldMax it passed to scoreField, so this shape is what the count folds too.
+	return fieldResultIsFullyCorrect({
+		field,
+		submitted,
+		score: r.score,
+		maxScore: maxPoints,
+		bonusScore: r.bonusScore
+	});
 }
 
 // ─── Field results for a single slot ─────────────────────────────────────────
@@ -904,6 +918,12 @@ export function scoreTab(
 	tabMaxTotal: number;
 	tabThresholdTotal: number;
 	tabThresholdMax: number;
+	// Migration 0077 — the same fold as the threshold pair, counting FIELDS rather
+	// than POINTS: how many fields this tab's slots got fully right, out of how
+	// many were countable. Exclusions inherited from correctCountOfFields
+	// ($lib/threshold): bonus fields and grouping are in neither half.
+	tabFieldsCorrect: number;
+	tabFieldsTotal: number;
 	sourceAnswers: SourceAnswer[];
 } {
 	const nonGroupingFields = variantFields.filter((f) => f !== 'grouping');
@@ -939,6 +959,10 @@ export function scoreTab(
 		const slotTotal = fieldResultsList.reduce((s, fr) => s + fr.score, 0);
 		const slotMax = fieldResultsList.reduce((s, fr) => s + fr.maxScore, 0);
 		const th = thresholdOfFields(fieldResultsList);
+		// An empty draft still produces one FieldResult per field (all scoring 0), so
+		// an unanswered single-source tab records 0/N — the measured zero the 0077
+		// count needs — rather than dropping out as 0/0.
+		const cnt = correctCountOfFields(fieldResultsList);
 
 		const scored: Record<string, number> = {};
 		for (const fr of fieldResultsList) scored[fr.field] = fr.score;
@@ -965,6 +989,8 @@ export function scoreTab(
 			tabMaxTotal: slotMax,
 			tabThresholdTotal: th.total,
 			tabThresholdMax: th.max,
+			tabFieldsCorrect: cnt.correct,
+			tabFieldsTotal: cnt.total,
 			sourceAnswers: [sourceAnswer]
 		};
 	}
@@ -977,6 +1003,8 @@ export function scoreTab(
 	const sourceAnswers: SourceAnswer[] = [];
 	let tabThresholdTotal = 0;
 	let tabThresholdMax = 0;
+	let tabFieldsCorrect = 0;
+	let tabFieldsTotal = 0;
 
 	for (let slotIdx = 0; slotIdx < playerSlotDrafts.length; slotIdx++) {
 		const draft = playerSlotDrafts[slotIdx] ?? { fieldValues: {} };
@@ -1006,8 +1034,10 @@ export function scoreTab(
 		if (bestTrackIdx === -1) {
 			// More player slots than source tracks — score 0 for overflow slots.
 			// An overflow slot has no source track and can never be scored, so it
-			// contributes NOTHING to thresholdMax (the powerup-earn denominator).
-			// Its display maxTotal is kept for the result screen only.
+			// contributes NOTHING to thresholdMax (the powerup-earn denominator) —
+			// nor, for the same reason, to the 0077 field count: a field with no
+			// track behind it was never answerable, so it belongs in neither half of
+			// the ratio. Its display maxTotal is kept for the result screen only.
 			const maxTotal = nonGroupingFields.reduce(
 				(s, f) => s + (fieldPoints[f] ?? DEFAULT_FIELD_MAX[f] ?? 10),
 				0
@@ -1076,6 +1106,15 @@ export function scoreTab(
 		tabThresholdTotal += slotTh.total + (hasGrouping && !groupingIsBonus ? groupingScore : 0);
 		tabThresholdMax += slotTh.max + (hasGrouping && !groupingIsBonus ? groupingMax : 0);
 
+		// The 0077 count folds bestFields, NOT displayFields: grouping is appended to
+		// the latter for the results screen, and it is deliberately outside this ratio
+		// (it is scored across the tab, so it has no per-track right answer — the
+		// shared predicate returns false for it). Hence no grouping term here, unlike
+		// the threshold pair above, which counts grouping's POINTS.
+		const slotCnt = correctCountOfFields(bestFields);
+		tabFieldsCorrect += slotCnt.correct;
+		tabFieldsTotal += slotCnt.total;
+
 		slotResults.push({
 			slotIndex: slotIdx,
 			matchedTrackId: matchedSrc.trackId,
@@ -1104,6 +1143,12 @@ export function scoreTab(
 		const maxTotal = maxPerField + (hasGrouping ? groupingMax : 0);
 		// Mirrors maxTotal: unmatched slots DO include groupingMax (unlike overflow).
 		tabThresholdMax += nonBonusFieldMax(nonGroupingFields) + (hasGrouping && !groupingIsBonus ? groupingMax : 0);
+		// Same asymmetry for the 0077 count: an unmatched source track is a slot the
+		// player LEFT EMPTY, not one that could never be answered, so its fields are
+		// countable and all wrong — denominator only. This is what makes a wholly
+		// unanswered mashup/fragments tab record 0/N instead of 0/0 and vanish from
+		// the average. Grouping stays out of the count, so no grouping term here.
+		tabFieldsTotal += nonGroupingFields.filter((f) => !bonusFields.has(f)).length;
 		slotResults.push({
 			slotIndex: playerSlotDrafts.length + trackIdx,
 			matchedTrackId: tabSourceTracks[trackIdx].trackId,
@@ -1123,7 +1168,16 @@ export function scoreTab(
 	const tabTotal = slotResults.reduce((s, sr) => s + sr.total, 0);
 	const tabMaxTotal = slotResults.reduce((s, sr) => s + sr.maxTotal, 0);
 
-	return { slotResults, tabTotal, tabMaxTotal, tabThresholdTotal, tabThresholdMax, sourceAnswers };
+	return {
+		slotResults,
+		tabTotal,
+		tabMaxTotal,
+		tabThresholdTotal,
+		tabThresholdMax,
+		tabFieldsCorrect,
+		tabFieldsTotal,
+		sourceAnswers
+	};
 }
 
 // ─── Source-track resolver ────────────────────────────────────────────────────
@@ -1345,6 +1399,10 @@ export function scoreSubmission(
 	// Bonus-excluded running totals — the powerup-threshold pair.
 	let thresholdTotal = 0;
 	let thresholdMax = 0;
+	// Migration 0077 — the same fold in fields rather than points, summed across
+	// every tab. Persisted on the submission; nothing in scoring reads it.
+	let fieldsCorrect = 0;
+	let fieldsTotal = 0;
 
 	for (let i = 0; i < tabs.length; i++) {
 		const tab = tabs[i];
@@ -1352,8 +1410,16 @@ export function scoreSubmission(
 		// back to the challenge-wide params. With every tab NULL (this batch) the
 		// per-tab maps ARE the challenge-wide maps, so scoring is bit-identical.
 		const tf = tab.fieldMaps;
-		const { slotResults, tabTotal, tabMaxTotal, tabThresholdTotal, tabThresholdMax, sourceAnswers } =
-			scoreTab(
+		const {
+			slotResults,
+			tabTotal,
+			tabMaxTotal,
+			tabThresholdTotal,
+			tabThresholdMax,
+			tabFieldsCorrect,
+			tabFieldsTotal,
+			sourceAnswers
+		} = scoreTab(
 				tf?.fields ?? variantFields,
 				tf?.fieldModes ?? fieldModes,
 				tf?.fieldPoints ?? fieldPoints,
@@ -1365,6 +1431,8 @@ export function scoreSubmission(
 			);
 		thresholdTotal += tabThresholdTotal;
 		thresholdMax += tabThresholdMax;
+		fieldsCorrect += tabFieldsCorrect;
+		fieldsTotal += tabFieldsTotal;
 
 		tabResults.push({
 			tabPosition: tab.tabPosition,
@@ -1428,6 +1496,12 @@ export function scoreSubmission(
 			maxTotal,
 			thresholdTotal,
 			thresholdMax,
+			// Migration 0077. Carried on the result purely so submit.ts can write them
+			// onto the submission row — no scoring decision reads them, and the
+			// insurance floor above cannot move them (it lifts POINTS, and a floored
+			// score does not make a wrong field right).
+			fieldsCorrect,
+			fieldsTotal,
 			tabs: tabResults,
 			tracks: legacyTracks,
 			status,

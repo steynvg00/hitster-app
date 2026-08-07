@@ -296,6 +296,19 @@ export async function scoreAndPersistSubmission(
 		answers: answersArray as never,
 		score: finalScore,
 		is_final: true,
+		// Migration 0077 — how many fields this team got fully right, out of how many
+		// it could have. Written here, on the ONE row literal every submission goes
+		// through, which is what makes all three paths correct by construction rather
+		// than by three matching edits:
+		//   interactive submit — the team's real answers
+		//   auto-submit backstop — draftByTab {} scores every field 0, so this lands
+		//     0/N (a measured zero), never NULL and never 0/0
+		//   Resurrection retry — this row is UPDATEd, so the counts are overwritten
+		//     with the retry's own tally, self-correcting exactly like the score
+		// Nullish-coalesced to 0 only to satisfy the optional result type; both are
+		// always present on a scoreSubmission result.
+		fields_correct: scoredResult.fieldsCorrect ?? 0,
+		fields_total: scoredResult.fieldsTotal ?? 0,
 		// Ranking key for battle mode: base+bonus (scoredResult.total), PRE any
 		// multiplier / insurance floor / speed / streak. Only set for a battle
 		// challenge — a normal submission never references the column, so normal
