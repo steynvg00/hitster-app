@@ -71,7 +71,7 @@
 		const payload = activation?.payload ?? {};
 		switch (powerupType.id) {
 			case 'bonus_points':
-				return `+${payload.value ?? 15} bonus points banked for your next challenge!`;
+				return `+${payload.value ?? 5} bonus points banked for your next challenge!`;
 			case 'lucky_dice':
 				// The rolled number is the whole point of this powerup — show it, and the
 				// range it came out of, straight from the payload the server wrote. The
@@ -83,7 +83,10 @@
 			case 'hard_gaan':
 				return `×${payload.multiplier ?? 1.5} on challenge points for the next ${payload.window_minutes ?? 15} minutes!`;
 			case 'single_event_mult':
-				return `×${payload.multiplier ?? 1.5} on your next challenge!`;
+				// The ROLLED multiplier is the reveal — same as lucky_dice's number.
+				// Never defaulted to a plausible-looking value: a payload without one
+				// means the roll did not land, and saying "×1.5" would invent it.
+				return `×${payload.multiplier ?? '?'} on your next challenge!`;
 			case 'penalty_shot':
 				return 'You scored low — penalty shot! 🥃 Bottoms up.';
 			case 'power_spin':

@@ -258,6 +258,34 @@ export function rollDice(min: number, max: number, rand: () => number = Math.ran
 }
 
 /**
+ * The three multipliers single_event_mult rolls between. Not config-driven like
+ * the dice range: these three numbers ARE the card
+ * ("Random multiplier (x1.2/x1.4/x1.6) applied to your next challenge."), so a
+ * host who changed them would be changing what the powerup promises, not tuning
+ * it. Kept as a literal tuple for that reason.
+ */
+export const SINGLE_EVENT_MULT_OPTIONS = [1.2, 1.4, 1.6] as const;
+
+/**
+ * Roll one of SINGLE_EVENT_MULT_OPTIONS, uniformly. `rand` is injectable for the
+ * same reason rollDice's is — a test pins each of the three outcomes instead of
+ * sampling and hoping (tests/bots/verify-constant-mismatches.ts drives all
+ * three through activatePowerup via ActivateOptions.rand).
+ *
+ * The index is clamped rather than trusted: rand() is specified as [0, 1), but a
+ * caller-supplied one returning exactly 1 would index past the end and write
+ * `undefined` into the payload — a broken effect, where a clamp is just the top
+ * option.
+ */
+export function rollSingleEventMult(rand: () => number = Math.random): number {
+	const i = Math.min(
+		SINGLE_EVENT_MULT_OPTIONS.length - 1,
+		Math.floor(rand() * SINGLE_EVENT_MULT_OPTIONS.length)
+	);
+	return SINGLE_EVENT_MULT_OPTIONS[i];
+}
+
+/**
  * How many reveals one X-Ray activation is worth, from the set's config. Read the
  * same way the dice range is (powerup_config.types.x_ray.reveal_budget), so a
  * later settings UI tunes it like any other per-type setting. Anything missing,
@@ -1033,7 +1061,7 @@ export function deriveEffectModifiers(effects: ActiveEffect[]): {
 				break;
 			}
 			case 'bonus_points': {
-				bonusPoints += (e.payload.value as number | undefined) ?? 15;
+				bonusPoints += (e.payload.value as number | undefined) ?? 5;
 				toConsume.push(e);
 				break;
 			}
@@ -2097,7 +2125,9 @@ export async function activatePowerup(
 	// 3. Type-specific activation
 	switch (typeId) {
 		case 'bonus_points': {
-			const payload = { value: 15 };
+			// 5, not 15: powerup_types.description promises "+5 points to your team
+			// immediately" (seeded in 0044) and the card is what the team reads.
+			const payload = { value: 5 };
 			const { data: eff, error } = await supabase
 				.from('team_effects')
 				.insert({
@@ -2280,7 +2310,13 @@ export async function activatePowerup(
 		}
 
 		case 'single_event_mult': {
-			const payload = { multiplier: 1.5 };
+			// The card promises a ROLL — "Random multiplier (x1.2/x1.4/x1.6)" — so a
+			// fixed 1.5 was a broken promise however plausible the number. Randomness
+			// from the one injectable roll function, like lucky_dice's; the rolled
+			// value goes into the payload, which is what deriveEffectModifiers reads
+			// back (powerups.ts:1051) and what computeBreakdown folds into the
+			// additive-delta sum. Nothing downstream assumes a multiplier.
+			const payload = { multiplier: rollSingleEventMult(options?.rand) };
 			const { data: eff, error } = await supabase
 				.from('team_effects')
 				.insert({

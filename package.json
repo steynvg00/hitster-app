@@ -36,7 +36,8 @@
 		"bots:verify-timer-autosubmit": "tsx tests/bots/verify-timer-autosubmit.ts",
 		"bots:verify-timer-resurrection-lifeline": "tsx tests/bots/verify-timer-resurrection-lifeline.ts",
 		"bots:verify-config-merge-safe": "tsx tests/bots/verify-config-merge-safe.ts",
-		"bots:verify-feast-set-resolves": "tsx tests/bots/verify-feast-set-resolves.ts"
+		"bots:verify-feast-set-resolves": "tsx tests/bots/verify-feast-set-resolves.ts",
+		"bots:verify-constant-mismatches": "tsx tests/bots/verify-constant-mismatches.ts"
 	},
 	"devDependencies": {
 		"@eslint/compat": "^2.0.4",
