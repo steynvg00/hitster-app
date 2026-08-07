@@ -13,6 +13,7 @@ import {
 	mergeConfigKeys,
 	fillConfigDefaults
 } from '$lib/server/powerups';
+import { buildPowerupConsoleRows } from '$lib/server/powerup-console';
 import type {
 	PowerupCategory,
 	PowerupMode,
@@ -108,43 +109,24 @@ export const load: PageServerLoad = async ({ params }) => {
 		rawConfig && typeof rawConfig === 'object' && !Array.isArray(rawConfig)
 			? (rawConfig as unknown as SetPowerupConfig)
 			: { thresholds_percent: [25, 50, 75] };
-	// v2-normalized config — source of truth for both the threshold_mode/band_mode
-	// selects (piece 1) and the per-type/category overrides below (piece 2).
+	// v2-normalized config — feeds the threshold_mode/band_mode selects and the
+	// category master switches (piece 1). The per-type overrides are no longer read
+	// from here: they go through the resolvers, in buildPowerupConsoleRows below.
 	const powerupConfigV2 = parseConfig(rawConfig);
 
-	// Console powerup list (piece 2): the real 7 runtime types + coming_soon
-	// placeholders, merged with their per-set override from
-	// powerupConfigV2.types[id]. Replaces the legacy powerupConfigs
-	// (powerups + set_powerups) as the console's data source.
-	const powerupTypeRows: PowerupTypeConsoleRow[] = (powerupTypesRaw ?? []).map((p) => {
-		const override = powerupConfigV2.types[p.id];
-		return {
-			id: p.id,
-			name: p.name,
-			category: p.category,
-			description: p.description,
-			icon: p.icon,
-			enabled_by_default: p.enabled_by_default,
-			coming_soon: p.coming_soon,
-			default_min_score_pct: p.default_min_score_pct,
-			default_max_score_pct: p.default_max_score_pct,
-			is_inverse: override?.inverse ?? p.default_inverse,
-			effective_enabled: override?.enabled ?? p.enabled_by_default,
-			// Laag 1: the score range, resolved the same way for every type. Both
-			// halves are overridable now; null means "no override, the column's value
-			// applies" and the UI shows that column as the placeholder.
-			effective_min_score_pct: override?.min_score_pct ?? null,
-			effective_max_score_pct: override?.max_score_pct ?? null,
-			effective_chance: override?.chance ?? 1,
-			has_override: !!override,
-			effective_dice_min: override?.dice_min ?? null,
-			effective_dice_max: override?.dice_max ?? null,
-			effective_reveal_budget: override?.reveal_budget ?? null,
-			effective_show_scores: override?.show_scores ?? false,
-			effective_tier_s_chance: override?.tier_s_chance ?? null,
-			effective_score_mode: override?.score_mode ?? null
-		};
-	});
+	// Console powerup list (piece 2): the real runtime types + coming_soon
+	// placeholders, merged with their per-set override. Replaces the legacy
+	// powerupConfigs (powerups + set_powerups) as the console's data source.
+	//
+	// Built by $lib/server/powerup-console, which resolves every setting through
+	// the SAME resolver the earning runtime uses. It used to be an inline `??`
+	// chain here, and that chain was not the runtime's resolution: it showed
+	// Lifeline at 100% on any set whose config predates a hand edit, while the
+	// planner rolled it at its designed 50%.
+	const powerupTypeRows: PowerupTypeConsoleRow[] = buildPowerupConsoleRows(
+		rawConfig,
+		powerupTypesRaw ?? []
+	);
 
 	return {
 		gameSet,
