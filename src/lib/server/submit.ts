@@ -28,6 +28,7 @@ import { resurrectionDelta } from '$lib/powerups-meta';
 import type { ResurrectionScoreMode } from '$lib/types';
 import { maybeTransferCrown } from '$lib/server/crown';
 import { maybeResolveBattle } from '$lib/server/battle';
+import { getSetStandings } from '$lib/server/randomize';
 
 type AdminClient = SupabaseClient<Database>;
 
@@ -208,12 +209,44 @@ export async function scoreAndPersistSubmission(
 	const artistBonus = resolveArtistBonus(pcRaw);
 
 	// ── Bonus params ──────────────────────────────────────────────────────
-	const [teamRes, allTeamsRes] = await Promise.all([
+	//
+	// `standings` is the set's OWN teams with their current scores, in canonical
+	// order (getSetStandings → the set's team_count colors). It feeds two things:
+	// the leader score below, and the safety-net position axis, which is handed to
+	// awardPowerups further down rather than re-queried there.
+	//
+	// ── Why this is scoped, and what it fixes ────────────────────────────────
+	// This used to be an UNSCOPED `teams.select('score').order(desc).limit(1)` —
+	// the highest score in the whole six-row teams table, regardless of which
+	// teams were playing. Activating a set only zeroes the SCOPED colors
+	// (src/routes/admin/sets/+page.server.ts:187), so on a set with team_count < 6
+	// the unused colors keep their totals from a previous, larger set, and that
+	// stale total could come back as "the leader".
+	//
+	// Exactly one thing reads this value: bonusParams.leader_score below, which
+	// only ever reaches the comeback multiplier (src/lib/server/scoring.ts:1276).
+	// An inflated leader makes `team_score < leader_score * 0.5` easier to satisfy,
+	// so the bug handed out the 1.5x comeback bonus to teams that were not actually
+	// behind anyone in their own game. The crown does NOT read this — crown.ts
+	// resolves the holder from game_sets.crown_holder_team_id and reads that team's
+	// score directly, and its battle variant is already `.in('id', teamIds)`.
+	//
+	// No set → nothing to scope to, so the old unscoped top-1 query stays as the
+	// fallback for that path. Both branches produce the same shape, so the reduce
+	// below (and its empty-list 0, matching the old `?? 0`) covers both.
+	const [teamRes, standings] = await Promise.all([
 		admin.from('teams').select('score, current_streak').eq('id', teamId).single(),
-		admin.from('teams').select('score').order('score', { ascending: false }).limit(1)
+		playerSetId
+			? getSetStandings(admin, playerSetId)
+			: admin
+					.from('teams')
+					.select('id, score')
+					.order('score', { ascending: false })
+					.limit(1)
+					.then((r) => r.data ?? [])
 	]);
 	const teamRow = teamRes.data;
-	const leaderScore = allTeamsRes.data?.[0]?.score ?? 0;
+	const leaderScore = standings.reduce((max, t) => Math.max(max, t.score), 0);
 
 	// Load active powerup effects for this team and derive scoring modifiers
 	let effectModifiers: ReturnType<typeof deriveEffectModifiers> = {
@@ -451,7 +484,20 @@ export async function scoreAndPersistSubmission(
 			playerSetId,
 			challengeId,
 			scorePercent,
-			input.forcePowerupTypeId
+			input.forcePowerupTypeId,
+			// The set-scoped standings loaded above for the leader score, reused for
+			// the safety net's position axis so it costs no second query — with THIS
+			// team's entry advanced to the score it just reached.
+			//
+			// That patch matters. `standings` was read before the score update, so
+			// using it raw would measure a team that just leapt into the lead as
+			// still being last, and hand it the safety net. The other teams' scores
+			// cannot have moved meaningfully in between, so patching the one entry we
+			// know the new value for is both free and the honest reading: the
+			// standings as they are now. It also lines the two axes up — the
+			// performance axis is read after this submission's row is inserted, so it
+			// counts this challenge too.
+			standings.map((t) => (t.id === teamId ? { ...t, score: newTeamScore } : t))
 		);
 	}
 

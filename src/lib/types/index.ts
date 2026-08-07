@@ -401,6 +401,60 @@ export type BandMode = 'all_bands' | 'highest_band';
 // either arithmetic exists.
 export type ResurrectionScoreMode = 'replace' | 'best';
 
+// ─── Vangnet-modifiers (earning laag 4) ──────────────────────────────────────
+//
+// A weight modifier lets a powerup be drawn MORE OFTEN for a team that is having
+// a bad time — the safety net. It multiplies that type's weight in the ladder's
+// weighted lottery, and nothing else.
+//
+// Two axes, both read from PlanContext and both a FRACTION 0–1 (deliberately not
+// the 0–100 that submissionPct/cumulativePct use — see the note on PlanContext):
+//
+//   position     where this team sits in its set's standings. 1 = leader,
+//                0 = last. Ties take the midrank, so "everyone level" reads as
+//                the middle rather than as "everyone last".
+//   performance  the team's share of fields it got fully right this set
+//                (SUM(fields_correct) / SUM(fields_total), migration 0077).
+//
+// The two are genuinely different: position is RELATIVE, so a bounded slice of
+// the field always qualifies no matter how hard the night is; performance is
+// ABSOLUTE, so on a brutal night everyone can fall below it. Which is why the
+// host picks how they combine, per powerup — this type does not default it.
+export type WeightModifierAxis = 'position' | 'performance';
+
+/**
+ * One bound on one axis. Inclusive at both ends, like every other range in this
+ * config (see scoreInRange). `lte` alone = "at most", `gte` alone = "at least",
+ * both = a band. Neither is a condition that constrains nothing, and is treated
+ * as no match rather than as "always".
+ */
+export interface WeightModifierCondition {
+	axis: WeightModifierAxis;
+	lte?: number;
+	gte?: number;
+}
+
+/**
+ * The per-powerup safety-net rule: when the conditions hold, this type's lottery
+ * weight is multiplied by `factor`; otherwise it is left alone.
+ *
+ * `combine` is NOT defaulted. With one condition it cannot matter and may be
+ * omitted; with two or more it must be stated, or the modifier does nothing. A
+ * silent default would be this laag quietly choosing the game-design question
+ * ("behind AND playing badly" vs "behind OR playing badly") that belongs to the
+ * host — and choosing it in the direction that hands the net to more teams.
+ *
+ * Resolved by resolveWeightModifier (src/lib/server/powerups.ts), which falls
+ * back to a neutral 1 on every malformed shape. No console control writes this
+ * yet — set by hand in the jsonb until the UI step lands, same as `weight` and
+ * the range keys above it.
+ */
+export interface WeightModifier {
+	factor: number;
+	combine?: 'and' | 'or';
+	conditions: WeightModifierCondition[];
+}
+
 export interface PowerupTypeOverride {
 	enabled?: boolean;
 	// The type's score range, INCLUSIVE at both ends and read identically for
@@ -431,6 +485,11 @@ export interface PowerupTypeOverride {
 	// (never drawn); negative/non-finite fall back to 1. Ladder only: the inverse
 	// channel has no pool to be relative to. No console control writes it yet.
 	weight?: number;
+	// Laag 4: the safety net. Multiplies `weight` above when this team is behind
+	// and/or playing badly (see WeightModifier). Absent — which it is for every
+	// set today — resolves to a neutral 1, so the drawn candidate weights are the
+	// same numbers laag 3 produced. Ladder only, for the same reason `weight` is.
+	weight_modifier?: WeightModifier;
 	// lucky_dice only: the inclusive range the roll is drawn from. Kept here, in
 	// the per-type override map, rather than as a constant in the activation
 	// branch — a later settings UI edits it the same way it edits `threshold` or
