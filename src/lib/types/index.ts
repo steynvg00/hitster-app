@@ -292,6 +292,13 @@ export interface ChallengeResult {
 	// math. Equal to total/maxTotal when the challenge has no bonus fields.
 	thresholdTotal?: number;
 	thresholdMax?: number;
+	// Migration 0077 — how many non-bonus, non-grouping fields were fully correct,
+	// out of how many were countable. Set by scoreSubmission and written straight
+	// onto the submission row; no scoring or display path reads them. Optional like
+	// the threshold pair above, so the priorResult rebuild and the client fallback
+	// (which have no scorer to hand) stay valid without them.
+	fieldsCorrect?: number;
+	fieldsTotal?: number;
 	tabs: TabFieldResult[]; // per-tab breakdown (new)
 	tracks: TrackFieldResult[]; // legacy flat list for simple result display
 	status: SubmissionStatus;
