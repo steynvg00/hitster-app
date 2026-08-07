@@ -48,7 +48,7 @@ import {
 } from '../../src/lib/server/powerups';
 import { getSetStandings } from '../../src/lib/server/randomize';
 import { computeBreakdown, type BonusParams } from '../../src/lib/server/scoring';
-import type { PowerupConfigV2, PowerupTypeOverride, WeightModifier } from '../../src/lib/types';
+import type { PowerupConfigV2, PowerupTypeOverride, SafetyNetModifier } from '../../src/lib/types';
 import { makeFake, type Op } from './fake-supabase';
 
 let passed = 0;
@@ -377,7 +377,7 @@ const ctxBehindOnly: PlanContext = {
 const ctxBadOnly: PlanContext = { ...baseCtx, positionPercentile: 0.8, fieldsCorrectFraction: 0.3 };
 const ctxNeither: PlanContext = { ...baseCtx, positionPercentile: 0.8, fieldsCorrectFraction: 0.9 };
 
-const AND_MOD: WeightModifier = {
+const AND_MOD: SafetyNetModifier = {
 	factor: 3,
 	combine: 'and',
 	conditions: [
@@ -385,9 +385,9 @@ const AND_MOD: WeightModifier = {
 		{ axis: 'performance', lte: 0.4 }
 	]
 };
-const OR_MOD: WeightModifier = { ...AND_MOD, combine: 'or' };
-const POS_ONLY: WeightModifier = { factor: 3, conditions: [{ axis: 'position', lte: 0.3 }] };
-const PERF_ONLY: WeightModifier = { factor: 3, conditions: [{ axis: 'performance', lte: 0.4 }] };
+const OR_MOD: SafetyNetModifier = { ...AND_MOD, combine: 'or' };
+const POS_ONLY: SafetyNetModifier = { factor: 3, conditions: [{ axis: 'position', lte: 0.3 }] };
+const PERF_ONLY: SafetyNetModifier = { factor: 3, conditions: [{ axis: 'performance', lte: 0.4 }] };
 
 const CASES: Array<[string, PlanContext]> = [
 	['achter ÉN slecht', ctxBehindAndBad],
@@ -396,7 +396,7 @@ const CASES: Array<[string, PlanContext]> = [
 	['geen van beide', ctxNeither]
 ];
 
-function factors(mod: WeightModifier | undefined): number[] {
+function factors(mod: SafetyNetModifier | undefined): number[] {
 	const cfg = cfgWith({ shield: mod ? { weight_modifier: mod } : {} });
 	return CASES.map(([, ctx]) => resolveWeightModifier(cfg, 'shield', ctx));
 }
@@ -451,7 +451,7 @@ console.log('\n══ D. Defensieve randen ══\n');
 
 function f(mod: unknown, ctx: PlanContext = ctxBehindAndBad): number {
 	return resolveWeightModifier(
-		cfgWith({ shield: { weight_modifier: mod as WeightModifier } }),
+		cfgWith({ shield: { weight_modifier: mod as SafetyNetModifier } }),
 		'shield',
 		ctx
 	);

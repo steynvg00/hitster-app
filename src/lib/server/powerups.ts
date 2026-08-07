@@ -7,7 +7,8 @@ import type {
 	BandMode,
 	PowerupTypeOverride,
 	ResurrectionScoreMode,
-	WeightModifierCondition
+	SafetyNetCondition,
+	SafetyNetModifier
 } from '$lib/types';
 import {
 	artistTargets,
@@ -1067,7 +1068,7 @@ function axisValue(axis: unknown, ctx: PlanContext): number | undefined {
  * bound at all. Unknown must never trigger the safety net: a team with no
  * measurable performance yet is not a team that is doing badly.
  */
-function conditionHolds(c: WeightModifierCondition, ctx: PlanContext): boolean {
+function conditionHolds(c: SafetyNetCondition, ctx: PlanContext): boolean {
 	if (!c || typeof c !== 'object') return false;
 	const value = axisValue(c.axis, ctx);
 	if (typeof value !== 'number' || !Number.isFinite(value)) return false;
@@ -1084,8 +1085,14 @@ function conditionHolds(c: WeightModifierCondition, ctx: PlanContext): boolean {
 }
 
 /**
- * The multiplier this type's lottery weight gets, from the set's config and this
- * submission's context. 1 = untouched.
+ * THE evaluation, and the whole of it: does this rule match this team's
+ * situation, and if so what does it multiply by? 1 = untouched.
+ *
+ * Deliberately says nothing about WHAT is multiplied. A modifier is a rule about
+ * the team, not about the quantity — which is what lets the ladder's weight and
+ * the inverse channel's chance share one implementation instead of each carrying
+ * a near-copy of the and/or logic that can drift. The two thin readers below
+ * supply the only difference there is: which config key to look in.
  *
  * Every malformed or incomplete shape resolves to 1, the same posture
  * resolveTypeWeight / resolveDiceRange take: a mis-typed config should behave
@@ -1093,21 +1100,20 @@ function conditionHolds(c: WeightModifierCondition, ctx: PlanContext): boolean {
  * are not merely defensive — they are the ones that would otherwise misfire:
  *
  *   empty conditions   `[].every()` is TRUE, so an and-modifier with nothing in
- *                      it would multiply EVERY draw. Caught explicitly.
+ *                      it would multiply EVERYTHING. Caught explicitly.
  *   missing combine    with two or more conditions there is no safe default (see
- *                      WeightModifier) — the modifier stays off until the host
+ *                      SafetyNetModifier) — the modifier stays off until the host
  *                      says which. With exactly one condition and/or cannot
  *                      differ, so it is allowed to be absent.
- *   negative factor    would corrupt weightedPick's cumulative sum and could make
- *                      later candidates unreachable — a silently wrong lottery.
- *                      0 is fine and meaningful (never drawn).
+ *   negative factor    nonsense at either endpoint: it would corrupt
+ *                      weightedPick's cumulative sum on the ladder, and make a
+ *                      chance that can never fire on the inverse channel. 0 is
+ *                      fine and meaningful at both (never drawn / never drops).
  */
-export function resolveWeightModifier(
-	cfg: PowerupConfigV2,
-	typeId: string,
+export function resolveModifierFactor(
+	mod: SafetyNetModifier | undefined,
 	ctx: PlanContext
 ): number {
-	const mod = cfg.types?.[typeId]?.weight_modifier;
 	if (!mod || typeof mod !== 'object') return 1;
 
 	const factor = mod.factor;
@@ -1120,6 +1126,18 @@ export function resolveWeightModifier(
 	const held = conditions.map((c) => conditionHolds(c, ctx));
 	const matched = mod.combine === 'or' ? held.some(Boolean) : held.every(Boolean);
 	return matched ? factor : 1;
+}
+
+/**
+ * The multiplier this type's LOTTERY WEIGHT gets — the ladder's endpoint. Read
+ * from powerup_config.types[id].weight_modifier; absent resolves to a neutral 1.
+ */
+export function resolveWeightModifier(
+	cfg: PowerupConfigV2,
+	typeId: string,
+	ctx: PlanContext
+): number {
+	return resolveModifierFactor(cfg.types?.[typeId]?.weight_modifier, ctx);
 }
 
 export type PlannedAward = { typeId: string; channel: 'ladder' | 'inverse' };
