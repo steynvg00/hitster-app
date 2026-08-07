@@ -872,7 +872,10 @@ export function weightedPick<T>(
  * never be met.
  */
 export function resolveMinScorePct(cfg: PowerupConfigV2, type: PowerupType): number {
-	void cfg; // the per-set override lands in the next commit
+	const override = cfg.types?.[type.id]?.min_score_pct;
+	if (typeof override === 'number' && Number.isFinite(override) && override >= 0 && override <= 100) {
+		return override;
+	}
 	return type.default_min_score_pct;
 }
 
@@ -882,7 +885,10 @@ export function resolveMinScorePct(cfg: PowerupConfigV2, type: PowerupType): num
  * raise a type's floor but never give it a ceiling.
  */
 export function resolveMaxScorePct(cfg: PowerupConfigV2, type: PowerupType): number {
-	void cfg; // the per-set override lands in the next commit
+	const override = cfg.types?.[type.id]?.max_score_pct;
+	if (typeof override === 'number' && Number.isFinite(override) && override >= 0 && override <= 100) {
+		return override;
+	}
 	return type.default_max_score_pct;
 }
 
