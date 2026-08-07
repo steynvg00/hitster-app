@@ -724,6 +724,14 @@ const DEFAULT_TYPE_CHANCE: Record<string, number> = {
  * host (or a migration) set one, otherwise the type's designed default,
  * otherwise 1. Used by BOTH earning channels so the ladder and the inverse
  * channel can never disagree about a type's rate.
+ *
+ * This is the STATIC rate — a property of the type and the set, the same for
+ * every team. The inverse channel multiplies it by the team's own safety-net
+ * factor at the point of the roll (resolveChanceModifier); that is deliberately
+ * kept out of here, for the same reason resolveWeightModifier is kept out of
+ * resolveTypeWeight: one function answers "what did the host configure", the
+ * other "what is this team's situation", and folding them together would make
+ * the first unanswerable.
  */
 export function resolveTypeChance(cfg: PowerupConfigV2, typeId: string): number {
 	const override = cfg.types?.[typeId]?.chance;
@@ -754,6 +762,10 @@ export const DEFAULT_TYPE_WEIGHT = 1;
  * Only the ladder's pick consults this. The inverse channel has no pool and no
  * pick — every inverse type decides for itself against its own chance — so a
  * weight there would have nothing to be relative TO, and is ignored by design.
+ * That asymmetry is also why the safety net has two endpoints rather than one:
+ * on the ladder it multiplies this weight, on the inverse channel it multiplies
+ * the chance, because that is the only quantity each channel has (see the laag 4
+ * header below).
  *
  * 0 is a VALID setting (never drawn, while the rest keep their ratio). Negative,
  * non-finite and absent all fall back to the neutral 1: a negative weight would
@@ -1237,15 +1249,22 @@ export type PlanContext = {
  *    min ≤ submissionPct ≤ max, inclusive, overridable per set).
  *  - x bands = up to x awards: each fired band rolls each pool type against its
  *    chance (resolveTypeChance: override ?? the type's designed default ?? 1); if
- *    any survive, one is drawn by weight (weightedPick).
+ *    any survive, one is drawn by weight × the team's safety-net factor
+ *    (weightedPick, resolveWeightModifier).
  *  - Inverse channel (per submission, ladder-independent): each available inverse
- *    type whose score is in range — the SAME predicate — rolls its chance.
+ *    type whose score is in range — the SAME predicate — rolls its chance × the
+ *    team's safety-net factor (resolveChanceModifier).
  *
  * Since laag 1 the three properties are independent, and each means exactly one
  * thing: RANGE says between which scores a type is eligible (scoreInRange),
  * CHANNEL says how it is earned (isInverseChannel), CHANCE/WEIGHT say how often
  * and in what proportion. Lifeline is now expressible as "range 0-40, channel
- * inverse, chance 0.5" with all three independently tunable.
+ * inverse, chance 0.5" with all three independently tunable — and, since laag 4,
+ * "and 2× that chance while this team is in the bottom third" on top.
+ *
+ * Laag 4's two factors are the only part of this that depends on WHO is playing;
+ * both are a neutral 1 unless the set's config asks for them, so a set that does
+ * not use the safety net plans exactly the awards it planned before it existed.
  */
 export function planAwards(
 	cfg: PowerupConfigV2,
