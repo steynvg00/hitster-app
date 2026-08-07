@@ -840,6 +840,103 @@ export function weightedPick<T>(
 	return candidates[candidates.length - 1].item;
 }
 
+// ─── Score range (earning laag 1) ────────────────────────────────────────────
+//
+// THE RULE: a type's score range is `min ≤ score% ≤ max`, INCLUSIVE at both ends,
+// read the same way for every type. Nothing about it depends on `inverse`.
+//
+// ── What this replaced, and why it had to go ────────────────────────────────
+// There used to be ONE config key, `threshold`, whose meaning depended on a flag
+// on a different table:
+//
+//   normal type   threshold overrode default_min_score_pct  → LOWER bound, `>=`
+//   inverse type  threshold overrode default_max_score_pct  → UPPER bound, `<`
+//
+// Three separate things rode on that one key — which column it overrode, which
+// side of the range it sat on, and whether the bound itself counted — and the
+// only way to know which was to go look at `default_inverse`. On top of that an
+// inverse type had NO lower bound at all, so "penalty_shot only between 10% and
+// 40%" was not expressible: a team that scored 0% because it never saw the
+// challenge was indistinguishable from one that scored 39% by playing badly.
+//
+// Now: two keys that always mean the same thing, one predicate both channels
+// call, and `inverse` reduced to what it should always have been — a label for
+// WHICH EARN CHANNEL a type uses, saying nothing about bounds (see
+// isInverseChannel).
+
+/**
+ * The lower edge of a type's score range: the set's override if present,
+ * otherwise the catalog column (powerup_types.default_min_score_pct, migration
+ * 0044:12). Validated like every other resolver here — out-of-range, non-finite
+ * and absent all fall back to the column rather than producing a bound that can
+ * never be met.
+ */
+export function resolveMinScorePct(cfg: PowerupConfigV2, type: PowerupType): number {
+	void cfg; // the per-set override lands in the next commit
+	return type.default_min_score_pct;
+}
+
+/**
+ * The upper edge, mirroring resolveMinScorePct. This is the half that was NOT
+ * overridable before — it read the column directly — which is why a host could
+ * raise a type's floor but never give it a ceiling.
+ */
+export function resolveMaxScorePct(cfg: PowerupConfigV2, type: PowerupType): number {
+	void cfg; // the per-set override lands in the next commit
+	return type.default_max_score_pct;
+}
+
+/**
+ * Is this submission's score inside the type's range? The ONE place the bounds
+ * are compared, called by both earning channels so they cannot drift on either
+ * the edges or their inclusivity.
+ *
+ * Inclusive at both ends. For the ladder that is what it always was (`>=` and
+ * `<=`). For the inverse channel it is a DELIBERATE change: that channel used a
+ * strict `<`, so a submission landing exactly on the bound (40.0% for lifeline
+ * and penalty_shot) did not fire. It now does. That single edge is the only
+ * behavioural difference this rewrite makes anywhere — pinned exhaustively, over
+ * the real catalog and every score, by tests/bots/verify-threshold-range.ts.
+ *
+ * An inverted range (min > max) admits nothing. That is the honest reading of a
+ * host asking for "between 60% and 40%" — a contradiction — rather than silently
+ * swapping the bounds into an instruction nobody gave.
+ */
+export function scoreInRange(cfg: PowerupConfigV2, type: PowerupType, scorePct: number): boolean {
+	return scorePct >= resolveMinScorePct(cfg, type) && scorePct <= resolveMaxScorePct(cfg, type);
+}
+
+/**
+ * Which earn channel a type uses — and, since laag 1, NOTHING else.
+ *
+ * true  → the inverse channel: earned per submission for scoring LOW, with no
+ *         band ladder behind it.
+ * false → the ladder: bands fire, chance decides who takes part, weight decides
+ *         who wins.
+ *
+ * It no longer implies anything about which bound is which, or whether a bound
+ * is inclusive. `override.inverse ?? default_inverse` keeps the existing
+ * resolution; no console control writes the override, so in practice this is the
+ * type's fixed trait (lifeline and penalty_shot, and nothing else).
+ */
+export function isInverseChannel(cfg: PowerupConfigV2, type: PowerupType): boolean {
+	return cfg.types?.[type.id]?.inverse ?? type.default_inverse;
+}
+
+/**
+ * The gates both channels share: a type that is unbuilt, switched off for this
+ * set, or in a switched-off category is not awardable through either route.
+ * Extracted so the two loops below visibly agree on them — the differences
+ * between the channels should be the interesting part, not a duplicated
+ * three-line preamble that can drift.
+ */
+function typeIsAvailable(cfg: PowerupConfigV2, type: PowerupType): boolean {
+	if (type.coming_soon) return false;
+	if (!(cfg.types?.[type.id]?.enabled ?? type.enabled_by_default)) return false;
+	if (!(cfg.categories[type.category] ?? true)) return false;
+	return true;
+}
+
 export type PlannedAward = { typeId: string; channel: 'ladder' | 'inverse' };
 
 export type PlanContext = {
@@ -863,19 +960,20 @@ export type PlanContext = {
  *        highest_band reduction) so the caller can CAS-claim it.
  *  - band_mode highest_band collapses the fired bands to just the top one, but the
  *    highwater still advances past all of them (the lower bands are spent).
- *  - Normal pool (same for every band): non-coming_soon, non-inverse types that are
- *    enabled (override ?? enabled_by_default), category-on, and whose per-type
- *    threshold (override ?? default_min_score_pct) ≤ submissionPct ≤ default_max_score_pct.
+ *  - Normal pool (same for every band): available types (typeIsAvailable) that are
+ *    NOT on the inverse channel and whose score is in range (scoreInRange:
+ *    min ≤ submissionPct ≤ max, inclusive, overridable per set).
  *  - x bands = up to x awards: each fired band rolls each pool type against its
  *    chance (resolveTypeChance: override ?? the type's designed default ?? 1); if
- *    any survive, one is randomly picked.
- *  - Inverse channel (per submission, ladder-independent): each enabled inverse type
- *    whose submissionPct < its bound (override ?? default_max_score_pct) rolls its
- *    chance. "Inverse" is resolved as `override.inverse ?? type.default_inverse`
- *    (piece 4) — the console has no control to set the per-set override, so a
- *    type's inverse-ness is a fixed trait (default_inverse), just like
- *    enabled_by_default; the config key exists only as a theoretical future
- *    per-set override, never written by the console today.
+ *    any survive, one is drawn by weight (weightedPick).
+ *  - Inverse channel (per submission, ladder-independent): each available inverse
+ *    type whose score is in range — the SAME predicate — rolls its chance.
+ *
+ * Since laag 1 the three properties are independent, and each means exactly one
+ * thing: RANGE says between which scores a type is eligible (scoreInRange),
+ * CHANNEL says how it is earned (isInverseChannel), CHANCE/WEIGHT say how often
+ * and in what proportion. Lifeline is now expressible as "range 0-40, channel
+ * inverse, chance 0.5" with all three independently tunable.
  */
 export function planAwards(
 	cfg: PowerupConfigV2,
@@ -899,13 +997,12 @@ export function planAwards(
 	if (cfg.band_mode === 'highest_band' && crossed.length) crossed = [Math.max(...crossed)];
 
 	const pool = types.filter((t) => {
-		const ov = cfg.types[t.id];
-		if (t.coming_soon) return false;
-		if (!(ov?.enabled ?? t.enabled_by_default)) return false;
-		if (!(cfg.categories[t.category] ?? true)) return false;
-		if (ov?.inverse ?? t.default_inverse) return false;
-		const minThreshold = ov?.threshold ?? t.default_min_score_pct;
-		return ctx.submissionPct >= minThreshold && ctx.submissionPct <= t.default_max_score_pct;
+		if (!typeIsAvailable(cfg, t)) return false;
+		// Channel, not bounds: an inverse type earns through its own route below,
+		// so it never joins the ladder's pool. Its RANGE is checked there with the
+		// very same predicate this line's neighbour uses.
+		if (isInverseChannel(cfg, t)) return false;
+		return scoreInRange(cfg, t, ctx.submissionPct);
 	});
 
 	const awards: PlannedAward[] = [];
@@ -930,14 +1027,20 @@ export function planAwards(
 	}
 
 	// Inverse channel: per-submission, independent of the ladder / highwater.
+	//
+	// The channel is what makes these types different — earned for scoring LOW,
+	// with no band behind it. Their score RANGE is not: it comes from the same
+	// scoreInRange the pool above uses, which is what finally gives an inverse
+	// type a real lower bound (0% "never played it" is now separable from 39%
+	// "played badly", if a host sets one).
+	//
+	// The range is checked BEFORE the chance roll, exactly as the old `<` was: a
+	// type out of range must not consume a rand() draw.
 	for (const t of types) {
-		const ov = cfg.types[t.id];
-		if (!(ov?.inverse ?? t.default_inverse)) continue;
-		if (t.coming_soon) continue;
-		if (!(ov?.enabled ?? t.enabled_by_default)) continue;
-		if (!(cfg.categories[t.category] ?? true)) continue;
-		const bound = ov?.threshold ?? t.default_max_score_pct;
-		if (ctx.submissionPct < bound && rand() < resolveTypeChance(cfg, t.id)) {
+		if (!isInverseChannel(cfg, t)) continue;
+		if (!typeIsAvailable(cfg, t)) continue;
+		if (!scoreInRange(cfg, t, ctx.submissionPct)) continue;
+		if (rand() < resolveTypeChance(cfg, t.id)) {
 			awards.push({ typeId: t.id, channel: 'inverse' });
 		}
 	}

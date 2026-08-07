@@ -403,8 +403,26 @@ export type ResurrectionScoreMode = 'replace' | 'best';
 
 export interface PowerupTypeOverride {
 	enabled?: boolean;
-	threshold?: number;
+	// The type's score range, INCLUSIVE at both ends and read identically for
+	// every type: it is eligible when min ≤ score% ≤ max. Absent falls back to the
+	// catalog columns (powerup_types.default_min/max_score_pct), which is what
+	// makes these keys inert until a host sets one.
+	//
+	// These REPLACE the old `threshold` key, whose meaning depended on
+	// default_inverse — lower bound for a normal type, upper bound for an inverse
+	// one, and with different inclusivity on each. Nothing reads `threshold` any
+	// more; it was removed rather than kept as a deprecated alias because no live
+	// set had ever stored one (verified by SELECT before the change), so there was
+	// nothing to stay compatible with. Resolved by resolveMinScorePct /
+	// resolveMaxScorePct (src/lib/server/powerups.ts). No console control writes
+	// them yet — set by hand in the jsonb until the UI step lands.
+	min_score_pct?: number;
+	max_score_pct?: number;
 	chance?: number;
+	// WHICH EARN CHANNEL this type uses, and nothing else since laag 1: true = the
+	// inverse channel (earned per submission for a LOW score, no band ladder),
+	// false = the ladder. It no longer implies anything about which bound is which
+	// or whether a bound is inclusive — that is entirely the range's job above.
 	inverse?: boolean;
 	// How often this type is drawn RELATIVE to the others in the same pool, once
 	// chance has decided who takes part. Absent (the default) reads as 1 via
@@ -482,15 +500,18 @@ export interface PowerupTypeConsoleRow {
 	// Threshold field's label/placeholder ("earn below" vs "earn at/above").
 	is_inverse: boolean;
 	effective_enabled: boolean;
-	// null = no override; UI shows default_min_score_pct (or default_max_score_pct
-	// for an inverse type) as a placeholder
-	effective_threshold: number | null;
+	// The score range's two halves. null = no override stored, so the matching
+	// catalog column applies and the UI shows it as a placeholder. Since laag 1
+	// these mean the same thing for every type — no inverse-dependent reading, and
+	// no single `effective_threshold` that changed sides depending on is_inverse.
+	effective_min_score_pct: number | null;
+	effective_max_score_pct: number | null;
 	effective_chance: number; // 0–1, defaults to 1.0
 	has_override: boolean;
 	// Strength config, piece 2b — the per-type override fields that only apply to
 	// one specific powerup (see PowerupTypeOverride). null means "no override
 	// stored"; the UI shows the resolver's default as a placeholder rather than
-	// baking the default in here, same pattern as effective_threshold above.
+	// baking the default in here, same pattern as the range fields above.
 	effective_dice_min: number | null; // lucky_dice
 	effective_dice_max: number | null; // lucky_dice
 	effective_reveal_budget: number | null; // x_ray

@@ -130,7 +130,11 @@ export const load: PageServerLoad = async ({ params }) => {
 			default_max_score_pct: p.default_max_score_pct,
 			is_inverse: override?.inverse ?? p.default_inverse,
 			effective_enabled: override?.enabled ?? p.enabled_by_default,
-			effective_threshold: override?.threshold ?? null,
+			// Laag 1: the score range, resolved the same way for every type. Both
+			// halves are overridable now; null means "no override, the column's value
+			// applies" and the UI shows that column as the placeholder.
+			effective_min_score_pct: override?.min_score_pct ?? null,
+			effective_max_score_pct: override?.max_score_pct ?? null,
 			effective_chance: override?.chance ?? 1,
 			has_override: !!override,
 			effective_dice_min: override?.dice_min ?? null,
@@ -634,7 +638,6 @@ export const actions: Actions = {
 		if (type.coming_soon) return fail(400, { error: 'This powerup is not yet available' });
 
 		const enabledRaw = fd.get('enabled') as string | null;
-		const thresholdRaw = (fd.get('threshold') as string | null)?.trim();
 		const chanceRaw = (fd.get('chance') as string | null)?.trim();
 		// Strength config, piece 2b — one field per type, only ever sent by that
 		// type's own advanced-block control. Each is independently optional so a
@@ -649,10 +652,12 @@ export const actions: Actions = {
 
 		const patch: PowerupTypeOverride = {};
 		if (enabledRaw !== null) patch.enabled = enabledRaw === 'true';
-		if (thresholdRaw) {
-			const v = parseInt(thresholdRaw, 10);
-			if (!isNaN(v) && v >= 0 && v <= 100) patch.threshold = v;
-		}
+		// The old `threshold` field is gone from this parse along with the control
+		// that posted it: its meaning depended on the type being inverse, which is
+		// exactly the ambiguity laag 1 removed. min_score_pct / max_score_pct
+		// replace it and are read by the planner today; the console inputs for them
+		// arrive with the range UI step, so until then a range is set by hand in the
+		// jsonb. Nothing was lost in the swap — no live set had a threshold override.
 		if (chanceRaw !== undefined && chanceRaw !== '') {
 			// Console UI is a 0–100% input; stored as a 0–1 float.
 			const pct = parseInt(chanceRaw, 10);
