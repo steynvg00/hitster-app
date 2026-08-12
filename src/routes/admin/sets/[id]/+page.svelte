@@ -1661,15 +1661,29 @@
 									{/if}
 								</div>
 
-								<!-- Earning group: the four generic knobs, in ONE form.
+								<!-- Earning group: the generic knobs, in ONE form.
 									     One form rather than one per input, for two reasons. The range is a
 									     cross-field rule (min ≤ max), which cannot be judged by a control that
-									     only knows its own value. And every input saves on blur, so four
-									     separate forms means four overlapping requests each merging onto the
-									     same pre-edit config — the race ?/saveTypeConfig now serialises. One
-									     submit carrying all four is simply the version of that with no race to
-									     lose. Every box is empty while nothing is stored: the placeholder is
-									     then the resolved default, and emptying a box CLEARS the override. -->
+									     only knows its own value. And every input saves on blur, so separate
+									     forms mean overlapping requests each merging onto the same pre-edit
+									     config — the race ?/saveTypeConfig now serialises. One submit carrying
+									     all of them is simply the version of that with no race to lose. Every
+									     box is empty while nothing is stored: the placeholder is then the
+									     resolved default, and emptying a box CLEARS the override.
+
+									     CHANCE renders on inverse types only, because that is the only place it
+									     still decides anything: the ladder rolls against LADDER_CHANCE, a
+									     constant 1 (src/lib/server/powerups.ts), so a stored chance can neither
+									     starve a ladder type nor make it rarer — weight is the ladder's rarity
+									     knob. A box that writes a value the game ignores is worse than no box.
+									     This is the same rule the strength knobs below follow: a control
+									     renders on the types it applies to and nowhere else.
+
+									     Dropping the input does NOT touch a stored chance. The compact card's
+									     on/off form already posts without these fields, and parseEarnFields
+									     reads an absent field as "this form does not own the key" and leaves it
+									     alone (src/lib/server/powerup-save.ts) — so a ladder type keeps whatever
+									     is in its jsonb, inert, and no save here can wipe a sibling key. -->
 								<div class="mb-1 text-[10px] font-semibold tracking-widest text-zinc-600 uppercase">
 									Earning
 								</div>
@@ -1683,28 +1697,30 @@
 								>
 									<input type="hidden" name="type_id" value={p.id} />
 
-									<label class="flex items-center gap-1.5">
-										<span class="text-xs text-zinc-500">Chance</span>
-										<input
-											type="number"
-											name="chance"
-											min="0"
-											max="100"
-											step="1"
-											placeholder={String(Math.round(p.chance.fallback * 100))}
-											value={p.chance.source === 'default'
-												? ''
-												: String(Math.round(p.chance.value * 100))}
-											onblur={submitOwnForm}
-											class="admin-input w-16 py-0.5 text-xs"
-										/>
-										<span class="text-xs text-zinc-600">%</span>
-										{#if p.chance.source === 'invalid'}
-											<span class="text-xs text-red-400" title="Stored value rejected">
-												ignored → {Math.round(p.chance.value * 100)}%
-											</span>
-										{/if}
-									</label>
+									{#if p.is_inverse}
+										<label class="flex items-center gap-1.5">
+											<span class="text-xs text-zinc-500">Chance</span>
+											<input
+												type="number"
+												name="chance"
+												min="0"
+												max="100"
+												step="1"
+												placeholder={String(Math.round(p.chance.fallback * 100))}
+												value={p.chance.source === 'default'
+													? ''
+													: String(Math.round(p.chance.value * 100))}
+												onblur={submitOwnForm}
+												class="admin-input w-16 py-0.5 text-xs"
+											/>
+											<span class="text-xs text-zinc-600">%</span>
+											{#if p.chance.source === 'invalid'}
+												<span class="text-xs text-red-400" title="Stored value rejected">
+													ignored → {Math.round(p.chance.value * 100)}%
+												</span>
+											{/if}
+										</label>
+									{/if}
 
 									<label class="flex items-center gap-1.5">
 										<span class="text-xs text-zinc-500">Weight</span>
@@ -1768,15 +1784,31 @@
 										{/if}
 									</label>
 
-									<!-- What the game will actually do with the four boxes above, which is
-										     not the same thing as what is typed in them: an empty box means a
-										     default, and a rejected value means the default too. -->
+									<!-- What the game will actually do with the boxes above, which is not the
+										     same thing as what is typed in them: an empty box means a default, and
+										     a rejected value means the default too. Chance is named here only for
+										     the channel that still reads one — on the ladder every in-range type
+										     is in every draw, so there is no rate left to report. -->
 									<span class="text-xs text-zinc-600">
-										in play: {p.min_score_pct.value}–{p.max_score_pct.value}% ·
-										{Math.round(p.chance.value * 100)}% chance
-										{#if !p.is_inverse}· weight {p.weight.value}{/if}
-										· {p.is_inverse ? 'inverse channel' : 'ladder'}
+										in play: {p.min_score_pct.value}–{p.max_score_pct.value}%
+										{#if p.is_inverse}
+											· {Math.round(p.chance.value * 100)}% chance · inverse channel
+										{:else}
+											· weight {p.weight.value} · ladder
+										{/if}
 									</span>
+
+									<!-- A chance stored before the ladder guarantee landed. It is inert now, and
+										     saying nothing would leave a host reading a set that plays differently
+										     from what they set. Not cleaned up on their behalf: the key is
+										     harmless, and rewriting every set's config to drop it is a far bigger
+										     risk than a dead value (see LADDER_CHANCE). -->
+									{#if !p.is_inverse && p.chance.source === 'override'}
+										<span class="text-xs text-amber-400/80">
+											stored chance {Math.round(p.chance.value * 100)}% is ignored — this powerup is
+											in every draw it is in range for
+										</span>
+									{/if}
 								</form>
 
 								{#if p.modifier_endpoint === 'weight' ? p.weight_modifier : p.chance_modifier}
