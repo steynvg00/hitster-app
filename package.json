@@ -43,7 +43,8 @@
 		"bots:verify-threshold-range": "tsx tests/bots/verify-threshold-range.ts",
 		"bots:verify-chance-modifier": "tsx tests/bots/verify-chance-modifier.ts",
 		"bots:verify-console-row-resolved": "tsx tests/bots/verify-console-row-resolved.ts",
-		"bots:verify-earn-form": "tsx tests/bots/verify-earn-form.ts"
+		"bots:verify-earn-form": "tsx tests/bots/verify-earn-form.ts",
+		"bots:verify-ladder-guarantee": "tsx tests/bots/verify-ladder-guarantee.ts"
 	},
 	"devDependencies": {
 		"@eslint/compat": "^2.0.4",
