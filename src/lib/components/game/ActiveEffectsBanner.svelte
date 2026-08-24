@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { supabaseBrowser } from '$lib/supabase-browser';
 	import { doubleDownMultiplier } from '$lib/powerups-meta';
+	import { powerupIcon } from '$lib/mixup-assets';
 
 	type ActiveEffect = {
 		id: string;
@@ -42,25 +43,29 @@
 	}
 
 	const EFFECT_LABEL: Record<string, string> = {
-		bonus_points: '+5 ready',
-		single_event_mult: 'Multiplier ready',
-		hard_gaan: '🔥 Hard gaan',
-		shield: '🛡 Shield ready',
-		insurance: '🪙 Insurance ready',
-		free_answer: '💡 Free answer',
-		x_ray: '🔎 X-Ray',
-		time_boost: '⏱ Time boost',
-		double_down: '🎰 Double Down',
+		bonus_points: '+5 KLAAR',
+		single_event_mult: 'MULTIPLIER KLAAR',
+		hard_gaan: 'HARD GAAN',
+		shield: 'SCHILD ACTIEF',
+		insurance: 'VERZEKERING KLAAR',
+		free_answer: 'GRATIS ANTWOORD',
+		x_ray: 'X-RAY',
+		time_boost: 'TIME BOOST',
+		double_down: 'DOUBLE DOWN',
 		// tap_to_break (stuk 3) is the one offensive attack that ISN'T pre-consumed,
 		// so it survives to show here — useful on /team where the challenge page's
 		// full-screen lock overlay isn't mounted.
-		tap_to_break: '🔒 Locked — tap to break free'
+		tap_to_break: 'VERGRENDELD — TIK JE VRIJ'
 	};
+
+	// Welke pil magenta is: een effect dat een ANDER team op jullie afvuurde.
+	// Puur kleurkeuze — welke rijen hier staan bepaalt de filter hierboven.
+	const INCOMING = new Set(['tap_to_break']);
 
 	function label(e: ActiveEffect): string {
 		const base = EFFECT_LABEL[e.effect_type] ?? e.effect_type;
 		if (e.effect_type === 'hard_gaan' && e.expires_at) {
-			return `${base} — ${fmtCountdown(e.expires_at)} left`;
+			return `${base} · ${fmtCountdown(e.expires_at)}`;
 		}
 		if (e.effect_type === 'single_event_mult') {
 			// The multiplier is ROLLED at activation (x1.2/x1.4/x1.6), so the pill
@@ -68,11 +73,11 @@
 			// the generic base label rather than naming a number nobody rolled.
 			const m = e.payload.multiplier as number | undefined;
 			if (typeof m !== 'number') return base;
-			return `${m}× next submission`;
+			return `${m}x VOLGENDE INZENDING`;
 		}
 		if (e.effect_type === 'bonus_points') {
 			const v = (e.payload.value as number | undefined) ?? 5;
-			return `+${v} next submission`;
+			return `+${v} VOLGENDE INZENDING`;
 		}
 		if (e.effect_type === 'x_ray') {
 			// The remaining budget IS the pill's information — an X-Ray with 3 reveals
@@ -81,14 +86,14 @@
 			// refetches on any team_effects change, so it counts down live.
 			const n = e.payload.reveals_remaining as number | undefined;
 			if (typeof n !== 'number') return base;
-			return `${base} — ${n} reveal${n === 1 ? '' : 's'} left`;
+			return `${base} · NOG ${n}`;
 		}
 		if (e.effect_type === 'double_down') {
 			// The prediction is the whole point of the pill: a team that has bet must be
 			// able to see WHAT it bet while playing, not just that a bet is live.
 			const g = e.payload.predicted_pct as number | undefined;
 			if (typeof g !== 'number') return base;
-			return `${base} — ${g}% predicted (×${doubleDownMultiplier(g, 100)} / ×${doubleDownMultiplier(g, 0)})`;
+			return `${base} · ${g}% (x${doubleDownMultiplier(g, 100)} / x${doubleDownMultiplier(g, 0)})`;
 		}
 		return base;
 	}
@@ -134,14 +139,54 @@
 	});
 </script>
 
+<!--
+	De effect-pillen uit scherm 1 van de designbron (fxPillStyle / fxPillWarn).
+	PUUR PRESENTATIE: welke rijen hier staan, de filter erop en de realtime
+	refetch zijn ongewijzigd — alleen vorm, kleur en taal veranderen.
+-->
 {#if effects.length > 0}
-	<div class="flex flex-wrap gap-2 py-1">
+	<div class="flex flex-wrap gap-1.5 py-1">
 		{#each effects as e (e.id)}
-			<div
-				class="flex items-center gap-1.5 rounded-lg border border-amber-600/40 bg-amber-500/10 px-2.5 py-1 text-xs font-semibold text-amber-300"
-			>
+			<span class="fx-pill" class:fx-pill--warn={INCOMING.has(e.effect_type)}>
+				<!-- Elke effect_type die hier een label heeft is ook een powerup-id, dus
+				     het icoon bestaat. Een onbekend type valt terug op alleen tekst. -->
+				<img
+					src={powerupIcon(e.effect_type)}
+					alt=""
+					class="fx-pill-icon"
+					onerror={(ev) => ((ev.currentTarget as HTMLImageElement).style.display = 'none')}
+				/>
 				{label(e)}
-			</div>
+			</span>
 		{/each}
 	</div>
 {/if}
+
+<style>
+	.fx-pill {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		border-radius: 999px;
+		padding: 7px 12px;
+		font-family: var(--font-ui);
+		font-weight: 700;
+		font-size: 10px;
+		letter-spacing: 0.08em;
+		background: rgba(0, 229, 255, 0.07);
+		border: 1px solid rgba(0, 229, 255, 0.4);
+		color: #6fe8ff;
+	}
+
+	.fx-pill--warn {
+		background: rgba(255, 45, 170, 0.07);
+		border-color: rgba(255, 45, 170, 0.4);
+		color: #ff6fc4;
+	}
+
+	.fx-pill-icon {
+		width: 16px;
+		height: 16px;
+		object-fit: contain;
+	}
+</style>

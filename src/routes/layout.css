@@ -155,3 +155,81 @@ body {
 select {
 	color-scheme: dark;
 }
+
+/* ══════════════════════════════════════════════════════════════════
+   POWERUP-LAAG (redesign fase 4)
+   Bron: design/M!XUP Powerup-Laag.dc.html — de knop-, paneel- en
+   scrim-recepten die in alle 9 schermen terugkomen. Puur presentatie.
+══════════════════════════════════════════════════════════════════ */
+
+/* Paneelvulling van elke powerup-modal en de bottom-sheet. */
+@utility mixup-panel {
+	background: linear-gradient(160deg, #1a1440 0%, #0e0b28 100%);
+}
+
+/* Scrim onder een powerup-overlay. `blur` is de variant met
+   backdrop-filter (doelkiezer); de rest van de schermen dimt alleen. */
+@utility mixup-scrim {
+	background: rgba(11, 11, 31, 0.6);
+}
+
+@utility mixup-scrim-blur {
+	background: rgba(11, 11, 31, 0.6);
+	backdrop-filter: blur(4px);
+	-webkit-backdrop-filter: blur(4px);
+}
+
+/* ── Knoppen ──────────────────────────────────────────────────────
+   Designbron: btn/primary/secondary/ghost uit renderVals(). Hoogte 52,
+   radius 24, Rubik 800/15px, letter-spacing 0.06em, uppercase. Pas de
+   hoogte met een utility aan waar het design afwijkt (h-11, h-16, …). */
+@utility mixup-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	height: 52px;
+	border-radius: 24px;
+	corner-shape: squircle;
+	border: 1px solid transparent;
+	font-family: var(--font-ui);
+	font-weight: 800;
+	font-size: 15px;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	cursor: pointer;
+	text-align: center;
+}
+
+@utility mixup-btn-primary {
+	background: linear-gradient(90deg, #ffe600, #ff7f11);
+	color: #1a1400;
+	box-shadow: 0 10px 30px rgba(255, 127, 17, 0.35);
+}
+
+@utility mixup-btn-secondary {
+	background: rgba(255, 230, 0, 0.1);
+	color: #ffe600;
+	border: 1px solid #ffe600;
+}
+
+@utility mixup-btn-ghost {
+	background: rgba(229, 242, 255, 0.06);
+	color: #8e9bc9;
+	border: 1px solid rgba(229, 242, 255, 0.2);
+}
+
+/* Waarschuwingsbalk in een activatiemodal (amber). */
+@utility mixup-warn {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	background: rgba(255, 183, 0, 0.1);
+	border: 1px solid rgba(255, 183, 0, 0.45);
+	border-radius: 12px;
+	corner-shape: squircle;
+	padding: 8px 12px;
+	font-family: var(--font-ui);
+	font-weight: 700;
+	font-size: 12px;
+	color: #ffc24b;
+}

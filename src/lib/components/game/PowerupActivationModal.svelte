@@ -14,6 +14,17 @@
 	} from '$lib/powerups-meta';
 	import { supabaseBrowser } from '$lib/supabase-browser';
 	import { goto } from '$app/navigation';
+	import { powerupIcon } from '$lib/mixup-assets';
+	import { portal } from '$lib/portal';
+	import { teamHex } from '$lib/team-theme';
+	import {
+		fieldLabel,
+		fireVerb,
+		powerupAccent,
+		powerupDesc,
+		powerupName,
+		powerupWarn
+	} from '$lib/powerups-copy';
 
 	type PowerupType = {
 		id: string;
@@ -22,6 +33,7 @@
 		description: string | null;
 		holdable: boolean;
 		immediate_use: boolean;
+		category?: string | null;
 	};
 
 	type TargetTeam = {
@@ -125,15 +137,14 @@
 	// returning a roll gets the same treatment without another branch here.
 	const showsRoll = $derived(powerupType.id === 'lucky_dice');
 
-	const TEAM_HEX: Record<string, string> = {
-		blue: '#3b82f6',
-		yellow: '#eab308',
-		green: '#22c55e',
-		red: '#ef4444',
-		indigo: '#6366f1',
-		black: '#1e293b'
-	};
+	// Redesign fase 4: de accentkleur van dit scherm (rand, glow, gekozen optie)
+	// en de kop-copy. Alleen vormgeving en tekst — de takken hieronder zijn
+	// ongewijzigd.
+	const accent = $derived(powerupAccent(powerupType.id, powerupType.category));
+	const titleNl = $derived(powerupName(powerupType.id, powerupType.name));
 
+	// Engelse fallback-copy uit de catalogus. Blijft staan voor een type dat nog
+	// geen Nederlandse tekst heeft; POWERUP_COPY_NL gaat voor.
 	const EFFECT_COPY: Record<string, { action: string; warning?: string }> = {
 		bonus_points: {
 			action: '+5 points added to your next submission total.'
@@ -210,7 +221,15 @@
 		}
 	};
 
-	const copy = $derived(EFFECT_COPY[powerupType.id] ?? { action: powerupType.description ?? '' });
+	// Nederlands waar het bestaat, anders de Engelse catalogustekst hierboven.
+	const copy = $derived({
+		action:
+			powerupDesc(powerupType.id, null) ||
+			EFFECT_COPY[powerupType.id]?.action ||
+			powerupType.description ||
+			'',
+		warning: powerupWarn(powerupType.id) ?? EFFECT_COPY[powerupType.id]?.warning ?? null
+	});
 	const needsFieldPicker = $derived(powerupType.id === 'free_answer');
 
 	// ── free_tab tab picker ───────────────────────────────────────────────────
@@ -257,6 +276,18 @@
 	// the team sees the exact multipliers it is betting on, not a restated rule.
 	const hitMultiplier = $derived(doubleDownMultiplier(predictedPct, 100));
 	const missMultiplier = $derived(doubleDownMultiplier(predictedPct, 0));
+	// Designbron scherm 4: een balk van gelijke segmenten in plaats van een kale
+	// range-input. PUUR WEERGAVE — de balk schrijft dezelfde `predictedPct` als
+	// de slider, die eronder blijft staan voor de fijnregeling (1% stappen), dus
+	// het team kan nog exact evenveel uitdrukken als eerst.
+	const DD_SEGMENTS = 10;
+	const ddStep = (DOUBLE_DOWN_MAX_PCT - DOUBLE_DOWN_MIN_PCT) / DD_SEGMENTS;
+	const ddSegments = $derived(
+		Array.from({ length: DD_SEGMENTS }, (_, i) => {
+			const upper = DOUBLE_DOWN_MIN_PCT + (i + 1) * ddStep;
+			return { upper, filled: predictedPct >= upper - ddStep / 2 };
+		})
+	);
 	// ── resurrection challenge picker ─────────────────────────────────────────
 	//
 	// The only picker that chooses a challenge rather than something INSIDE the
@@ -430,218 +461,244 @@
 	};
 </script>
 
-<!-- Backdrop -->
+<!--
+	Redesign fase 4 — schermen 2 (doelkiezer), 3 (veld-/tabkiezer + uitkomsten)
+	en 4 (double-down voorspelling).
+
+	PUUR PRESENTATIE. Onveranderd: elke `$derived` hierboven, `handleSubmit`,
+	het <form method="POST" action={activateAction}> met exact dezelfde hidden
+	inputs (team_powerup_id, current_challenge_id, field, tab_id, slot_index,
+	target_team_id, predicted_pct, reveal_targets, resurrection_challenge_id),
+	de disabled-voorwaarden op de knop en de drie uitkomststaten
+	(sent / blocked / rolled).
+-->
 <div
-	class="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 p-4 backdrop-blur-sm"
+	use:portal
+	class="fixed inset-0 z-50 flex items-center justify-center p-[18px] mixup-scrim-blur"
 	role="dialog"
 	aria-modal="true"
+	aria-label={titleNl}
 >
-	<div class="w-full max-w-sm rounded-2xl border border-zinc-700 bg-zinc-900 p-6 shadow-2xl">
-		<!-- Header -->
-		<div class="mb-4 flex items-center gap-3">
-			{#if powerupType.icon}
-				<span class="text-3xl leading-none">{powerupType.icon}</span>
-			{/if}
-			<div>
-				<p class="text-xs font-bold tracking-widest text-amber-400 uppercase">Activate Powerup</p>
-				<p class="text-lg font-black text-white">{powerupType.name}</p>
+	<div class="modal-card mixup-panel squircle" style="--accent: {accent};">
+		<!-- Kop: icoon + naam + wat het doet -->
+		<div class="flex items-center gap-3">
+			<img
+				src={powerupIcon(powerupType.id)}
+				alt=""
+				class="h-14 w-14 shrink-0 object-contain"
+				onerror={(e) => ((e.currentTarget as HTMLImageElement).style.visibility = 'hidden')}
+			/>
+			<div class="min-w-0">
+				<div
+					class="font-display text-[28px] leading-none font-black text-mixup-paper uppercase"
+					style="overflow-wrap: anywhere;"
+				>
+					{titleNl}
+				</div>
+				{#if resultState === 'idle'}
+					<div class="mt-1 text-xs leading-snug font-medium text-mixup-muted">{copy.action}</div>
+				{/if}
 			</div>
 		</div>
 
 		{#if resultState === 'rolled'}
-			<!-- lucky_dice: the roll, and the score it already moved. -->
-			<div class="mb-4 rounded-xl border border-amber-600/50 bg-amber-500/10 p-5 text-center">
-				<p class="text-5xl leading-none">🎲</p>
-				<p class="mt-3 text-3xl font-black text-amber-300">You rolled {rolled.value ?? '?'}!</p>
-				<p class="mt-2 text-sm font-semibold text-amber-200">
-					+{rolled.value ?? 0} points, added to your score right now
-				</p>
-				<p class="mt-1 text-xs text-zinc-400">
-					{#if typeof rolled.new_score === 'number'}
-						Your total is now {rolled.new_score}.
-					{/if}
-					{#if typeof rolled.dice_min === 'number' && typeof rolled.dice_max === 'number'}
-						(rolled out of {rolled.dice_min}–{rolled.dice_max})
-					{/if}
-				</p>
+			<!-- Scherm 3, uitkomst A — lucky_dice: de worp, en de score die hij al
+			     verzette. Beide getallen komen uit de payload die de server schreef. -->
+			<div class="outcome outcome--green squircle">
+				<img src={powerupIcon('lucky_dice')} alt="" class="h-[26px] w-[26px] object-contain" />
+				<div class="min-w-0">
+					<div class="text-xs font-extrabold tracking-[0.08em] text-mixup-green">
+						GEROLD: {rolled.value ?? '?'}
+					</div>
+					<div class="text-[11px] font-medium text-mixup-muted">
+						+{rolled.value ?? 0} punten, direct op je score
+						{#if typeof rolled.dice_min === 'number' && typeof rolled.dice_max === 'number'}
+							(uit {rolled.dice_min}–{rolled.dice_max})
+						{/if}
+					</div>
+				</div>
 			</div>
+			{#if typeof rolled.new_score === 'number'}
+				<div class="text-center font-display text-[70px] leading-none font-black text-mixup-green">
+					{rolled.new_score}
+					<span class="font-ui text-[11px] font-bold tracking-[0.16em] text-mixup-muted"
+						>TOTAAL</span
+					>
+				</div>
+			{/if}
 			<button
 				type="button"
+				class="mixup-btn w-full mixup-btn-primary"
 				onclick={() => onclose(true)}
-				class="w-full rounded-xl bg-amber-400 py-2.5 text-sm font-bold text-zinc-950 transition-colors hover:bg-amber-300"
 			>
-				Nice!
+				Lekker!
 			</button>
 		{:else if resultState !== 'idle'}
-			<!-- Caster-side confirmation for a targeted attack -->
-			<div class="mb-4 rounded-xl border border-zinc-700 bg-zinc-800/60 p-4 text-center">
-				{#if resultState === 'blocked'}
-					<p class="text-3xl">🛡️</p>
-					<p class="mt-2 text-sm font-bold text-amber-300">Blocked by their shield!</p>
-					<p class="mt-1 text-xs text-zinc-400">
-						{targetName} had a shield up — it absorbed your {powerupType.name}. Powerup spent.
-					</p>
-				{:else}
-					<p class="text-3xl">{powerupType.icon ?? '🥂'}</p>
-					<p class="mt-2 text-sm font-bold text-amber-300">Sent to {targetName}!</p>
-				{/if}
-			</div>
+			<!-- Scherm 3, uitkomst B en C — verstuurd of geblokkeerd. -->
+			{#if resultState === 'blocked'}
+				<div class="outcome outcome--magenta squircle">
+					<img src={powerupIcon('shield')} alt="" class="h-[26px] w-[26px] object-contain" />
+					<div class="min-w-0">
+						<div class="text-xs font-extrabold tracking-[0.08em]" style="color:#FF6FC4;">
+							GEBLOKKEERD DOOR HUN SCHILD
+						</div>
+						<div class="text-[11px] font-medium text-mixup-muted">
+							{targetName} had een schild op. De powerup is verbruikt.
+						</div>
+					</div>
+				</div>
+			{:else}
+				<div class="outcome outcome--cyan squircle">
+					<span class="text-[22px] leading-none">📨</span>
+					<div class="text-xs font-extrabold tracking-[0.08em]" style="color:#6FE8FF;">
+						VERSTUURD NAAR {targetName.toUpperCase()}
+					</div>
+				</div>
+			{/if}
 			<button
 				type="button"
+				class="mixup-btn w-full mixup-btn-primary"
 				onclick={() => onclose(true)}
-				class="w-full rounded-xl bg-amber-400 py-2.5 text-sm font-bold text-zinc-950 transition-colors hover:bg-amber-300"
 			>
 				OK
 			</button>
 		{:else}
-			<!-- Effect description -->
-			<div class="mb-4 rounded-xl border border-zinc-700 bg-zinc-800/60 p-3">
-				<p class="text-sm text-zinc-300">{copy.action}</p>
-				{#if copy.warning}
-					<p class="mt-1.5 text-xs text-amber-400/80">{copy.warning}</p>
-				{/if}
-			</div>
+			{#if copy.warning}
+				<div class="mixup-warn"><span class="text-[13px]">⚠️</span><span>{copy.warning}</span></div>
+			{/if}
 
-			<!-- Target picker for offensive/social powerups -->
+			<!-- ── Scherm 2 — doelkiezer ──────────────────────────────────────────
+			     De lijst is exact `targetTeams` zoals de aanroeper hem aanlevert en
+			     `canTarget()` beslist onveranderd wie aanklikbaar is. Alleen de
+			     opmaak van een tegel is nieuw. -->
 			{#if needsTarget}
-				<div class="mb-4">
-					<p class="mb-1.5 text-xs font-semibold text-zinc-400">Choose a team to target</p>
-					{#if targetTeams.length === 0}
-						<p class="rounded-lg bg-zinc-800 px-3 py-2 text-xs text-zinc-500">
-							No other teams available to target.
-						</p>
+				{#if targetTeams.length === 0}
+					<p class="empty squircle">Geen andere teams om op te richten.</p>
+				{:else}
+					<div class="grid grid-cols-2 gap-2.5">
+						{#each targetTeams as t (t.id)}
+							{@const targetable = canTarget(t)}
+							<button
+								type="button"
+								class="target squircle"
+								class:target--on={selectedTargetId === t.id}
+								class:target--off={!targetable}
+								disabled={!targetable}
+								onclick={() => targetable && (selectedTargetId = t.id)}
+							>
+								<span class="dot" style="--dot: {teamHex(t.color)};"></span>
+								<span class="target-label">{t.display_name}</span>
+								<span class="target-sub" style="color: {targetable ? '#2BD97A' : '#5A648C'};">
+									{targetable ? 'IN CHALLENGE' : 'NIET BEZIG'}
+								</span>
+							</button>
+						{/each}
+					</div>
+				{/if}
+			{/if}
+
+			<!-- ── Scherm 3 — veldkiezer (free_answer) ───────────────────────────── -->
+			{#if needsFieldPicker && revealableFields.length > 0}
+				<div class="flex flex-col gap-2.5">
+					<span class="section-label">KIES EEN VELD</span>
+					<div class="flex gap-2">
+						{#each revealableFields as f (f)}
+							<button
+								type="button"
+								class="pick pick--yellow squircle"
+								class:pick--on={selectedField === f}
+								onclick={() => (selectedField = f)}
+							>
+								{fieldLabel(f)}
+							</button>
+						{/each}
+					</div>
+					<p class="hint">De onthulling wordt écht ingevuld in jullie antwoord.</p>
+				</div>
+			{/if}
+
+			<!-- ── Scherm 3 — tabkiezer (free_tab) ───────────────────────────────── -->
+			{#if needsTabPicker}
+				<div class="flex flex-col gap-2.5">
+					<span class="section-label">KIES EEN TRACK</span>
+					{#if revealTabs.length === 0}
+						<p class="empty squircle">Deze challenge heeft geen tabs.</p>
 					{:else}
-						<div class="grid grid-cols-2 gap-2">
-							{#each targetTeams as t (t.id)}
-								{@const targetable = canTarget(t)}
+						<div class="flex gap-2 overflow-x-auto">
+							{#each revealTabs as t (t.id)}
 								<button
 									type="button"
-									disabled={!targetable}
-									onclick={() => targetable && (selectedTargetId = t.id)}
-									title={targetable ? '' : 'Not in a challenge right now'}
-									class="flex flex-col gap-0.5 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors {!targetable
-										? 'cursor-not-allowed border-zinc-800 bg-zinc-900 text-zinc-600'
-										: selectedTargetId === t.id
-											? 'border-amber-400 bg-amber-400/10 text-white'
-											: 'border-zinc-700 bg-zinc-800 text-zinc-300 hover:border-zinc-500'}"
+									class="pick pick--violet squircle"
+									class:pick--on={selectedTabId === t.id}
+									onclick={() => (selectedTabId = t.id)}
 								>
-									<span class="flex items-center gap-2">
-										<span
-											class="h-3.5 w-3.5 shrink-0 rounded-full {targetable ? '' : 'opacity-40'}"
-											style="background-color: {TEAM_HEX[t.color] ?? '#6b7280'};"
-										></span>
-										<span class="truncate">{t.display_name}</span>
-									</span>
-									{#if !targetable}
-										<span class="pl-5.5 text-[10px] font-normal text-zinc-600"
-											>not in a challenge</span
-										>
-									{/if}
+									{t.label}
 								</button>
 							{/each}
 						</div>
-					{/if}
-				</div>
-			{/if}
-
-			<!-- Field picker for free_answer -->
-			{#if needsFieldPicker && revealableFields.length > 0}
-				<div class="mb-4">
-					<label class="mb-1.5 block text-xs font-semibold text-zinc-400"
-						>Choose field to reveal</label
-					>
-					<select
-						bind:value={selectedField}
-						class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200 outline-none focus:border-amber-500"
-					>
-						{#each revealableFields as f}
-							<option value={f}>{f.replace('_', ' ')}</option>
-						{/each}
-					</select>
-				</div>
-			{/if}
-
-			<!-- Tab picker for free_tab: one tab, every answer on it -->
-			{#if needsTabPicker}
-				<div class="mb-4">
-					<label for="free-tab-pick" class="mb-1.5 block text-xs font-semibold text-zinc-400">
-						Choose a tab to reveal
-					</label>
-					{#if revealTabs.length === 0}
-						<p class="rounded-lg bg-zinc-800 px-3 py-2 text-xs text-zinc-500">
-							No tabs available on this challenge.
-						</p>
-					{:else}
-						<select
-							id="free-tab-pick"
-							bind:value={selectedTabId}
-							class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200 outline-none focus:border-amber-500"
-						>
-							{#each revealTabs as t (t.id)}
-								<option value={t.id}>{t.label}</option>
-							{/each}
-						</select>
 						{#if revealTargets.length > 0}
-							<p class="mt-1.5 text-xs text-zinc-500">
-								Reveals {revealTargets.length}
-								{revealTargets.length === 1 ? 'answer' : 'answers'} on this tab.
-							</p>
+							<div class="preview squircle">
+								» {selectedTab?.label ?? ''} · {revealTargets.length}
+								{revealTargets.length === 1 ? 'antwoord' : 'antwoorden'} onthuld
+							</div>
 						{/if}
 					{/if}
 				</div>
 			{/if}
 
-			<!-- Challenge picker for resurrection: which finished challenge to re-open -->
+			<!-- ── Challenge-kiezer (resurrection) ───────────────────────────────── -->
 			{#if needsChallengePicker}
-				<div class="mb-4">
-					<label for="resurrect-pick" class="mb-1.5 block text-xs font-semibold text-zinc-400">
-						Which challenge comes back?
-					</label>
+				<div class="flex flex-col gap-2.5">
+					<span class="section-label">WELKE CHALLENGE KOMT TERUG?</span>
 					{#if resurrectionEmpty}
-						<p class="rounded-lg bg-zinc-800 px-3 py-2 text-xs text-zinc-500">
-							You have not finished a challenge yet — there is nothing to bring back. Your
-							Resurrection stays in storage.
+						<p class="empty squircle">
+							Jullie hebben nog geen challenge afgerond — er is niets om terug te halen. De
+							Resurrection blijft in bezit.
 						</p>
 					{:else}
-						<select
-							id="resurrect-pick"
-							bind:value={selectedResurrectionId}
-							class="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200 outline-none focus:border-amber-500"
-						>
+						<div class="flex flex-col gap-2">
 							{#each resurrectableChallenges as c (c.id)}
-								<option value={c.id}>{c.title} — scored {c.oldFinal}</option>
-							{/each}
-						</select>
-						{#if selectedResurrection}
-							<!-- The terms, stated before the click: what is at stake and how long
-							     they get. Both numbers come from the server. -->
-							<p class="mt-1.5 text-xs text-zinc-500">
-								You scored <span class="font-bold text-amber-300"
-									>{selectedResurrection.oldFinal}</span
+								<button
+									type="button"
+									class="row-pick squircle"
+									class:row-pick--on={selectedResurrectionId === c.id}
+									onclick={() => (selectedResurrectionId = c.id)}
 								>
-								on this one.
-								{#if selectedResurrection.retrySeconds !== null}
-									You get <span class="font-bold text-amber-300"
-										>{selectedResurrection.retrySeconds}s</span
-									> to beat it.
-								{:else}
-									This challenge has no timer — take your time.
-								{/if}
-							</p>
+									<span class="truncate">{c.title}</span>
+									<span class="shrink-0 text-mixup-yellow">{c.oldFinal} ptn</span>
+								</button>
+							{/each}
+						</div>
+						{#if selectedResurrection}
+							<div class="preview squircle">
+								» {selectedResurrection.retrySeconds !== null
+									? `${selectedResurrection.retrySeconds}s om ${selectedResurrection.oldFinal} te verslaan`
+									: `geen timer — neem de tijd om ${selectedResurrection.oldFinal} te verslaan`}
+							</div>
 						{/if}
 					{/if}
 				</div>
 			{/if}
 
-			<!-- Prediction slider for double_down -->
+			<!-- ── Scherm 4 — double-down voorspellingsslider ────────────────────── -->
 			{#if needsPrediction}
-				<div class="mb-4">
-					<div class="mb-1.5 flex items-baseline justify-between">
-						<label for="double-down-pct" class="text-xs font-semibold text-zinc-400">
-							Your prediction
-						</label>
-						<span class="text-2xl font-black text-amber-300">{predictedPct}%</span>
+				<div class="flex flex-col gap-3.5">
+					<div class="dd-value text-center font-display text-[70px] leading-none font-black">
+						{predictedPct}<span class="text-[28px] text-mixup-muted"> %</span>
 					</div>
+					<div class="flex gap-1.5">
+						{#each ddSegments as seg, i (i)}
+							<button
+								type="button"
+								class="dd-step squircle"
+								class:dd-step--on={seg.filled}
+								aria-label="Voorspel {seg.upper}%"
+								onclick={() => (predictedPct = seg.upper)}
+							></button>
+						{/each}
+					</div>
+					<!-- De fijnregeling. Blijft staan: de balk hierboven zet hele stappen,
+					     dit zet elk percentage — precies wat de invoer eerder al kon. -->
 					<input
 						id="double-down-pct"
 						type="range"
@@ -649,46 +706,47 @@
 						max={DOUBLE_DOWN_MAX_PCT}
 						step="1"
 						bind:value={predictedPct}
-						class="w-full accent-amber-400"
+						aria-label="Jullie voorspelling in procenten"
+						class="dd-range"
 					/>
-					<div class="mt-3 grid grid-cols-2 gap-2 text-center">
-						<div class="rounded-lg border border-green-700/50 bg-green-950/40 px-2 py-1.5">
-							<p class="text-[10px] font-semibold tracking-wide text-green-300/80 uppercase">
-								Score {predictedPct}% or more
-							</p>
-							<p class="text-sm font-bold text-green-300">×{hitMultiplier.toFixed(2)}</p>
+					<div class="flex gap-2.5">
+						<div class="dd-out dd-out--win squircle">
+							<div class="font-display text-[26px] leading-none font-black text-mixup-green">
+								×{hitMultiplier.toFixed(2)}
+							</div>
+							<div class="dd-out-label">BIJ RAAK</div>
 						</div>
-						<div class="rounded-lg border border-red-800/50 bg-red-950/40 px-2 py-1.5">
-							<p class="text-[10px] font-semibold tracking-wide text-red-300/80 uppercase">
-								Score less
-							</p>
-							<p class="text-sm font-bold text-red-300">×{missMultiplier.toFixed(2)}</p>
+						<div class="dd-out dd-out--lose squircle">
+							<div class="font-display text-[26px] leading-none font-black text-mixup-magenta">
+								×{missMultiplier.toFixed(2)}
+							</div>
+							<div class="dd-out-label">BIJ MIS</div>
 						</div>
 					</div>
 					{#if predictedPct === 0}
-						<p class="mt-2 text-xs text-zinc-500">
-							At 0% the bet does nothing — your score is unchanged either way.
-						</p>
+						<p class="hint">Op 0% doet de inzet niets — je score verandert hoe dan ook niet.</p>
 					{/if}
 				</div>
 			{/if}
 
-			<!-- Gate warning -->
 			{#if gated}
-				<p class="mb-4 rounded-lg bg-red-950/60 px-3 py-2 text-xs text-red-400">
-					This powerup can only be activated during an active challenge.
-				</p>
+				<div
+					class="mixup-warn"
+					style="border-color: rgba(255,45,170,0.5); background: rgba(255,45,170,0.08); color:#FF6FC4;"
+				>
+					<span class="text-[13px]">⛔</span>
+					<span>Deze powerup werkt alleen tijdens een lopende challenge.</span>
+				</div>
 			{/if}
 
-			<!-- Error -->
 			{#if activateError}
-				<p class="mb-3 text-xs text-red-400">{activateError}</p>
+				<p class="text-xs font-semibold text-mixup-magenta">{activateError}</p>
 			{/if}
 
-			<!-- Actions -->
-			<div class="flex gap-3">
+			<!-- Actieknoppen. Het <form> en alle hidden inputs zijn ongewijzigd. -->
+			<div class="flex gap-2.5">
 				{#if !gated}
-					<form method="POST" action={activateAction} use:enhance={handleSubmit} class="flex-1">
+					<form method="POST" action={activateAction} use:enhance={handleSubmit} class="flex-[1.4]">
 						<input type="hidden" name="team_powerup_id" value={teamPowerupId} />
 						{#if currentChallengeId}
 							<input type="hidden" name="current_challenge_id" value={currentChallengeId} />
@@ -730,22 +788,273 @@
 								targetMissing ||
 								targetsMissing ||
 								(needsChallengePicker && !selectedResurrectionId)}
-							class="w-full rounded-xl bg-amber-400 py-2.5 text-sm font-bold text-zinc-950 transition-colors hover:bg-amber-300 disabled:opacity-50"
+							class="mixup-btn w-full {targetMissing
+								? 'mixup-btn-ghost'
+								: 'mixup-btn-primary'} disabled:cursor-not-allowed disabled:opacity-50"
 						>
-							{activating ? 'Activating…' : 'Activate'}
+							{#if activating}
+								Bezig…
+							{:else if needsTarget}
+								{targetMissing
+									? 'Kies eerst een doelwit'
+									: `${fireVerb(powerupType.id)} ${targetName}`}
+							{:else if needsPrediction}
+								Zet in op {predictedPct}%
+							{:else}
+								Activeer
+							{/if}
 						</button>
 					</form>
 				{/if}
 				<button
 					type="button"
 					onclick={() => onclose(false)}
-					class="rounded-xl border border-zinc-700 px-4 py-2.5 text-sm font-semibold text-zinc-400 transition-colors hover:border-zinc-500 hover:text-white {gated
-						? 'flex-1'
-						: ''}"
+					class="mixup-btn mixup-btn-ghost {gated ? 'flex-1' : 'flex-1 px-4'}"
 				>
-					Cancel
+					{gated ? 'Sluit' : 'Terug'}
 				</button>
 			</div>
 		{/if}
 	</div>
 </div>
+
+<style>
+	/* Designbron: linear-gradient(160deg,#1A1440,#0E0B28), rand + glow in de
+	   accentkleur, radius 28, padding 20, kolom met gap 14. */
+	.modal-card {
+		width: 100%;
+		max-width: 400px;
+		max-height: 100%;
+		overflow-y: auto;
+		display: flex;
+		flex-direction: column;
+		gap: 14px;
+		padding: 20px;
+		border-radius: 28px;
+		border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+		box-shadow: 0 0 50px color-mix(in srgb, var(--accent) 22%, transparent);
+	}
+
+	.section-label {
+		font-family: var(--font-ui);
+		font-weight: 800;
+		font-size: 10px;
+		letter-spacing: 0.16em;
+		color: var(--color-mixup-muted);
+	}
+
+	.hint {
+		font-family: var(--font-ui);
+		font-weight: 500;
+		font-size: 12px;
+		color: var(--color-mixup-muted);
+	}
+
+	.empty {
+		background: rgba(229, 242, 255, 0.05);
+		border: 1px solid rgba(229, 242, 255, 0.16);
+		border-radius: 16px;
+		padding: 10px 12px;
+		font-size: 12px;
+		font-weight: 500;
+		color: var(--color-mixup-dim);
+	}
+
+	/* ── Doeltegel (scherm 2) ─────────────────────────────────────────────── */
+	.target {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 6px;
+		padding: 12px;
+		border-radius: 18px;
+		min-height: 44px;
+		box-sizing: border-box;
+		text-align: left;
+		background: rgba(229, 242, 255, 0.05);
+		border: 1px solid rgba(229, 242, 255, 0.16);
+		transition:
+			background 0.15s ease,
+			border-color 0.15s ease,
+			box-shadow 0.15s ease;
+	}
+
+	.target--on {
+		background: linear-gradient(135deg, rgba(0, 229, 255, 0.2), rgba(124, 77, 255, 0.2));
+		border-color: rgba(0, 229, 255, 0.7);
+		box-shadow: 0 0 18px rgba(0, 229, 255, 0.3);
+	}
+
+	.target--off {
+		opacity: 0.4;
+		cursor: default;
+	}
+
+	.dot {
+		width: 12px;
+		height: 12px;
+		border-radius: 50%;
+		flex: 0 0 auto;
+		background: var(--dot);
+		border: 1px solid rgba(229, 242, 255, 0.5);
+		box-shadow: 0 0 8px var(--dot);
+	}
+
+	.target-label {
+		font-family: var(--font-ui);
+		font-weight: 800;
+		font-size: 12px;
+		letter-spacing: 0.06em;
+		color: var(--color-mixup-paper);
+	}
+
+	.target-sub {
+		font-family: var(--font-ui);
+		font-weight: 700;
+		font-size: 9px;
+		letter-spacing: 0.1em;
+	}
+
+	/* ── Keuzeknoppen (scherm 3) ──────────────────────────────────────────── */
+	.pick {
+		flex: 1 0 auto;
+		height: 44px;
+		padding: 0 10px;
+		border-radius: 24px;
+		font-family: var(--font-ui);
+		font-weight: 800;
+		font-size: 12px;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		white-space: nowrap;
+		background: rgba(229, 242, 255, 0.05);
+		border: 1px solid rgba(229, 242, 255, 0.16);
+		color: var(--color-mixup-muted);
+		transition:
+			background 0.15s ease,
+			border-color 0.15s ease,
+			color 0.15s ease;
+	}
+
+	.pick--yellow.pick--on {
+		background: rgba(255, 230, 0, 0.12);
+		border-color: var(--color-mixup-yellow);
+		color: var(--color-mixup-yellow);
+	}
+
+	.pick--violet.pick--on {
+		background: rgba(124, 77, 255, 0.25);
+		border-color: rgba(124, 77, 255, 0.8);
+		color: #c9b3ff;
+	}
+
+	.row-pick {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 10px;
+		min-height: 44px;
+		padding: 10px 14px;
+		border-radius: 16px;
+		text-align: left;
+		font-family: var(--font-ui);
+		font-weight: 700;
+		font-size: 13px;
+		background: rgba(229, 242, 255, 0.05);
+		border: 1px solid rgba(229, 242, 255, 0.16);
+		color: var(--color-mixup-muted);
+	}
+
+	.row-pick--on {
+		background: rgba(124, 77, 255, 0.25);
+		border-color: rgba(124, 77, 255, 0.8);
+		color: var(--color-mixup-paper);
+	}
+
+	.preview {
+		background: rgba(11, 11, 31, 0.62);
+		border: 1px solid rgba(229, 242, 255, 0.18);
+		border-radius: 14px;
+		padding: 10px 12px;
+		font-family: var(--font-data);
+		font-size: 12px;
+		color: #6fe8ff;
+	}
+
+	/* ── Uitkomsten (scherm 3) ────────────────────────────────────────────── */
+	.outcome {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		border-radius: 18px;
+		padding: 12px 14px;
+	}
+
+	.outcome--green {
+		background: rgba(43, 217, 122, 0.08);
+		border: 1px solid rgba(43, 217, 122, 0.5);
+	}
+
+	.outcome--cyan {
+		background: rgba(0, 229, 255, 0.06);
+		border: 1px solid rgba(0, 229, 255, 0.4);
+	}
+
+	.outcome--magenta {
+		background: rgba(255, 45, 170, 0.07);
+		border: 1px solid rgba(255, 45, 170, 0.45);
+	}
+
+	/* ── Double down (scherm 4) ───────────────────────────────────────────── */
+	.dd-value {
+		color: #ff6fc4;
+		text-shadow: 0 0 30px rgba(255, 45, 170, 0.5);
+	}
+
+	.dd-step {
+		flex: 1;
+		height: 44px;
+		border-radius: 10px;
+		border: none;
+		background: rgba(229, 242, 255, 0.08);
+		transition:
+			background 0.15s ease,
+			box-shadow 0.15s ease;
+	}
+
+	.dd-step--on {
+		background: linear-gradient(180deg, #ff6fc4, #ff2daa);
+		box-shadow: 0 0 10px rgba(255, 45, 170, 0.4);
+	}
+
+	.dd-range {
+		width: 100%;
+		accent-color: #ff2daa;
+	}
+
+	.dd-out {
+		flex: 1;
+		border-radius: 16px;
+		padding: 12px;
+		text-align: center;
+	}
+
+	.dd-out--win {
+		background: rgba(43, 217, 122, 0.08);
+		border: 1px solid rgba(43, 217, 122, 0.5);
+	}
+
+	.dd-out--lose {
+		background: rgba(255, 45, 170, 0.07);
+		border: 1px solid rgba(255, 45, 170, 0.45);
+	}
+
+	.dd-out-label {
+		margin-top: 2px;
+		font-family: var(--font-ui);
+		font-weight: 700;
+		font-size: 9px;
+		letter-spacing: 0.1em;
+		color: var(--color-mixup-muted);
+	}
+</style>

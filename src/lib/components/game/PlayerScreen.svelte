@@ -20,6 +20,14 @@
 		corners?: number;
 		/** Extra achtergrond ONDER de gradient-laag, bijv. de teamkleur-radial. */
 		backdrop?: string | null;
+		/**
+		 * Scherm exact zo hoog als het viewport houden in plaats van mee te groeien
+		 * met de inhoud. Nodig voor schermen met een eigen scrollgebied én een vaste
+		 * voet (7B: de antwoordkaart scrollt, powerups + knop blijven onderaan) —
+		 * met alleen `min-height` groeit de kolom door en scrollt de héle pagina,
+		 * waardoor de voet uit beeld loopt.
+		 */
+		fitViewport?: boolean;
 		class?: string;
 		children?: Snippet;
 	};
@@ -29,12 +37,13 @@
 		layers = 3,
 		corners = 0.35,
 		backdrop = null,
+		fitViewport = false,
 		class: className = '',
 		children
 	}: Props = $props();
 </script>
 
-<div class="player-screen mixup-page">
+<div class="player-screen mixup-page" class:player-screen--fit={fitViewport}>
 	{#if rain}
 		<CodeRain {layers} />
 	{/if}
@@ -67,6 +76,15 @@
 		padding-bottom: max(30px, calc(env(safe-area-inset-bottom, 0px) + 8px));
 		font-family: var(--font-ui);
 		color: var(--color-mixup-paper);
+	}
+
+	/* Vaste viewporthoogte: de kolom mag niet met de inhoud meegroeien, anders
+	   krijgt het scrollgebied binnenin (min-height:0 + overflow-y:auto) nooit
+	   een definitieve hoogte om binnen te scrollen — dan groeit de pagina en
+	   scrolt de voet (powerups + knop) uit beeld. */
+	.player-screen--fit {
+		height: 100svh;
+		max-height: 100svh;
 	}
 
 	.player-screen__body {

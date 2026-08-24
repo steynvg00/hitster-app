@@ -32,10 +32,13 @@
 	import IncomingEffectsListener from '$lib/components/game/IncomingEffectsListener.svelte';
 	import PowerupRevealModal from '$lib/components/game/PowerupRevealModal.svelte';
 	import TapToBreakOverlay from '$lib/components/game/TapToBreakOverlay.svelte';
+	import FreezeOverlay from '$lib/components/game/FreezeOverlay.svelte';
+	import { powerupIcon } from '$lib/mixup-assets';
 	import AllSeeingEyeModal from '$lib/components/game/AllSeeingEyeModal.svelte';
 	import PlayerScreen from '$lib/components/game/PlayerScreen.svelte';
 	import TrackSegmentBar from '$lib/components/game/TrackSegmentBar.svelte';
 	import { teamHex as teamHexFor, teamOnColor } from '$lib/team-theme';
+	import { stripSetNameFromTitle } from '$lib/challenge-title';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -45,6 +48,13 @@
 	const teamHex = $derived(teamHexFor(data.team.color));
 	/** Leesbare tekstkleur op een vlak in de teamkleur (geel is te licht voor wit). */
 	const teamOn = $derived(teamOnColor(data.team.color));
+
+	// Kop van het antwoordformulier: alleen de challenge, niet de set. Hosts
+	// noemen challenges "<Setnaam> <Challenge>" ("Vrienden Weekend 2026
+	// Hitster"), en op 7B is die prefix ruis. Weergave-only — de titel in de
+	// database blijft ongemoeid, en zonder setnaam-overlap staat er gewoon de
+	// volledige titel.
+	const challengeTitle = $derived(stripSetNameFromTitle(data.challenge.title, data.activeSetName));
 
 	// ── Draft (localStorage) ──────────────────────────────────────────────────
 	// New shape: Record<tabPosition, SlotDraft[]>
@@ -1816,19 +1826,20 @@
 		horen er via het standaard `form="challenge-answer-form"`-attribuut nog
 		steeds bij. Voor de browser is dat exact dezelfde submit.
 	-->
-	<PlayerScreen>
+	<!-- fitViewport: 7B is het enige scherm met een eigen scrollgebied (de
+	     antwoordkaart) én een vaste voet. Zonder vaste viewporthoogte groeit de
+	     kolom met de inhoud mee, scrollt de pagina in plaats van de kaart, en
+	     lopen de powerup-rij en de knoppenbalk uit beeld. -->
+	<PlayerScreen fitViewport>
 		<!-- Freeze overlay (stuk 2): blocking frost layer, clears itself after 30s
-		     client-side — no server round-trip, it's a marker row only. -->
+		     client-side — no server round-trip, it's a marker row only. De
+		     vormgeving zit sinds fase 4 in FreezeOverlay; `freezeUntil` en
+		     `freezeRemainingMs` worden nog steeds hier bijgehouden. -->
 		{#if isFrozen}
-			<div
-				class="fixed inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-cyan-950/70 backdrop-blur-md"
-			>
-				<span class="text-6xl">🧊</span>
-				<p class="text-lg font-black text-white">Bevroren door {freezeSourceName}!</p>
-				<p class="font-data text-3xl font-black text-cyan-200 tabular-nums">
-					{Math.ceil(freezeRemainingMs / 1000)}s
-				</p>
-			</div>
+			<FreezeOverlay
+				sourceName={freezeSourceName}
+				secondsLeft={Math.ceil(freezeRemainingMs / 1000)}
+			/>
 		{/if}
 
 		<!-- Tap-to-break lock (stuk 3 FINAL): blocking overlay, persists across a
@@ -1847,9 +1858,13 @@
 		{#if drainToast}
 			<div class="fixed inset-x-0 top-4 z-50 flex justify-center px-4">
 				<div
-					class="flex items-center gap-2 rounded-mixup-sm border border-mixup-magenta/50 bg-mixup-magenta/15 px-4 py-2.5 text-sm font-semibold text-mixup-paper shadow-2xl backdrop-blur-sm squircle"
+					class="flex items-center gap-2.5 rounded-mixup-sm border border-mixup-magenta/45 bg-mixup-magenta/10 px-4 py-2.5 text-[13px] font-bold text-mixup-paper shadow-2xl backdrop-blur-[14px] squircle"
 				>
-					<span class="text-lg">⏳</span>
+					<img
+						src={powerupIcon('time_drain')}
+						alt=""
+						class="h-[26px] w-[26px] shrink-0 object-contain"
+					/>
 					<span>−15s — {drainToast.sourceName} pakte je tijd af!</span>
 				</div>
 			</div>
@@ -1908,12 +1923,12 @@
 			</div>
 		</div>
 
-		<!-- Titel -->
+		<!-- Titel — alleen de challenge-naam, zie `challengeTitle`. -->
 		<h1
 			class="px-5 pt-2.5 font-display text-[34px] leading-[0.95] font-black text-mixup-paper uppercase"
 			style="text-shadow: 0 0 26px rgba(124,77,255,0.85);"
 		>
-			{data.challenge.title}
+			{challengeTitle}
 		</h1>
 
 		<!-- Segmentbalk: horizontaal scrollend, min-width 96px per tab, werkt bij
@@ -2021,6 +2036,7 @@
 				teamId={data.team.id}
 				setId={data.activeSetId}
 				effects={data.activeEffects}
+				teams={data.setTeams}
 			/>
 		{/if}
 
