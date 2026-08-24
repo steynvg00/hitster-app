@@ -33,7 +33,6 @@
 	import PowerupRevealModal from '$lib/components/game/PowerupRevealModal.svelte';
 	import TapToBreakOverlay from '$lib/components/game/TapToBreakOverlay.svelte';
 	import AllSeeingEyeModal from '$lib/components/game/AllSeeingEyeModal.svelte';
-	import { getTypeIcon, getTypeColor } from '$lib/variants';
 	import PlayerScreen from '$lib/components/game/PlayerScreen.svelte';
 	import TrackSegmentBar from '$lib/components/game/TrackSegmentBar.svelte';
 	import { teamHex as teamHexFor, teamOnColor } from '$lib/team-theme';
@@ -345,6 +344,13 @@
 		}
 		return d;
 	}
+
+	// Aantal te raden tracks, voor de variant-pil op de pre-game poort. Som van de
+	// bron-tracks over alle tabs: een mashup met 3 bronnen in één tab telt als 3,
+	// een standaard challenge met 5 tabs als 5.
+	const gateTrackCount = $derived(
+		data.tabs.reduce((n, t) => n + Math.max(t.sourceTracks.length, 1), 0)
+	);
 
 	// ── Tab state ─────────────────────────────────────────────────────────────
 	let activeTabIndex = $state(0);
@@ -1204,9 +1210,6 @@
 
 	let reviewingKey = $state<string | null>(null);
 
-	const TypeIcon = $derived(getTypeIcon(data.challenge.variant));
-	const typeColor = $derived(getTypeColor(data.challenge.variant));
-
 	// ── Live result (realtime submissions subscription) ───────────────────────
 	let liveScore = $state<number | null>(null);
 	let animatedScore = $state(0);
@@ -1704,56 +1707,105 @@
 		</div>
 	</div>
 {:else if !data.attempt}
-	<!-- ── Pre-game gate ──────────────────────────────────────────────────────── -->
-	<div class="mx-auto min-h-screen max-w-lg p-4">
-		<div class="pt-4 pb-6">
-			<span
-				class="rounded-full px-3 py-1 text-xs font-bold tracking-widest text-white uppercase"
-				style="background-color: {teamHex};">{data.team.display_name}</span
-			>
-		</div>
-		<div class="mb-6">
-			<div class="mb-2">
-				<span
-					class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-bold {typeColor}"
-				>
-					<TypeIcon size={12} />
-					{data.challenge.variant}
-				</span>
-			</div>
-			<h1 class="text-2xl font-black">{data.challenge.title}</h1>
-		</div>
-		{#if data.tutorialText}
-			<div class="mb-8 rounded-2xl border border-zinc-700 bg-zinc-900 p-6">
-				<h2 class="mb-3 text-xs font-bold tracking-widest text-zinc-400 uppercase">How to play</h2>
-				<p class="text-sm leading-relaxed text-zinc-200">{data.tutorialText}</p>
-			</div>
-		{/if}
-		<form
-			method="POST"
-			action="?/startChallenge"
-			use:enhance={() => {
-				startingChallenge = true;
-				return async ({ result: res }) => {
-					if (res.type === 'success') {
-						window.location.reload();
-					} else {
-						startingChallenge = false;
-					}
-				};
-			}}
+	<!--
+		── Scherm 6 · PRE-GAME-POORT ────────────────────────────────────────────
+		Bron: design/"M!XUP Player Flow v2.dc.html", artboard
+		"6 Pre-game poort" ("TIMER START PAS BIJ TAP").
+
+		Dit is de wachtstate vóór de start: er is nog geen challenge_attempts-rij,
+		dus de timer loopt nog niet. Eén gecentreerde glaskaart met de variant-pil,
+		de titel en de uitleg, daaronder de startknop en de timer-noot.
+
+		Code-regen staat hier WEL aan (het enige scherm in deze fase dat hem heeft;
+		7B en 8 hebben in de bron alleen de kristal-hoeken). CodeRain schildert zelf
+		zijn ondergrond via --cr-backdrop, en de default daarvan is exact de
+		radiale paginagradient die dit scherm ook heeft — dus geen override nodig.
+
+		De start-conditie en de startknop zijn NIET aangeraakt: hetzelfde
+		?/startChallenge met dezelfde use:enhance en dezelfde window.location.reload()
+		bij succes, die de volle mount forceert waar onMount de countdown uit
+		timerEndsAt opzet.
+	-->
+	<PlayerScreen rain corners={0.4}>
+		<!--
+			Teampil, op dezelfde plek als op 7B. De artboard toont hem niet, maar een
+			speler die net een NFC-kaart heeft gescand landt hier als eerste — dit is
+			de enige plek waar hij vóór de start ziet voor welk team zijn cookie
+			staat. Absoluut gepositioneerd, zodat de kaart eronder gecentreerd blijft
+			zoals in de bron.
+		-->
+		<span
+			class="absolute top-0 left-5 flex items-center gap-[7px] rounded-full px-3 py-1.5 mixup-glass squircle"
 		>
-			<button
-				type="submit"
-				disabled={startingChallenge}
-				class="w-full rounded-xl py-4 text-lg font-black tracking-widest text-white uppercase transition-colors hover:opacity-90 disabled:opacity-50"
-				style="background-color: {teamHex};"
+			<span
+				class="h-2.5 w-2.5 rounded-full"
+				style="background: {teamHex}; box-shadow: 0 0 10px {teamHex};"
+			></span>
+			<span class="text-[11px] font-extrabold tracking-[0.1em] text-mixup-paper uppercase"
+				>{data.team.display_name}</span
 			>
-				{startingChallenge ? 'Starting…' : 'Start challenge'}
-			</button>
-		</form>
-		<p class="mt-3 text-center text-xs text-zinc-600">Timer begins when you tap Start</p>
-	</div>
+		</span>
+
+		<div class="flex min-h-0 flex-1 flex-col justify-center gap-4 px-5">
+			<div
+				class="flex flex-col gap-3.5 rounded-mixup-hero px-5 py-6 mixup-glass-strong squircle"
+				style="background: linear-gradient(135deg, rgba(229,242,255,0.10), rgba(229,242,255,0.03));"
+			>
+				<span
+					class="self-start rounded-full border px-3 py-[5px] text-[10px] font-extrabold tracking-[0.16em] text-mixup-cyan uppercase"
+					style="border-color: rgba(0,229,255,0.5);"
+				>
+					{data.challenge.variant} · {gateTrackCount}
+					{gateTrackCount === 1 ? 'track' : 'tracks'}
+				</span>
+
+				<h1
+					class="font-display text-[44px] leading-[0.95] font-black text-mixup-paper uppercase"
+					style="text-shadow: 0 0 26px rgba(124,77,255,0.85);"
+				>
+					{data.challenge.title}
+				</h1>
+
+				{#if data.tutorialText}
+					<div
+						class="flex flex-col gap-1.5 border-t pt-3"
+						style="border-color: rgba(229,242,255,0.12);"
+					>
+						<span class="text-[11px] font-extrabold tracking-[0.14em] text-mixup-yellow uppercase"
+							>Hoe werkt het</span
+						>
+						<p class="text-sm leading-[1.5] font-medium text-mixup-muted">{data.tutorialText}</p>
+					</div>
+				{/if}
+			</div>
+
+			<form
+				method="POST"
+				action="?/startChallenge"
+				use:enhance={() => {
+					startingChallenge = true;
+					return async ({ result: res }) => {
+						if (res.type === 'success') {
+							window.location.reload();
+						} else {
+							startingChallenge = false;
+						}
+					};
+				}}
+			>
+				<button
+					type="submit"
+					disabled={startingChallenge}
+					class="h-[54px] w-full rounded-mixup-modal text-base font-extrabold tracking-[0.06em] uppercase squircle disabled:cursor-not-allowed disabled:opacity-50"
+					style="background: linear-gradient(90deg,#FFE600,#FF7F11); color: #1A1400; box-shadow: 0 10px 30px rgba(255,127,17,0.35);"
+				>
+					{startingChallenge ? 'Starten…' : 'Start de challenge'}
+				</button>
+			</form>
+
+			<p class="text-center text-xs font-medium text-mixup-dim">⏱ De timer begint zodra je tapt</p>
+		</div>
+	</PlayerScreen>
 {:else}
 	<!--
 		── Scherm 7B · ANTWOORDFORMULIER ────────────────────────────────────────
