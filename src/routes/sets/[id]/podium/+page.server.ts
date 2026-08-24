@@ -15,7 +15,10 @@ export const load: PageServerLoad = async ({ params }) => {
 
 	const [{ data: teams }, { data: setChallenges }, { data: players }, battleData] =
 		await Promise.all([
-			db.from('teams').select('id, color, display_name').in('color', scopedColors),
+			// photo_url erbij (fase 6): de designbron zet een teamfoto in het
+			// podiumblok. Zelfde query, een kolom meer — geen extra request en
+			// geen andere logica.
+			db.from('teams').select('id, color, display_name, photo_url').in('color', scopedColors),
 			db.from('set_challenges').select('challenge_id').eq('set_id', id),
 			db.from('players').select('id, display_name, photo_url, team_id').eq('set_id', id),
 			// Battle reveal (stuk 3c) — empty for a non-battle set, so the podium
@@ -43,7 +46,10 @@ export const load: PageServerLoad = async ({ params }) => {
 		.map((t) => ({ ...t, setScore: teamSetScores.get(t.id) ?? 0 }))
 		.sort((a, b) => a.setScore - b.setScore);
 
-	const playersByTeam: Record<string, { id: string; display_name: string; photo_url: string | null }[]> = {};
+	const playersByTeam: Record<
+		string,
+		{ id: string; display_name: string; photo_url: string | null }[]
+	> = {};
 	for (const t of rankedTeams) playersByTeam[t.id] = [];
 	for (const p of players ?? []) {
 		if (p.team_id && playersByTeam[p.team_id]) {
