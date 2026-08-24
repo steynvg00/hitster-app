@@ -14,6 +14,12 @@
 	 * Nooit statisch. De wrapper krijgt overflow:hidden + contain:paint, de
 	 * lagen will-change:transform.
 	 *
+	 * De tegel herhaalt op een VASTE maat (426px breed vanaf 768px, een volle
+	 * kolom daaronder) met de hoogte afgeleid uit de natuurlijke 788x1400-
+	 * verhouding van de PNG. Daardoor vervormt de tegel nooit en valt elke laag
+	 * precies een tegelhoogte omlaag, wat de lus naadloos maakt ongeacht de
+	 * hoogte van de container.
+	 *
 	 * Gebruik — zet de component als eerste kind in een `position:relative`
 	 * container; de inhoud daarna met een hogere z-index of gewoon erna:
 	 *
@@ -59,6 +65,26 @@
 		pointer-events: none;
 		mix-blend-mode: screen;
 		z-index: 0;
+
+		/* Referentiepunt voor 100cqw = de eigen breedte van de wrapper. */
+		container-type: inline-size;
+
+		/* Tegelmaat. De hoogte wordt ALTIJD uit de breedte afgeleid met de
+		   natuurlijke verhouding van de PNG (788x1400), zodat de tegel nooit
+		   vervormt — ongeacht hoe hoog de pagina of de container is.
+		   Smal scherm: precies een volle kolom. */
+		--cr-tile-w: 100cqw;
+		--cr-tile-h: calc(var(--cr-tile-w) * 1400 / 788);
+	}
+
+	/* Vanaf tablet/TV: vaste tegelbreedte, zodat de code zich als meerdere
+	   smalle kolommen naast elkaar HERHAALT i.p.v. tot schermbreedte te worden
+	   opgerekt. 426px is de designwaarde ("tile-breedte 426px op 1920px" =
+	   4,5 kolommen; 3,4 kolommen op 1440px). */
+	@media (min-width: 768px) {
+		.mixup-coderain {
+			--cr-tile-w: 426px;
+		}
 	}
 
 	.cr-layer {
@@ -66,22 +92,14 @@
 		left: 0;
 		right: 0;
 		top: 0;
-		height: 200%;
+		/* 200% + een tegel: de laag blijft de container dekken op zowel het
+		   begin- als het eindframe van de val, ook in korte containers. */
+		height: calc(200% + var(--cr-tile-h));
 		background-image: var(--cr-tile);
-		/* Mobiel (390px referentie): de tegel spant de volle breedte. */
-		background-repeat: repeat-y;
-		background-size: 100% 50%;
+		background-repeat: repeat;
+		background-size: var(--cr-tile-w) var(--cr-tile-h);
 		mix-blend-mode: screen;
 		will-change: transform;
-	}
-
-	/* Vanaf tablet/TV: vaste tegelbreedte van 426px (3 tegels op 1280px,
-	   ~4,5 op 1920px) zodat de regen niet uitgerekt wordt. */
-	@media (min-width: 768px) {
-		.cr-layer {
-			background-repeat: repeat;
-			background-size: 426px 50%;
-		}
 	}
 
 	.cr-layer--cyan {
@@ -101,30 +119,33 @@
 		animation: mixup-rain-c 13s linear infinite;
 	}
 
+	/* Elke laag valt precies EEN tegelhoogte omlaag en herhaalt dan naadloos.
+	   De onderlinge offsets (0 / 10% / 20% van een tegel) komen uit de
+	   designwaardes -50%/0, -55%/-5% en -60%/-10% van de laaghoogte. */
 	@keyframes mixup-rain-a {
 		from {
-			transform: translateY(-50%);
+			transform: translateY(calc(-1 * var(--cr-tile-h)));
 		}
 		to {
-			transform: translateY(0%);
+			transform: translateY(0);
 		}
 	}
 
 	@keyframes mixup-rain-b {
 		from {
-			transform: translateY(-55%);
+			transform: translateY(calc(-1.1 * var(--cr-tile-h)));
 		}
 		to {
-			transform: translateY(-5%);
+			transform: translateY(calc(-0.1 * var(--cr-tile-h)));
 		}
 	}
 
 	@keyframes mixup-rain-c {
 		from {
-			transform: translateY(-60%);
+			transform: translateY(calc(-1.2 * var(--cr-tile-h)));
 		}
 		to {
-			transform: translateY(-10%);
+			transform: translateY(calc(-0.2 * var(--cr-tile-h)));
 		}
 	}
 </style>
