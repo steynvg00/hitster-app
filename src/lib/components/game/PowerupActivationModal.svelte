@@ -15,6 +15,7 @@
 	import { supabaseBrowser } from '$lib/supabase-browser';
 	import { goto } from '$app/navigation';
 	import { powerupIcon } from '$lib/mixup-assets';
+	import { portal } from '$lib/portal';
 	import { teamHex } from '$lib/team-theme';
 	import {
 		fieldLabel,
@@ -472,6 +473,7 @@
 	(sent / blocked / rolled).
 -->
 <div
+	use:portal
 	class="fixed inset-0 z-50 flex items-center justify-center p-[18px] mixup-scrim-blur"
 	role="dialog"
 	aria-modal="true"

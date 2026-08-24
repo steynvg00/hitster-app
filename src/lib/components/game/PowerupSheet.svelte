@@ -15,6 +15,7 @@
 	 * (sheetStyle / sheetImgStyle / sheetName / sheetType / sheetDesc / sheetWarn).
 	 */
 	import { powerupIcon } from '$lib/mixup-assets';
+	import { portal } from '$lib/portal';
 	import { categoryLabel, powerupDesc, powerupName, powerupWarn } from '$lib/powerups-copy';
 
 	type PowerupType = {
@@ -45,7 +46,9 @@
 	const warn = $derived(powerupWarn(type.id));
 </script>
 
-<div class="fixed inset-0 z-50 flex items-end justify-center">
+<!-- use:portal — zie $lib/portal: zonder dat kaapt de `.hub-card`
+     (backdrop-filter) op /team het bevattende blok van deze fixed laag. -->
+<div use:portal class="fixed inset-0 z-50 flex items-end justify-center">
 	<!-- Scrim als knop: tik ernaast sluit het blad, en met de toetsenbord-focus
 	     erop doet Enter/Space hetzelfde. -->
 	<button
