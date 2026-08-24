@@ -1,7 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { supabaseBrowser } from '$lib/supabase-browser';
-	import { Crown } from 'lucide-svelte';
+	import PlayerScreen from '$lib/components/game/PlayerScreen.svelte';
+	import { ICON_ASSETS, RANK_ASSETS } from '$lib/mixup-assets';
+	import { teamBanner, teamGlow, teamHex, teamOnColor } from '$lib/team-theme';
+	import { getTypeLogo } from '$lib/variants';
 	import TutorialOverlay from '$lib/components/game/TutorialOverlay.svelte';
 	import HeldPowerups from '$lib/components/game/HeldPowerups.svelte';
 	import ActiveEffectsBanner from '$lib/components/game/ActiveEffectsBanner.svelte';
@@ -28,32 +31,17 @@
 
 	let showTutorials = $state(false);
 
-	const teamColors: Record<string, { bg: string; border: string; text: string }> = {
-		blue: { bg: '#3b82f6', border: '#2563eb', text: '#fff' },
-		yellow: { bg: '#eab308', border: '#ca8a04', text: '#000' },
-		green: { bg: '#22c55e', border: '#16a34a', text: '#000' },
-		red: { bg: '#ef4444', border: '#dc2626', text: '#fff' },
-		indigo: { bg: '#6366f1', border: '#4f46e5', text: '#fff' },
-		black: { bg: '#1e293b', border: '#0f172a', text: '#fff' }
-	};
-
-	const c = $derived(
-		teamColors[data.team.color] ?? { bg: '#6b7280', border: '#4b5563', text: '#fff' }
-	);
-
-	const ordinal = (n: number) => {
-		const s = ['th', 'st', 'nd', 'rd'];
-		const v = n % 100;
-		return n + (s[(v - 20) % 10] || s[v] || s[0]);
-	};
+	const hex = $derived(teamHex(data.team.color));
+	const onColor = $derived(teamOnColor(data.team.color));
+	const banner = $derived(teamBanner(data.team.color));
 
 	function formatActivity(event_type: string, payload: unknown): string {
-		if (event_type === 'team_entry') return 'Joined via entry card';
+		if (event_type === 'team_entry') return 'Via entry-kaart gejoind';
 		if (event_type === 'challenge_submit') {
 			const p = payload as { challenge_title?: string; score?: number } | null;
 			return p?.challenge_title
-				? `Submitted "${p.challenge_title}" · ${p.score ?? 0} pts`
-				: 'Submitted a challenge';
+				? `"${p.challenge_title}" ingeleverd · ${p.score ?? 0} pt`
+				: 'Challenge ingeleverd';
 		}
 		return event_type.replace(/_/g, ' ');
 	}
@@ -162,134 +150,124 @@
 	<TutorialOverlay tutorials={data.setTutorials} onclose={() => (showTutorials = false)} />
 {/if}
 
-<!-- ── LOBBY VIEW (play_state = joining) ──────────────────────────────────── -->
+<!-- ══ 4 · TEAM-HUB LOBBY (play_state = joining) ══════════════════════════ -->
 {#if livePlayState === 'joining' && data.activeSet}
-	<!-- Team banner -->
-	<div class="px-6 py-6" style="background-color: {c.bg}; border-bottom: 3px solid {c.border};">
-		<div class="mx-auto flex max-w-lg items-center justify-between">
-			<div>
-				<div
-					class="text-sm font-bold tracking-widest uppercase"
-					style="color: {c.text}; opacity: 0.7;"
-				>
-					You are
+	<PlayerScreen class="hub">
+		<div class="hub-banner" style="background: {banner}; box-shadow: 0 8px 30px {hex}44;">
+			<div class="flex items-center gap-2.5">
+				<div class="min-w-0 flex-1">
+					<div class="hub-banner__eyebrow" style="color: {onColor}; opacity: 0.75;">JIJ BENT</div>
+					<div class="hub-banner__team" style="color: {onColor};">{data.team.display_name}</div>
 				</div>
-				<h1 class="mt-0.5 text-3xl font-black" style="color: {c.text};">
-					{data.team.display_name}
-				</h1>
-			</div>
-			{#if data.setTutorials.length > 0}
-				<button
-					type="button"
-					onclick={() => (showTutorials = true)}
-					class="rounded-xl border-2 px-4 py-2 text-sm font-bold transition-opacity hover:opacity-80"
-					style="border-color: rgba(255,255,255,0.5); color: {c.text};"
-				>
-					Tutorials
-				</button>
-			{/if}
-		</div>
-	</div>
-
-	<div class="mx-auto max-w-lg space-y-5 p-5">
-		<!-- Set name -->
-		<div class="text-center">
-			<div class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">Game set</div>
-			<div class="mt-0.5 text-lg font-black text-white">{data.activeSet.name}</div>
-		</div>
-
-		<!-- Teams + joined players -->
-		<div>
-			<h2 class="mb-3 text-xs font-bold tracking-widest text-zinc-500 uppercase">Teams</h2>
-			<div class="space-y-2">
-				{#each lobbyTeams as t}
-					{@const tc = teamColors[t.color] ?? { bg: '#6b7280', border: '#4b5563', text: '#fff' }}
-					<div class="rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3">
-						<div class="mb-2 flex items-center gap-2">
-							<div class="h-3 w-3 rounded-full" style="background-color: {tc.bg};"></div>
-							<span class="text-sm font-semibold text-white">{t.display_name}</span>
-							<span class="ml-auto text-xs text-zinc-600">{t.players.length} joined</span>
-						</div>
-						{#if t.players.length > 0}
-							<div class="flex flex-wrap gap-2">
-								{#each t.players as p}
-									<div class="flex items-center gap-1.5">
-										{#if p.photo_url}
-											<img
-												src={p.photo_url}
-												alt={p.display_name}
-												class="h-6 w-6 rounded-full object-cover"
-											/>
-										{:else}
-											<div
-												class="flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold"
-												style="background-color: {tc.bg}33; color: {tc.bg};"
-											>
-												{p.display_name.charAt(0)}
-											</div>
-										{/if}
-										<span class="text-xs text-zinc-400">{p.display_name}</span>
-									</div>
-								{/each}
-							</div>
-						{/if}
-					</div>
-				{/each}
-			</div>
-		</div>
-
-		<div class="flex items-center gap-2 py-2 text-sm text-zinc-600">
-			<span class="inline-block h-2 w-2 animate-pulse rounded-full bg-amber-500"></span>
-			Waiting for the host to start the game…
-		</div>
-	</div>
-
-	<!-- ── TEAM CONSOLE (play_state = playing) ──────────────────────────────── -->
-{:else}
-	<!-- Team banner -->
-	<div class="px-6 py-8" style="background-color: {c.bg}; border-bottom: 3px solid {c.border};">
-		<div class="mx-auto max-w-lg">
-			<div
-				class="text-sm font-bold tracking-widest uppercase"
-				style="color: {c.text}; opacity: 0.7;"
-			>
-				You are
-			</div>
-			<div class="mt-1 flex items-center gap-3">
-				<h1 class="text-4xl font-black" style="color: {c.text};">{data.team.display_name}</h1>
-				{#if iscrownHolder}
-					<Crown size={28} style="color: #ffe600;" />
+				{#if data.setTutorials.length > 0}
+					<button
+						type="button"
+						class="hub-banner__action rounded-mixup-chip squircle"
+						style="color: {onColor}; border-color: rgba(255,255,255,0.5);"
+						onclick={() => (showTutorials = true)}
+					>
+						UITLEG
+					</button>
 				{/if}
 			</div>
 		</div>
-	</div>
 
-	<div class="mx-auto max-w-lg space-y-6 p-6">
-		<!-- Score + position -->
-		<div class="grid grid-cols-2 gap-4">
-			<div class="rounded-2xl bg-zinc-900 p-5 text-center">
-				<div class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">Score</div>
-				<div class="mt-1 text-5xl font-black text-white tabular-nums">{liveScore}</div>
-				<div class="mt-1 text-xs text-zinc-600">points</div>
-			</div>
-			<div class="rounded-2xl bg-zinc-900 p-5 text-center">
-				<div class="text-xs font-semibold tracking-wide text-zinc-500 uppercase">Position</div>
-				<div class="mt-1 text-5xl font-black tabular-nums" style="color: {c.bg};">
-					{ordinal(livePosition)}
+		<div class="hub-scroll">
+			<div class="text-center mixup-eyebrow">M!XUP · {data.activeSet.name}</div>
+
+			{#each lobbyTeams as t (t.id)}
+				{@const tHex = teamHex(t.color)}
+				<div class="hub-card flex items-center gap-2.5 rounded-mixup-card squircle">
+					<!-- Volle kleurbol = placeholder voor de teamfoto (fase 7) -->
+					<span
+						class="lobby-bubble"
+						style="background: linear-gradient(135deg, {tHex}55, {tHex}1A);
+						       border-color: {t.color === 'black' ? 'rgba(255,255,255,0.7)' : tHex + 'AA'};
+						       box-shadow: 0 0 12px {teamGlow(t.color)};"
+					>
+						<img src={ICON_ASSETS.camera} alt="" class="h-[18px] w-[18px] object-contain" />
+					</span>
+					<span class="flex-1 text-xs font-extrabold tracking-[0.08em] text-mixup-paper uppercase">
+						{t.display_name}
+					</span>
+					<span class="flex">
+						{#each t.players as p (p.id)}
+							{#if p.photo_url}
+								<img src={p.photo_url} alt={p.display_name} class="lobby-av" />
+							{:else}
+								<span class="lobby-av" style="background: {tHex}; color: {teamOnColor(t.color)};">
+									{p.display_name.slice(0, 2).toUpperCase()}
+								</span>
+							{/if}
+						{/each}
+					</span>
 				</div>
-				<div class="mt-1 text-xs text-zinc-600">of {data.totalTeams} teams</div>
+			{/each}
+		</div>
+
+		<div class="flex items-center justify-center gap-2 px-5 pt-3.5">
+			<span class="wait-dot"></span>
+			<span class="text-xs font-bold tracking-[0.1em] text-mixup-muted">
+				WACHTEN TOT DE HOST START…
+			</span>
+		</div>
+
+		<!-- Teamfoto-kaart: laatste blok, camera-only. De UPLOAD zelf is fase 7. -->
+		<div class="px-5 pt-3">
+			<div class="hub-card flex items-center gap-3 rounded-mixup-lg squircle">
+				<div class="photo-slot rounded-mixup-sm squircle">
+					<img src={ICON_ASSETS.camera} alt="" class="h-[38px] w-[38px] object-contain" />
+				</div>
+				<div class="flex flex-1 flex-col gap-0.5">
+					<span class="text-[10px] font-extrabold tracking-[0.16em] text-mixup-muted">
+						TEAMFOTO
+					</span>
+					<span class="text-xs font-medium text-mixup-soft">
+						Nog geen foto · alleen via de camera
+					</span>
+				</div>
+				<label class="photo-btn rounded-mixup-chip squircle">
+					MAAK FOTO
+					<input type="file" accept="image/*" capture="environment" class="sr-only" />
+				</label>
+			</div>
+		</div>
+	</PlayerScreen>
+
+	<!-- ══ 5 · TEAM-HUB CONSOLE ═══════════════════════════════════════════ -->
+{:else}
+	<PlayerScreen class="hub">
+		<div class="hub-banner" style="background: {banner}; box-shadow: 0 8px 30px {hex}44;">
+			<div class="flex items-center gap-2.5">
+				<div class="min-w-0">
+					<div class="hub-banner__eyebrow" style="color: {onColor}; opacity: 0.75;">JOUW TEAM</div>
+					<div class="hub-banner__team" style="color: {onColor};">{data.team.display_name}</div>
+				</div>
+				{#if iscrownHolder}
+					<img src={RANK_ASSETS.crown} alt="Plek 1" class="hub-crown" />
+				{/if}
 			</div>
 		</div>
 
-		<!-- Stats + action row -->
-		{#if data.activeSet}
-			<div class="text-sm text-zinc-500">
-				<span class="font-bold text-white">{data.setCompletedCount}</span>
-				/ {data.setTotalCount} challenges done
+		<div class="flex gap-2.5 px-5 pt-3.5">
+			<div class="hub-card flex-1 rounded-mixup-card py-3 text-center squircle">
+				<div
+					class="font-display text-[32px] leading-none font-black text-mixup-yellow tabular-nums"
+				>
+					{liveScore}
+				</div>
+				<div class="mt-1 text-[10px] font-bold tracking-[0.1em] text-mixup-muted">SCORE</div>
 			</div>
-		{/if}
+			<div class="hub-card flex-1 rounded-mixup-card py-3 text-center squircle">
+				<div class="font-display text-[32px] leading-none font-black text-mixup-cyan tabular-nums">
+					#{livePosition}
+				</div>
+				<div class="mt-1 text-[10px] font-bold tracking-[0.1em] text-mixup-muted">
+					VAN {data.totalTeams}
+				</div>
+			</div>
+		</div>
 
-		<!-- Incoming cross-team attacks (give_a_shot modal + shield-block toast) -->
 		{#if data.playerSetId}
 			<IncomingEffectsListener
 				teamId={data.team.id}
@@ -298,131 +276,334 @@
 			/>
 		{/if}
 
-		<!-- Active powerup effects banner -->
 		{#if data.playerSetId && data.activeEffects?.length > 0}
-			<ActiveEffectsBanner
-				teamId={data.team.id}
-				setId={data.playerSetId}
-				effects={data.activeEffects}
-			/>
+			<div class="px-5 pt-3">
+				<ActiveEffectsBanner
+					teamId={data.team.id}
+					setId={data.playerSetId}
+					effects={data.activeEffects}
+				/>
+			</div>
 		{/if}
 
-		<!-- Held powerups -->
 		{#if data.playerSetId && data.heldPowerups}
-			<HeldPowerups
-				teamId={data.team.id}
-				setId={data.playerSetId}
-				powerups={data.heldPowerups}
-				setTeams={data.setTeams}
-				resurrectableChallenges={data.resurrectableChallenges}
-			/>
-		{/if}
-
-		<!-- Action buttons row -->
-		<div class="grid grid-cols-2 gap-3 {data.setTutorials.length > 0 ? 'sm:grid-cols-3' : ''}">
-			{#if data.activeSet?.status === 'active'}
-				<a
-					href="/play/leaderboard"
-					class="flex items-center justify-center rounded-xl border border-zinc-700 px-4 py-3 text-sm font-semibold text-zinc-300 transition-colors hover:border-zinc-500 hover:text-white"
-				>
-					Leaderboard
-				</a>
-			{:else}
-				<a
-					href="/leaderboard"
-					class="flex items-center justify-center rounded-xl border border-zinc-700 px-4 py-3 text-sm font-semibold text-zinc-300 transition-colors hover:border-zinc-500 hover:text-white"
-				>
-					Leaderboard
-				</a>
-			{/if}
-			{#if data.setTutorials.length > 0}
-				<button
-					type="button"
-					onclick={() => (showTutorials = true)}
-					class="rounded-xl border px-4 py-3 text-sm font-semibold transition-colors"
-					style="border-color: {c.bg}44; color: {c.bg}; background-color: {c.bg}11;"
-				>
-					Tutorials
-				</button>
-			{/if}
-		</div>
-
-		<!-- Challenges -->
-		<div>
-			<h2 class="mb-3 text-xs font-bold tracking-widest text-zinc-500 uppercase">Challenges</h2>
-			{#if data.challenges.length === 0}
-				<p class="text-sm text-zinc-600">No active challenges yet — check back soon.</p>
-			{:else}
-				<div class="space-y-2">
-					{#each data.challenges as ch}
-						{@const locked = isLocked(ch.id)}
-						<div
-							class="flex items-center justify-between rounded-xl px-4 py-3
-							{locked ? 'bg-zinc-900/50 opacity-60' : 'bg-zinc-900'}"
-						>
-							<div>
-								<div class="font-semibold {locked ? 'text-zinc-500' : 'text-zinc-100'}">
-									{ch.title}
-								</div>
-								<div class="flex items-center gap-1.5 text-xs text-zinc-500 capitalize">
-									<span>{ch.variant}</span>
-									{#if ch.isBattle}
-										<span title="Battle challenge — every team is ranked against each other"
-											>⚔️</span
-										>
-									{/if}
-								</div>
-							</div>
-							{#if locked}
-								<div class="text-right">
-									<div class="text-xs text-zinc-600">🔒 Scan tag to unlock</div>
-								</div>
-							{:else if ch.status === 'completed'}
-								<div class="text-right">
-									<div class="text-xs font-bold tracking-wide text-green-400 uppercase">Done</div>
-									<div class="text-sm font-black text-white">+{ch.earnedScore ?? 0} pts</div>
-								</div>
-							{:else}
-								<a
-									href="/challenge/{ch.id}"
-									class="rounded-lg px-3 py-1.5 text-xs font-bold tracking-wide text-white uppercase transition-opacity hover:opacity-80"
-									style="background-color: {c.bg};"
-								>
-									Play
-								</a>
-							{/if}
-						</div>
-					{/each}
-				</div>
-			{/if}
-		</div>
-
-		<!-- Recent activity -->
-		{#if data.recentActivity.length > 0}
-			<div>
-				<h2 class="mb-3 text-xs font-bold tracking-widest text-zinc-500 uppercase">
-					Recent activity
-				</h2>
-				<div class="space-y-1.5">
-					{#each data.recentActivity as entry}
-						<div class="flex items-center gap-2 rounded-lg bg-zinc-900/60 px-3 py-2 text-sm">
-							<div
-								class="h-1.5 w-1.5 shrink-0 rounded-full"
-								style="background-color: {c.bg};"
-							></div>
-							<span class="text-zinc-300">
-								{formatActivity(entry.event_type, entry.payload)}
-							</span>
-							<span class="ml-auto text-xs text-zinc-600 tabular-nums">
-								{new Date(entry.created_at).toLocaleTimeString([], {
-									hour: '2-digit',
-									minute: '2-digit'
-								})}
-							</span>
-						</div>
-					{/each}
+			<div class="px-5 pt-3">
+				<div class="hub-card flex flex-col gap-2 rounded-mixup-lg squircle">
+					<span class="text-[10px] font-extrabold tracking-[0.18em] text-mixup-yellow">
+						POWERUPS
+					</span>
+					<HeldPowerups
+						teamId={data.team.id}
+						setId={data.playerSetId}
+						powerups={data.heldPowerups}
+						setTeams={data.setTeams}
+						resurrectableChallenges={data.resurrectableChallenges}
+					/>
 				</div>
 			</div>
 		{/if}
-	</div>
+
+		<div class="flex items-center justify-between px-5 pt-3.5 pb-1.5">
+			<span class="text-[10px] font-extrabold tracking-[0.18em] text-mixup-yellow">CHALLENGES</span>
+			<div class="flex items-center gap-2">
+				{#if data.activeSet}
+					<span class="text-[10px] font-bold tracking-[0.1em] text-mixup-muted">
+						{data.setCompletedCount}/{data.setTotalCount} KLAAR
+					</span>
+				{/if}
+				<a
+					href={data.activeSet?.status === 'active' ? '/play/leaderboard' : '/leaderboard'}
+					class="hub-link rounded-mixup-chip squircle">STAND</a
+				>
+				{#if data.setTutorials.length > 0}
+					<button
+						type="button"
+						class="hub-link rounded-mixup-chip squircle"
+						onclick={() => (showTutorials = true)}>UITLEG</button
+					>
+				{/if}
+			</div>
+		</div>
+
+		<div class="hub-scroll pt-0">
+			{#if data.challenges.length === 0}
+				<p class="text-sm text-mixup-dim">Nog geen actieve challenges — kom zo terug.</p>
+			{:else}
+				{#each data.challenges as ch (ch.id)}
+					{@const locked = isLocked(ch.id)}
+					{@const logo = getTypeLogo(ch.variant)}
+					<div
+						class="hub-card flex items-center gap-2.5 rounded-mixup-card squircle"
+						style="opacity: {locked ? 0.55 : 1};"
+					>
+						<span class="ch-logo-slot">
+							{#if logo}
+								<span
+									class="ch-logo"
+									style="height: {logo.height}px; background-image: url('{logo.src}');"
+								></span>
+							{:else}
+								<span class="truncate text-sm font-bold text-mixup-paper">{ch.title}</span>
+							{/if}
+						</span>
+						{#if ch.isBattle}
+							<span title="Battle-challenge — alle teams worden onderling gerangschikt">⚔️</span>
+						{/if}
+						{#if locked}
+							<img src={ICON_ASSETS.lock} alt="" class="ch-lock" />
+							<span class="ch-tag ch-tag--muted">SCAN CHALLENGE BOARD</span>
+						{:else if ch.status === 'completed'}
+							<span class="ch-tag ch-tag--done">DONE · +{ch.earnedScore ?? 0}</span>
+						{:else}
+							<a
+								href="/challenge/{ch.id}"
+								class="ch-tag"
+								style="background: {hex}33; border-color: {hex}; color: var(--color-mixup-paper);"
+								>▶ PLAY</a
+							>
+						{/if}
+					</div>
+				{/each}
+			{/if}
+
+			{#if data.recentActivity.length > 0}
+				<div class="pt-2 text-[10px] font-extrabold tracking-[0.18em] text-mixup-muted">RECENT</div>
+				{#each data.recentActivity as entry (entry.id)}
+					<div class="act-row rounded-mixup-sm squircle">
+						<span class="act-dot" style="background: {hex};"></span>
+						<span class="flex-1 text-xs text-mixup-soft">
+							{formatActivity(entry.event_type, entry.payload)}
+						</span>
+						<span class="text-[10px] text-mixup-dim tabular-nums">
+							{new Date(entry.created_at).toLocaleTimeString('nl-NL', {
+								hour: '2-digit',
+								minute: '2-digit'
+							})}
+						</span>
+					</div>
+				{/each}
+			{/if}
+		</div>
+	</PlayerScreen>
 {/if}
+
+<style>
+	/* De hub gebruikt de volle breedte: de banner loopt door tot de schermrand. */
+	:global(.hub) {
+		padding-left: 0;
+		padding-right: 0;
+	}
+
+	.hub-banner {
+		padding: 16px 20px;
+		flex: 0 0 auto;
+	}
+
+	.hub-banner__eyebrow {
+		font-family: var(--font-ui);
+		font-weight: 800;
+		font-size: 11px;
+		letter-spacing: 0.24em;
+	}
+
+	.hub-banner__team {
+		font-family: var(--font-display);
+		font-weight: 900;
+		font-size: 40px;
+		line-height: 0.95;
+		text-transform: uppercase;
+	}
+
+	.hub-banner__action {
+		margin-left: auto;
+		height: 44px;
+		padding: 0 14px;
+		font-family: var(--font-ui);
+		font-weight: 800;
+		font-size: 11px;
+		letter-spacing: 0.1em;
+		background: transparent;
+		border: 1px solid;
+		cursor: pointer;
+	}
+
+	.hub-crown {
+		width: 96px;
+		height: 140px;
+		margin-left: auto;
+		flex: 0 0 auto;
+		object-fit: contain;
+		filter: drop-shadow(0 6px 20px rgba(0, 0, 0, 0.5))
+			drop-shadow(0 0 24px rgba(255, 215, 94, 0.45));
+	}
+
+	.hub-scroll {
+		flex: 1 1 auto;
+		min-height: 0;
+		overflow-y: auto;
+		padding: 14px 20px 0;
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+	}
+
+	.hub-card {
+		background: linear-gradient(135deg, rgba(229, 242, 255, 0.1), rgba(229, 242, 255, 0.03));
+		border: 1px solid rgba(229, 242, 255, 0.18);
+		backdrop-filter: blur(14px);
+		-webkit-backdrop-filter: blur(14px);
+		padding: 12px 14px;
+	}
+
+	.lobby-bubble {
+		width: 40px;
+		height: 40px;
+		border-radius: 50%;
+		border: 1.5px solid;
+		flex: 0 0 auto;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.lobby-av {
+		width: 30px;
+		height: 30px;
+		border-radius: 50%;
+		object-fit: cover;
+		border: 2px solid rgba(229, 242, 255, 0.6);
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		font-family: var(--font-ui);
+		font-weight: 800;
+		font-size: 10px;
+		margin-left: -6px;
+		flex: 0 0 auto;
+	}
+
+	.wait-dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: var(--color-mixup-cyan);
+		animation: hub-pulse 1.4s infinite;
+	}
+
+	@keyframes hub-pulse {
+		0%,
+		100% {
+			opacity: 0.25;
+		}
+		50% {
+			opacity: 1;
+		}
+	}
+
+	.photo-slot {
+		width: 56px;
+		height: 56px;
+		flex: 0 0 auto;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		overflow: hidden;
+		background: rgba(11, 11, 31, 0.55);
+		border: 2px dashed rgba(229, 242, 255, 0.3);
+	}
+
+	.photo-btn {
+		height: 44px;
+		padding: 0 16px;
+		flex: 0 0 auto;
+		display: inline-flex;
+		align-items: center;
+		font-family: var(--font-ui);
+		font-weight: 800;
+		font-size: 11px;
+		letter-spacing: 0.1em;
+		cursor: pointer;
+		background: linear-gradient(90deg, #ffe600, #ff7f11);
+		color: #1a1400;
+		border: 1px solid transparent;
+	}
+
+	.hub-link {
+		height: 26px;
+		padding: 0 10px;
+		display: inline-flex;
+		align-items: center;
+		font-family: var(--font-data);
+		font-size: 10px;
+		letter-spacing: 0.14em;
+		background: rgba(229, 242, 255, 0.05);
+		border: 1px solid rgba(229, 242, 255, 0.18);
+		color: var(--color-mixup-muted);
+		cursor: pointer;
+	}
+
+	.ch-logo-slot {
+		flex: 1;
+		min-width: 0;
+		height: 44px;
+		display: flex;
+		align-items: center;
+	}
+
+	.ch-logo {
+		display: inline-block;
+		width: 100%;
+		max-width: 150px;
+		background-size: contain;
+		background-repeat: no-repeat;
+		background-position: left center;
+	}
+
+	.ch-lock {
+		width: 22px;
+		height: 27px;
+		flex: 0 0 auto;
+		object-fit: contain;
+		filter: drop-shadow(0 0 6px rgba(124, 77, 255, 0.5));
+	}
+
+	.ch-tag {
+		font-family: var(--font-ui);
+		font-weight: 800;
+		font-size: 10px;
+		letter-spacing: 0.1em;
+		border-radius: 999px;
+		padding: 6px 12px;
+		flex: 0 0 auto;
+		border: 1px solid;
+		white-space: nowrap;
+	}
+
+	.ch-tag--muted {
+		background: rgba(229, 242, 255, 0.04);
+		border-color: rgba(229, 242, 255, 0.18);
+		color: var(--color-mixup-muted);
+	}
+
+	.ch-tag--done {
+		background: rgba(43, 217, 122, 0.1);
+		border-color: rgba(43, 217, 122, 0.5);
+		color: var(--color-mixup-green);
+	}
+
+	.act-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 8px 12px;
+		background: rgba(229, 242, 255, 0.04);
+		border: 1px solid rgba(229, 242, 255, 0.12);
+	}
+
+	.act-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		flex: 0 0 auto;
+	}
+</style>
