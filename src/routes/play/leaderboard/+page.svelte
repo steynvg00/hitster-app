@@ -1,8 +1,24 @@
 <script lang="ts">
+	/**
+	 * 9 · LEADERBOARD — LIVE STAND (redesign fase 5).
+	 *
+	 * Bron: design/M!XUP Player Flow v2.dc.html, scherm "9 · LEADERBOARD —
+	 * STREAK · RANGWISSEL · SUSPENSE".
+	 *
+	 * PUUR PRESENTATIE. Beide realtime-kanalen (teams + game_sets), de refetch
+	 * en de redirect naar het wachtscherm zijn ongewijzigd overgenomen; alleen
+	 * de vormgeving is nieuw.
+	 *
+	 * De suspense-state uit het design is hier gekoppeld aan het BESTAANDE
+	 * host-signaal `game_sets.scores_hidden` — dat is precies wat de designknop
+	 * "SUSPENSE AAN (HOST-DEMO)" nabootst. Er komt dus geen tweede schakelaar bij.
+	 */
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { supabaseBrowser } from '$lib/supabase-browser';
-	import { Crown } from 'lucide-svelte';
+	import PlayerScreen from '$lib/components/game/PlayerScreen.svelte';
+	import { teamHex } from '$lib/team-theme';
+	import { topScoreOf, wearsCrown } from '$lib/standings';
 	import type { PageData } from './$types';
 
 	type TeamRow = (typeof data.teams)[number];
@@ -11,17 +27,14 @@
 
 	let teams = $state<TeamRow[]>([...data.teams]);
 	let scoresHidden = $state(data.scoresHidden);
-	let maxScore = $derived(Math.max(...teams.map((t) => t.score), 20));
-	/**
-	 * Kroon-WEERGAVE volgt de score: zichtbaar bij elk team waarvan de score
-	 * gelijk is aan de hoogste score, en alleen als die boven 0 ligt. Bij 0-0
-	 * dus geen kroon; bij een gedeelde topscore dragen alle koplopers er een.
-	 * LET OP: maxScore hierboven heeft een ondergrens van 20 voor de balkbreedtes
-	 * en is daarom NIET bruikbaar als topscore.
-	 */
-	let topScore = $derived(Math.max(...teams.map((t) => t.score), 0));
 
-	// Track previous ranks to show position change arrows
+	/** Noemer voor de balkbreedtes — ondergrens 20 zodat een lege stand niet deelt door nul. */
+	let barMax = $derived(Math.max(...teams.map((t) => t.score), 20));
+	/** De echte topscore; voedt de kroon-conditie (zie $lib/standings). */
+	let topScore = $derived(topScoreOf(teams));
+
+	// Rangwissel-indicatoren: onthoud de vorige volgorde en toon 3 seconden lang
+	// een pijl bij elk team dat van plek wisselde.
 	let prevRanks = $state<Map<string, number>>(new Map(teams.map((t, i) => [t.id, i])));
 	let rankDeltas = $state<Map<string, number>>(new Map());
 
@@ -30,25 +43,21 @@
 		const deltas = new Map<string, number>();
 		newTeams.forEach((t, newIdx) => {
 			const prev = prevRanks.get(t.id) ?? newIdx;
-			if (prev !== newIdx) deltas.set(t.id, prev - newIdx); // positive = moved up
+			if (prev !== newIdx) deltas.set(t.id, prev - newIdx); // positief = omhoog
 		});
 		rankDeltas = deltas;
 		prevRanks = new Map(newTeams.map((t, i) => [t.id, i]));
 		teams = newTeams;
-		// Clear deltas after animation
 		setTimeout(() => {
 			rankDeltas = new Map();
 		}, 3000);
 	}
 
-	const teamColor: Record<string, string> = {
-		blue: '#3b82f6',
-		yellow: '#eab308',
-		green: '#22c55e',
-		red: '#ef4444',
-		indigo: '#6366f1',
-		black: '#1e293b'
-	};
+	const nl = new Intl.NumberFormat('nl-NL');
+
+	function streakOf(team: TeamRow): number {
+		return (team as unknown as { current_streak?: number }).current_streak ?? 0;
+	}
 
 	onMount(() => {
 		const teamsChannel = supabaseBrowser
@@ -94,110 +103,246 @@
 	});
 </script>
 
-<div class="min-h-screen p-6">
-	<div class="mx-auto max-w-lg">
-		<!-- Header -->
-		<div class="mb-6 flex items-center gap-4">
-			<a href="/team" class="text-sm text-zinc-500 transition-colors hover:text-zinc-300">← Team</a>
-			<div>
-				<p class="text-xs font-bold tracking-[0.2em] text-zinc-500 uppercase">Defqon.1</p>
-				<h1 class="text-2xl font-black tracking-tight text-white uppercase">Leaderboard</h1>
-			</div>
-		</div>
+<svelte:head>
+	<title>Live stand — M!XUP</title>
+</svelte:head>
 
-		{#if scoresHidden}
-			<div
-				class="mb-4 rounded-xl border border-amber-800/50 bg-amber-900/20 px-4 py-2.5 text-center text-sm text-amber-400"
-			>
-				🔒 Scores hidden by host
-			</div>
-		{/if}
+<PlayerScreen rain corners={0.35} fitViewport class="px-5">
+	<a href="/team" class="back-link">← TEAM</a>
 
-		<!-- Team cards -->
-		<div class="space-y-3">
-			{#each teams as team, i (team.id)}
-				{@const hex = teamColor[team.color] ?? '#6b7280'}
-				{@const delta = rankDeltas.get(team.id) ?? 0}
-				<div
-					class="overflow-hidden rounded-2xl border bg-zinc-900 transition-all duration-500"
-					style="border-color: {hex}40;"
-				>
-					<!-- Card header: rank + name + badges -->
-					<div class="flex items-center gap-3 px-4 pt-3 pb-2">
-						<!-- Rank -->
-						<div class="flex shrink-0 items-center gap-1.5">
-							<span class="text-2xl font-black" style="color: {hex};">{i + 1}</span>
-							{#if delta !== 0}
-								<span
-									class="text-xs font-bold {delta > 0
-										? 'text-green-400'
-										: 'text-red-400'} animate-bounce"
-								>
-									{delta > 0 ? '▲' : '▼'}{Math.abs(delta)}
-								</span>
-							{/if}
-						</div>
+	<h1 class="lb-title">Live stand</h1>
+	<p class="lb-sub">
+		{scoresHidden
+			? 'Suspense-modus — de host onthult de stand zo…'
+			: 'Realtime · update na elke ronde'}
+	</p>
 
-						<!-- Photo avatar -->
-						{#if (team as unknown as { photo_url?: string | null }).photo_url}
-							<img
-								src={(team as unknown as { photo_url?: string | null }).photo_url!}
-								alt={team.display_name}
-								class="h-8 w-8 rounded-full border-2 object-cover"
-								style="border-color: {hex};"
-							/>
-						{:else}
-							<div
-								class="flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold text-white"
-								style="background-color: {hex}33; border: 1.5px solid {hex}66;"
-							>
-								{team.display_name[0]?.toUpperCase() ?? '?'}
-							</div>
-						{/if}
+	<div class="lb-list">
+		{#each teams as team, i (team.id)}
+			{@const hex = teamHex(team.color)}
+			{@const delta = rankDeltas.get(team.id) ?? 0}
+			{@const streak = streakOf(team)}
+			<div class="lb-row squircle">
+				<div class="lb-row__head">
+					<span class="lb-rank">{i + 1}</span>
+					<span class="lb-dot" style="--dot: {hex};"></span>
+					<span class="lb-name">{team.display_name}</span>
 
-						<!-- Name -->
-						<div class="flex min-w-0 flex-1 items-center gap-1.5">
-							<div class="truncate font-bold text-white">{team.display_name}</div>
-							{#if topScore > 0 && team.score === topScore}
-								<Crown size={14} style="color: #ffe600; flex-shrink: 0;" />
-							{/if}
-						</div>
+					{#if streak >= 2}
+						<span class="lb-streak" title="{streak} op rij">🔥</span>
+					{/if}
 
-						<!-- Streak badge -->
-						{#if (team as unknown as { current_streak?: number }).current_streak && (team as unknown as { current_streak?: number }).current_streak! >= 2}
-							<div
-								class="flex shrink-0 items-center gap-1 rounded-full border border-orange-700/40 bg-orange-900/40 px-2 py-0.5 text-xs font-bold text-orange-400"
-							>
-								🔥{(team as unknown as { current_streak?: number }).current_streak}
-							</div>
-						{/if}
-					</div>
+					{#if delta !== 0}
+						<span class="lb-move" style="color: {delta > 0 ? '#2BD97A' : '#FF2DAA'};">
+							{delta > 0 ? '▲' : '▼'}
+						</span>
+					{/if}
 
-					<!-- Score bar -->
-					<div class="px-4 pb-3">
-						<div class="relative h-8 overflow-hidden rounded-lg bg-zinc-800">
-							<div
-								class="flex h-full items-center justify-end rounded-lg pr-3 transition-all duration-700 ease-out"
-								style="width: max(3%, {(team.score / maxScore) * 100}%); background-color: {hex};"
-							>
-								{#if team.score > 0 && !scoresHidden}
-									<span class="text-sm font-black text-white drop-shadow">{team.score}</span>
-								{/if}
-							</div>
-							{#if !scoresHidden && team.score === 0}
-								<span class="absolute top-1/2 left-3 -translate-y-1/2 text-xs text-zinc-600">0</span
-								>
-							{/if}
-						</div>
-					</div>
+					{#if !scoresHidden && wearsCrown(team.score, topScore)}
+						<span class="lb-crown" aria-label="Koploper">♛</span>
+					{/if}
+
+					<span class="lb-score">{scoresHidden ? '???' : nl.format(team.score)}</span>
 				</div>
-			{/each}
-		</div>
 
-		<!-- Live indicator -->
-		<div class="mt-6 flex items-center justify-center gap-2 text-xs text-zinc-600">
-			<span class="inline-block h-2 w-2 animate-pulse rounded-full bg-green-500"></span>
-			Live
-		</div>
+				<div class="lb-bar">
+					{#if scoresHidden}
+						<!-- Suspense: geen echte verhoudingen, alleen een oplopend silhouet. -->
+						<div class="lb-bar__fill lb-bar__fill--hidden" style="width: {14 + i * 6}%;"></div>
+					{:else}
+						<div
+							class="lb-bar__fill"
+							style="width: {Math.max(2, (team.score / barMax) * 100)}%;
+							       background: linear-gradient(90deg, {hex}, rgba(229,242,255,0.65));"
+						></div>
+					{/if}
+				</div>
+			</div>
+		{/each}
 	</div>
-</div>
+
+	<div class="lb-live">
+		<span class="lb-live__dot"></span>
+		<span>LIVE</span>
+	</div>
+</PlayerScreen>
+
+<style>
+	.back-link {
+		align-self: flex-start;
+		margin-bottom: 10px;
+		font-family: var(--font-data);
+		font-size: 10px;
+		letter-spacing: 0.18em;
+		color: var(--color-mixup-muted);
+		text-decoration: none;
+	}
+
+	.lb-title {
+		font-family: var(--font-display);
+		font-weight: 900;
+		font-size: 40px;
+		line-height: 0.95;
+		text-transform: uppercase;
+		color: var(--color-mixup-paper);
+		text-shadow: 0 0 26px rgba(124, 77, 255, 0.85);
+	}
+
+	.lb-sub {
+		margin-top: 4px;
+		font-family: var(--font-ui);
+		font-weight: 500;
+		font-size: 13px;
+		color: var(--color-mixup-muted);
+	}
+
+	.lb-list {
+		margin-top: 16px;
+		flex: 1 1 auto;
+		min-height: 0;
+		overflow-y: auto;
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+	}
+
+	.lb-row {
+		background: linear-gradient(135deg, rgba(229, 242, 255, 0.1), rgba(229, 242, 255, 0.03));
+		border: 1px solid rgba(229, 242, 255, 0.18);
+		border-radius: var(--radius-mixup-card);
+		padding: 12px 14px;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		flex: 0 0 auto;
+	}
+
+	.lb-row__head {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+	}
+
+	.lb-rank {
+		font-family: var(--font-display);
+		font-weight: 900;
+		font-size: 18px;
+		color: var(--color-mixup-muted);
+		width: 20px;
+		flex: 0 0 auto;
+	}
+
+	.lb-dot {
+		width: 9px;
+		height: 9px;
+		border-radius: 50%;
+		background: var(--dot);
+		border: 1px solid rgba(229, 242, 255, 0.5);
+		box-shadow: 0 0 8px var(--dot);
+		flex: 0 0 auto;
+	}
+
+	.lb-name {
+		font-family: var(--font-ui);
+		font-weight: 800;
+		font-size: 13px;
+		letter-spacing: 0.08em;
+		color: var(--color-mixup-paper);
+		flex: 1 1 auto;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.lb-streak {
+		font-size: 13px;
+		line-height: 1;
+		flex: 0 0 auto;
+	}
+
+	.lb-move {
+		font-family: var(--font-ui);
+		font-weight: 800;
+		font-size: 13px;
+		line-height: 1;
+		flex: 0 0 auto;
+	}
+
+	.lb-crown {
+		font-family: var(--font-ui);
+		font-weight: 700;
+		font-size: 16px;
+		line-height: 1;
+		color: #ffd75e;
+		text-shadow: 0 0 10px rgba(255, 215, 94, 0.7);
+		flex: 0 0 auto;
+	}
+
+	.lb-score {
+		font-family: var(--font-display);
+		font-weight: 900;
+		font-size: 22px;
+		color: var(--color-mixup-paper);
+		flex: 0 0 auto;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.lb-bar {
+		height: 7px;
+		background: rgba(11, 11, 31, 0.7);
+		border-radius: 99px;
+		overflow: hidden;
+	}
+
+	.lb-bar__fill {
+		height: 100%;
+		border-radius: 99px;
+		transition: width 0.8s cubic-bezier(0.2, 0.8, 0.2, 1);
+	}
+
+	.lb-bar__fill--hidden {
+		background: rgba(229, 242, 255, 0.15);
+	}
+
+	.lb-live {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 6px;
+		margin-top: 14px;
+		font-family: var(--font-data);
+		font-size: 10px;
+		letter-spacing: 0.18em;
+		color: var(--color-mixup-dim);
+		flex: 0 0 auto;
+	}
+
+	.lb-live__dot {
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		background: var(--color-mixup-magenta);
+		animation: lb-pulse 1.2s infinite;
+	}
+
+	@keyframes lb-pulse {
+		0%,
+		100% {
+			opacity: 0.25;
+		}
+		50% {
+			opacity: 1;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.lb-live__dot {
+			animation: none;
+			opacity: 1;
+		}
+		.lb-bar__fill {
+			transition: none;
+		}
+	}
+</style>

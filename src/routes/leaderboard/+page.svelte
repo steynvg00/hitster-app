@@ -1,24 +1,35 @@
 <script lang="ts">
+	/**
+	 * 05 · TV-LEADERBOARD — "TUSSENSTAND" (redesign fase 5).
+	 *
+	 * Bron: design/M!XUP Ceremonie en Randen.dc.html, scherm "05 · TV-LEADERBOARD
+	 * — BEAMER (16:9)". Referentiemaat 1280x720; alle maten schalen mee met de
+	 * viewportbreedte (clamp) zodat het scherm net zo goed op een 1920-beamer als
+	 * in een laptopvenster klopt.
+	 *
+	 * PUUR PRESENTATIE. Het teams-kanaal, de refetch en het game_sets-kanaal zijn
+	 * ongewijzigd; alleen de vormgeving is nieuw. De kroon is de score-gedreven
+	 * weergave uit fase 2 (zie $lib/standings) — hier met het kroon-asset in
+	 * plaats van het glyph, precies zoals de TV-designbron hem toont.
+	 */
 	import { onMount } from 'svelte';
 	import { supabaseBrowser } from '$lib/supabase-browser';
-	import { Crown } from 'lucide-svelte';
+	import CodeRain from '$lib/components/CodeRain.svelte';
+	import { MIXUP_LOGO, RANK_ASSETS } from '$lib/mixup-assets';
+	import { teamHex } from '$lib/team-theme';
+	import { topScoreOf, wearsCrown } from '$lib/standings';
 	import type { PageData } from './$types';
 
 	type TeamRow = (typeof data.teams)[number];
 
 	let { data }: { data: PageData } = $props();
 	let teams = $state<TeamRow[]>([...data.teams]);
-	let maxScore = $derived(Math.max(...teams.map((t) => t.score), 20));
-	/**
-	 * Kroon-WEERGAVE volgt de score: zichtbaar bij elk team waarvan de score
-	 * gelijk is aan de hoogste score, en alleen als die boven 0 ligt. Bij 0-0
-	 * dus geen kroon; bij een gedeelde topscore dragen alle koplopers er een.
-	 * LET OP: maxScore hierboven heeft een ondergrens van 20 voor de balkbreedtes
-	 * en is daarom NIET bruikbaar als topscore.
-	 */
-	let topScore = $derived(Math.max(...teams.map((t) => t.score), 0));
 
-	// Position change tracking
+	/** Noemer voor de balkbreedtes — ondergrens 20, dus NIET bruikbaar als topscore. */
+	let barMax = $derived(Math.max(...teams.map((t) => t.score), 20));
+	let topScore = $derived(topScoreOf(teams));
+
+	// Rangwissel-indicatoren (3 seconden zichtbaar na een wissel).
 	let prevRanks = $state<Map<string, number>>(new Map(teams.map((t, i) => [t.id, i])));
 	let rankDeltas = $state<Map<string, number>>(new Map());
 
@@ -37,14 +48,11 @@
 		}, 3000);
 	}
 
-	const teamColor: Record<string, string> = {
-		blue: '#3b82f6',
-		yellow: '#eab308',
-		green: '#22c55e',
-		red: '#ef4444',
-		indigo: '#6366f1',
-		black: '#64748b'
-	};
+	const nl = new Intl.NumberFormat('nl-NL');
+
+	function streakOf(team: TeamRow): number {
+		return (team as unknown as { current_streak?: number }).current_streak ?? 0;
+	}
 
 	onMount(() => {
 		const channel = supabaseBrowser
@@ -87,94 +95,205 @@
 	});
 </script>
 
-<div class="min-h-screen p-6 md:p-10">
-	<!-- Header -->
-	<div class="mb-10 text-center">
-		<h1 class="text-4xl font-black tracking-tight uppercase md:text-6xl">Leaderboard</h1>
-	</div>
+<svelte:head>
+	<title>Tussenstand — M!XUP</title>
+</svelte:head>
 
-	<!-- Team cards -->
-	<div class="mx-auto max-w-3xl space-y-4">
-		{#each teams as team, i (team.id)}
-			{@const hex = teamColor[team.color] ?? '#6b7280'}
-			{@const delta = rankDeltas.get(team.id) ?? 0}
-			<div
-				class="overflow-hidden rounded-2xl border bg-zinc-900 transition-all duration-500"
-				style="border-color: {hex}40;"
-			>
-				<!-- Card header -->
-				<div class="flex items-center gap-4 px-5 pt-4 pb-2">
-					<!-- Rank -->
-					<div class="flex shrink-0 items-center gap-2">
-						<span class="text-3xl font-black md:text-4xl" style="color: {hex};">{i + 1}</span>
+<div class="tv">
+	<!-- De code-regen schildert zelf de TV-ondergrond, zodat de lagen daarop
+	     screenen in plaats van op de body-achtergrond. -->
+	<CodeRain opacity={0.92} class="tv-rain" />
+
+	<div class="tv__inner">
+		<img src={MIXUP_LOGO} alt="M!XUP" class="tv__logo" />
+		<h1 class="tv__title">Tussenstand</h1>
+
+		<div class="tv__rows">
+			{#each teams as team, i (team.id)}
+				{@const hex = teamHex(team.color)}
+				{@const delta = rankDeltas.get(team.id) ?? 0}
+				{@const streak = streakOf(team)}
+				<div class="tv-row">
+					<span class="tv-row__rank">{i + 1}</span>
+					<span class="tv-row__dot" style="--dot: {hex};"></span>
+					<span class="tv-row__name">
+						{team.display_name}
+						{#if streak >= 2}
+							<span class="tv-row__streak" title="{streak} op rij">🔥</span>
+						{/if}
 						{#if delta !== 0}
-							<span
-								class="text-sm font-bold md:text-base {delta > 0
-									? 'text-green-400'
-									: 'text-red-400'} animate-bounce"
-							>
-								{delta > 0 ? '▲' : '▼'}{Math.abs(delta)}
+							<span class="tv-row__move" style="color: {delta > 0 ? '#2BD97A' : '#FF2DAA'};">
+								{delta > 0 ? '▲' : '▼'}
 							</span>
 						{/if}
-					</div>
-
-					<!-- Photo -->
-					{#if (team as unknown as { photo_url?: string | null }).photo_url}
-						<img
-							src={(team as unknown as { photo_url?: string | null }).photo_url!}
-							alt={team.display_name}
-							class="h-10 w-10 rounded-full border-2 object-cover md:h-12 md:w-12"
-							style="border-color: {hex};"
-						/>
-					{:else}
-						<div
-							class="flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold text-white md:h-12 md:w-12 md:text-base"
-							style="background-color: {hex}33; border: 1.5px solid {hex}66;"
-						>
-							{team.display_name[0]?.toUpperCase() ?? '?'}
-						</div>
-					{/if}
-
-					<!-- Name -->
-					<div class="flex min-w-0 flex-1 items-center gap-2">
-						<div class="truncate text-lg font-bold text-white md:text-xl">{team.display_name}</div>
-						{#if topScore > 0 && team.score === topScore}
-							<Crown size={18} style="color: #ffe600; flex-shrink: 0;" />
+					</span>
+					<span class="tv-row__track">
+						<span
+							class="tv-row__fill"
+							style="width: {Math.max(1, (team.score / barMax) * 100)}%;
+							       background: linear-gradient(90deg, {hex}, rgba(229,242,255,0.65));"
+						></span>
+					</span>
+					<span class="tv-row__score">{nl.format(team.score)}</span>
+					<span class="tv-row__crown">
+						{#if wearsCrown(team.score, topScore)}
+							<img src={RANK_ASSETS.crown} alt="Koploper" />
 						{/if}
-					</div>
-
-					<!-- Streak badge -->
-					{#if (team as unknown as { current_streak?: number }).current_streak && (team as unknown as { current_streak?: number }).current_streak! >= 2}
-						<div
-							class="flex shrink-0 items-center gap-1.5 rounded-full border border-orange-700/40 bg-orange-900/40 px-3 py-1 text-sm font-bold text-orange-400"
-						>
-							🔥{(team as unknown as { current_streak?: number }).current_streak}
-						</div>
-					{/if}
-
-					<!-- Score label -->
-					<div class="shrink-0 text-right">
-						<div class="text-2xl font-black md:text-3xl" style="color: {hex};">{team.score}</div>
-						<div class="text-xs text-zinc-600">pts</div>
-					</div>
+					</span>
 				</div>
-
-				<!-- Score bar -->
-				<div class="px-5 pb-4">
-					<div class="relative h-3 overflow-hidden rounded-full bg-zinc-800">
-						<div
-							class="h-full rounded-full transition-all duration-700 ease-out"
-							style="width: max(1%, {(team.score / maxScore) * 100}%); background-color: {hex};"
-						></div>
-					</div>
-				</div>
-			</div>
-		{/each}
-	</div>
-
-	<!-- Live indicator -->
-	<div class="mt-10 flex items-center justify-center gap-2 text-xs text-zinc-600">
-		<span class="inline-block h-2 w-2 animate-pulse rounded-full bg-green-500"></span>
-		Live
+			{/each}
+		</div>
 	</div>
 </div>
+
+<style>
+	/* Referentie 1280x720. Elke maat is clamp(min, <design>/1280 * 100vw, max),
+	   zodat de verhoudingen van de designbron op elke beamerresolutie kloppen. */
+	.tv {
+		position: relative;
+		min-height: 100svh;
+		overflow: hidden;
+		background: radial-gradient(110% 90% at 50% 10%, #221546 0%, #0b0b1f 60%);
+		color: var(--color-mixup-paper);
+		font-family: var(--font-ui);
+	}
+
+	/* De code-regen-wrapper is niet transparant: hij draagt de TV-gradient zelf,
+	   anders screenen de lagen op de (andere) body-achtergrond. */
+	.tv :global(.tv-rain) {
+		--cr-backdrop: radial-gradient(110% 90% at 50% 10%, #221546 0%, #0b0b1f 60%);
+	}
+
+	.tv__inner {
+		position: relative;
+		z-index: 1;
+		min-height: 100svh;
+		box-sizing: border-box;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		padding: clamp(20px, 2.65vw, 52px) clamp(24px, 9.4vw, 180px) clamp(24px, 3.1vw, 60px);
+	}
+
+	.tv__logo {
+		width: clamp(110px, 15.6vw, 300px);
+		object-fit: contain;
+	}
+
+	.tv__title {
+		margin-top: clamp(16px, 2.65vw, 52px);
+		font-family: var(--font-display);
+		font-weight: 900;
+		font-size: clamp(30px, 3.75vw, 72px);
+		line-height: 1;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		color: var(--color-mixup-paper);
+		text-shadow: 0 0 30px rgba(124, 77, 255, 0.9);
+	}
+
+	.tv__rows {
+		flex: 1 1 auto;
+		width: 100%;
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+		gap: clamp(8px, 1.1vw, 21px);
+		margin-top: clamp(6px, 0.8vw, 15px);
+	}
+
+	.tv-row {
+		display: flex;
+		align-items: center;
+		gap: clamp(8px, 1.56vw, 30px);
+	}
+
+	.tv-row__rank {
+		font-family: var(--font-display);
+		font-weight: 900;
+		font-size: clamp(22px, 2.65vw, 51px);
+		color: var(--color-mixup-muted);
+		width: clamp(26px, 3.1vw, 60px);
+		text-align: right;
+		flex: 0 0 auto;
+	}
+
+	.tv-row__dot {
+		width: clamp(9px, 1.1vw, 21px);
+		height: clamp(9px, 1.1vw, 21px);
+		border-radius: 50%;
+		background: var(--dot);
+		border: 1px solid rgba(229, 242, 255, 0.5);
+		box-shadow: 0 0 8px var(--dot);
+		flex: 0 0 auto;
+	}
+
+	.tv-row__name {
+		display: flex;
+		align-items: center;
+		gap: 0.4em;
+		font-family: var(--font-ui);
+		font-weight: 800;
+		font-size: clamp(14px, 1.72vw, 33px);
+		letter-spacing: 0.06em;
+		color: var(--color-mixup-paper);
+		width: clamp(120px, 18vw, 345px);
+		flex: 0 0 auto;
+		min-width: 0;
+	}
+
+	.tv-row__streak,
+	.tv-row__move {
+		font-size: 0.72em;
+		line-height: 1;
+		flex: 0 0 auto;
+	}
+
+	.tv-row__track {
+		flex: 1 1 auto;
+		height: clamp(6px, 0.78vw, 15px);
+		background: rgba(11, 11, 31, 0.7);
+		border-radius: 99px;
+		overflow: hidden;
+		display: block;
+		min-width: 0;
+	}
+
+	.tv-row__fill {
+		display: block;
+		height: 100%;
+		border-radius: 99px;
+		transition: width 0.8s cubic-bezier(0.2, 0.8, 0.2, 1);
+	}
+
+	.tv-row__score {
+		font-family: var(--font-display);
+		font-weight: 900;
+		font-size: clamp(22px, 2.65vw, 51px);
+		color: var(--color-mixup-yellow);
+		text-shadow: 0 0 16px rgba(255, 230, 0, 0.4);
+		width: clamp(60px, 8.6vw, 165px);
+		text-align: right;
+		flex: 0 0 auto;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.tv-row__crown {
+		width: clamp(30px, 4.1vw, 78px);
+		display: flex;
+		justify-content: center;
+		flex: 0 0 auto;
+	}
+
+	.tv-row__crown img {
+		height: clamp(28px, 3.9vw, 75px);
+		object-fit: contain;
+		filter: drop-shadow(0 0 14px rgba(255, 215, 94, 0.6));
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.tv-row__fill {
+			transition: none;
+		}
+	}
+</style>

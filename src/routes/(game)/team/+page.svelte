@@ -5,6 +5,7 @@
 	import { ICON_ASSETS, RANK_ASSETS } from '$lib/mixup-assets';
 	import { teamBanner, teamGlow, teamHex, teamOnColor } from '$lib/team-theme';
 	import { getTypeLogo } from '$lib/variants';
+	import { wearsCrown } from '$lib/standings';
 	import TutorialOverlay from '$lib/components/game/TutorialOverlay.svelte';
 	import HeldPowerups from '$lib/components/game/HeldPowerups.svelte';
 	import ActiveEffectsBanner from '$lib/components/game/ActiveEffectsBanner.svelte';
@@ -27,8 +28,11 @@
 	 * game_sets.crown_holder_team_id blijft de MECHANIEK (de +1 steal en de +2
 	 * bij de recap) en stuurt de weergave niet meer aan; dit component leest die
 	 * kolom daarom niet langer.
+	 *
+	 * De conditie zelf staat in $lib/standings, zodat het leaderboard, het
+	 * TV-scherm en deze banner er gegarandeerd dezelfde lezen.
 	 */
-	const showsCrown = $derived(liveTopScore > 0 && liveScore === liveTopScore);
+	const showsCrown = $derived(wearsCrown(liveScore, liveTopScore));
 
 	// Lobby realtime: players joining teams
 	type LobbyPlayer = {

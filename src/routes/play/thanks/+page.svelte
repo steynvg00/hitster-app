@@ -1,28 +1,52 @@
 <script lang="ts">
-	import type { PageData } from './$types';
+	/**
+	 * 11H · EINDSTAND PER PLEK (redesign fase 5).
+	 *
+	 * Bron: design/M!XUP Player Flow v2.dc.html, schermen "11H · EINDSTAND —
+	 * PLEK 1 (KROON) / PLEK 2 (ZILVER) / PLEK 3 (BRONS) / PLEK 4 EN LAGER".
+	 *
+	 * Eén kaart, vier metaalvarianten. De plek-4-kaart is de TEMPLATE voor élke
+	 * positie onder 3 — alleen het nummer, de tag en de achterstand wisselen; de
+	 * vormgeving niet. Dat zit in $lib/standings (rankTier / rankTag / rankDelta),
+	 * zodat er hier geen vier losgeknipte varianten staan.
+	 *
+	 * PUUR PRESENTATIE. De scores komen uit dezelfde submissions-aggregatie die de
+	 * pagina al deed; de eindplek is daaruit AFGELEID (hoeveel teams staan strikt
+	 * boven ons, + 1). Er wordt niets geschreven en er is geen realtime.
+	 *
+	 * De code-regen ligt ACHTER de kaart en krijgt --cr-backdrop met de
+	 * teamkleur-radial mee: de regen-wrapper is niet transparant, dus zonder die
+	 * variabele zou hij op de standaard paginagradient screenen in plaats van op
+	 * de achtergrond van dit scherm.
+	 */
+	import PlayerScreen from '$lib/components/game/PlayerScreen.svelte';
 	import { getVariantIcon, getVariantColor } from '$lib/variants';
+	import { teamHex } from '$lib/team-theme';
+	import { RANK_ASSETS } from '$lib/mixup-assets';
+	import { rankTier, rankTag, rankDelta } from '$lib/standings';
+	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
 
-	const teamColors: Record<string, { bg: string; border: string; text: string; glow: string }> = {
-		blue: { bg: '#1d4ed8', border: '#3b82f6', text: '#fff', glow: 'rgba(59,130,246,0.18)' },
-		yellow: { bg: '#ca8a04', border: '#eab308', text: '#000', glow: 'rgba(234,179,8,0.15)' },
-		green: { bg: '#15803d', border: '#22c55e', text: '#fff', glow: 'rgba(34,197,94,0.15)' },
-		red: { bg: '#b91c1c', border: '#ef4444', text: '#fff', glow: 'rgba(239,68,68,0.15)' },
-		indigo: { bg: '#4338ca', border: '#6366f1', text: '#fff', glow: 'rgba(99,102,241,0.18)' },
-		black: { bg: '#18181b', border: '#3f3f46', text: '#fff', glow: 'rgba(63,63,70,0.22)' }
-	};
+	const hex = $derived(teamHex(data.team.color));
+	const tier = $derived(rankTier(data.place));
+	const tag = $derived(rankTag(data.place));
+	const delta = $derived(rankDelta(data.place, data.teamSetScore, data.descendingScores));
 
-	const tc = $derived(
-		teamColors[data.team.color] ?? {
-			bg: '#27272a',
-			border: '#52525b',
-			text: '#fff',
-			glow: 'rgba(82,82,91,0.18)'
-		}
+	/** Paginagrond én code-regen-ondergrond: de teamkleur die naar ink wegvalt. */
+	const pageBackdrop = $derived(`radial-gradient(120% 80% at 50% 22%, ${hex}66 0%, #06060D 72%)`);
+
+	const nl = new Intl.NumberFormat('nl-NL');
+
+	/** Initialen voor de crew-rij op de kaart. */
+	const initials = $derived(
+		data.teammates.map((p) => ({
+			id: p.id,
+			ini: p.display_name.trim().slice(0, 2).toUpperCase()
+		}))
 	);
 
-	// Best-scoring challenge (highest positive score)
+	// Beste challenge van de avond (hoogste positieve score).
 	const bestChallenge = $derived(
 		data.challengeResults
 			.filter((ch) => ch.score !== null && ch.score > 0)
@@ -33,219 +57,535 @@
 </script>
 
 <svelte:head>
-	<title>Thanks for playing — {data.setName}</title>
+	<title>Eindstand — {data.setName}</title>
 </svelte:head>
 
-<!-- Night-sky background: calmer than podium — single ambient gradient -->
-<div class="fixed inset-0" style="background: #0b0b1f;">
-	<div
-		class="absolute inset-0"
-		style="background:
-			radial-gradient(ellipse at 88% 0%, rgba(255,45,170,0.08) 0%, transparent 45%),
-			radial-gradient(ellipse at 50% 100%, rgba(0,0,0,0.5) 0%, transparent 60%);"
-	></div>
-</div>
+<div
+	class="finale"
+	style="--team: {hex};
+	       --accent: {tier.accent};
+	       --metal-face: {tier.face};
+	       --metal-shadow: {tier.shadow};
+	       --foil: {tier.foil};
+	       --page-bg: {pageBackdrop};
+	       --cr-backdrop: {pageBackdrop};"
+>
+	<PlayerScreen rain corners={0.35} class="px-6">
+		<!-- ─── De eindstandkaart ─── -->
+		<section class="hero">
+			<div class="card squircle">
+				<div class="card__halo"></div>
 
-<div class="relative flex min-h-screen flex-col">
-	<!-- ─── Hero section ─── -->
-	<div
-		class="hero-enter relative px-6 pt-12 pb-10 text-center"
-		style="background: radial-gradient(ellipse at 50% 0%, {tc.glow} 0%, transparent 62%);"
-	>
-		<!-- Team color stripe at very top -->
-		<div
-			class="absolute top-0 right-0 left-0 h-1.5 rounded-none"
-			style="background: {tc.bg};"
-		></div>
-
-		<!-- Team identity pill -->
-		<div
-			class="mb-5 inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-bold tracking-widest uppercase"
-			style="background: {tc.bg}22; border: 1px solid {tc.border}50; color: {tc.border};"
-		>
-			{data.team.display_name}
-		</div>
-
-		<!-- Display heading -->
-		<h1
-			class="leading-none font-black tracking-tight text-white uppercase"
-			style="font-size: clamp(2.2rem, 8vw, 4rem);"
-		>
-			That's a wrap.
-		</h1>
-
-		{#if data.playerName}
-			<p class="mt-3 text-lg font-semibold text-mixup-ice/65">{data.playerName}</p>
-		{/if}
-
-		<p class="mt-1 text-xs tracking-[0.22em] text-white/25 uppercase">{data.setName}</p>
-
-		<!-- Hero score -->
-		<div class="mt-8">
-			<div class="mb-1.5 text-xs font-semibold tracking-[0.25em] text-white/28 uppercase">
-				Total score
-			</div>
-			<div
-				class="leading-none font-black tabular-nums"
-				style="
-					font-size: clamp(3.5rem, 14vw, 5.5rem);
-					color: #ffe600;
-					text-shadow: 0 0 36px rgba(255,230,0,0.32), 0 2px 10px rgba(0,0,0,0.8);
-				"
-			>
-				{data.totalScore}
-			</div>
-			<div class="mt-1 text-xs tracking-[0.25em] text-white/22 uppercase">points</div>
-		</div>
-
-		<!-- Stat line -->
-		{#if challengesPlayed > 0}
-			<div class="mt-6">
-				<span
-					class="rounded-full px-3 py-1 text-xs font-semibold tracking-wider text-white/35 uppercase"
-					style="background: rgba(255,255,255,0.05);"
-				>
-					{challengesPlayed}
-					{challengesPlayed === 1 ? 'challenge' : 'challenges'} played
-				</span>
-			</div>
-		{/if}
-	</div>
-
-	<!-- ─── Body content ─── -->
-	<div class="mx-auto w-full max-w-lg space-y-5 px-4 py-6">
-		<!-- Best moment achievement callout -->
-		{#if bestChallenge}
-			<div
-				class="card-enter flex items-center gap-3 rounded-xl px-4 py-3"
-				style="
-					background: rgba(255,45,170,0.07);
-					border: 1px solid rgba(255,45,170,0.22);
-					animation-delay: 80ms;
-				"
-			>
-				<span class="text-xl leading-none">⭐</span>
-				<div class="min-w-0 flex-1">
-					<div class="text-xs font-semibold tracking-widest text-mixup-magenta/60 uppercase">
-						Best moment
+				{#if tier.supreme}
+					<!-- Alleen plek 1: het Supreme-watermerk, binnen de kaartradius geklemd. -->
+					<div class="card__clip squircle">
+						<img src={RANK_ASSETS.supreme} alt="" class="card__supreme" />
 					</div>
-					<div class="truncate text-sm font-bold text-white">{bestChallenge.title}</div>
-				</div>
-				<div class="shrink-0 text-right text-lg font-black tabular-nums" style="color: #ff2daa;">
-					+{bestChallenge.score}
-				</div>
-			</div>
-		{/if}
+				{/if}
 
-		<!-- Challenges played list -->
+				<!-- Teamkleurbalk bovenop de kaart. -->
+				<div class="card__team-bar"></div>
+
+				<img
+					src={tier.asset}
+					alt=""
+					class="card__medal"
+					style="width: {tier.assetWidth}px;
+					       height: {tier.assetHeight}px;
+					       top: {tier.assetTop}px;
+					       margin-left: {-tier.assetWidth / 2}px;"
+				/>
+
+				<div class="card__tag">{tag}</div>
+				<div class="card__rank">{data.place}</div>
+				<div class="card__team">{data.team.display_name}</div>
+				<div class="card__score">{nl.format(data.teamSetScore)} PUNTEN</div>
+				{#if delta}
+					<div class="card__delta">{delta}</div>
+				{/if}
+
+				{#if initials.length > 0}
+					<div class="card__crew">
+						{#each initials as p (p.id)}
+							<span class="card__mate">{p.ini}</span>
+						{/each}
+					</div>
+				{/if}
+
+				<div class="card__foil"></div>
+			</div>
+
+			<div class="hero__foot">
+				<a href="/" class="replay squircle">SPEEL OPNIEUW</a>
+				{#if data.challengeResults.length > 0}
+					<span class="hero__hint">JULLIE AVOND ↓</span>
+				{/if}
+			</div>
+		</section>
+
+		<!-- ─── Terugblik: wat jullie deze set speelden ─── -->
 		{#if data.challengeResults.length > 0}
-			<div>
-				<h2 class="mb-3 text-xs font-bold tracking-[0.22em] text-white/28 uppercase">
-					Your challenges
-				</h2>
-				<div class="space-y-2">
-					{#each data.challengeResults as ch, i}
+			<section class="recap">
+				<div class="recap__stats">
+					<div class="stat squircle">
+						<span class="stat__value">{challengesPlayed}</span>
+						<span class="stat__label">GESPEELD</span>
+					</div>
+					<div class="stat squircle">
+						<span class="stat__value"
+							>{data.place}<span class="stat__of">/{data.totalTeams}</span></span
+						>
+						<span class="stat__label">EINDPLEK</span>
+					</div>
+					<div class="stat squircle">
+						<span class="stat__value stat__value--score">{nl.format(data.totalScore)}</span>
+						<span class="stat__label">PUNTEN</span>
+					</div>
+				</div>
+
+				{#if bestChallenge}
+					<div class="best squircle">
+						<span class="best__label">BESTE MOMENT</span>
+						<span class="best__title">{bestChallenge.title}</span>
+						<span class="best__score">+{bestChallenge.score}</span>
+					</div>
+				{/if}
+
+				<h2 class="recap__heading">JULLIE CHALLENGES</h2>
+				<div class="recap__list">
+					{#each data.challengeResults as ch, i (i)}
 						{@const VariantIcon = getVariantIcon(ch.variant)}
 						{@const variantColor = getVariantColor(ch.variant)}
-						<div
-							class="card-enter overflow-hidden rounded-xl"
-							style="
-								background: rgba(255,255,255,0.03);
-								border: 1px solid rgba(255,255,255,0.06);
-								border-left: 3px solid rgba(0,229,255,0.45);
-								animation-delay: {(i + (bestChallenge ? 2 : 1)) * 80}ms;
-							"
-						>
-							<div class="flex items-center gap-3 px-4 py-3">
-								<!-- Variant icon badge -->
-								<div
-									class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg {variantColor}"
-								>
-									<VariantIcon size={14} />
-								</div>
-
-								<!-- Name + variant -->
-								<div class="min-w-0 flex-1">
-									<div class="truncate font-semibold text-mixup-ice">{ch.title}</div>
-									<div class="text-xs text-white/30 capitalize">{ch.variant}</div>
-								</div>
-
-								<!-- Score -->
-								<div class="shrink-0 text-right">
-									{#if ch.score !== null}
-										<div
-											class="text-sm font-black tabular-nums"
-											style="color: {ch.score > 0 ? '#ffe600' : 'rgba(255,255,255,0.35)'};"
-										>
-											{ch.score > 0 ? '+' : ''}{ch.score}
-										</div>
-										<div class="text-xs text-white/22">pts</div>
-									{:else}
-										<div class="text-xs text-white/22">—</div>
-									{/if}
-								</div>
-							</div>
+						<div class="ch squircle">
+							<span class="ch__icon {variantColor}"><VariantIcon size={14} /></span>
+							<span class="ch__body">
+								<span class="ch__title">{ch.title}</span>
+								<span class="ch__variant">{ch.variant}</span>
+							</span>
+							<span class="ch__score" class:ch__score--zero={!ch.score}>
+								{ch.score !== null ? `${ch.score > 0 ? '+' : ''}${ch.score}` : '—'}
+							</span>
 						</div>
 					{/each}
 				</div>
-			</div>
-		{:else}
-			<!-- Edge case: no challenges at all -->
-			<div
-				class="card-enter rounded-xl border p-8 text-center"
-				style="background: rgba(255,255,255,0.02); border-color: rgba(255,255,255,0.05);"
-			>
-				<p class="text-white/35">No challenges played this set</p>
-				<p class="mt-1 text-sm text-white/20">Thanks for being here!</p>
-			</div>
+
+				<p class="recap__outro">Bedankt voor het spelen. Tot de volgende.</p>
+			</section>
 		{/if}
-
-		<!-- Play again button -->
-		<div class="pt-1">
-			<a
-				href="/"
-				class="flex w-full items-center justify-center rounded-xl py-3.5 text-base font-bold transition-opacity hover:opacity-85"
-				style="background: {tc.bg}; color: {tc.text};"
-			>
-				Play again
-			</a>
-		</div>
-
-		<!-- Closing section -->
-		<div class="border-t pt-6 pb-8 text-center" style="border-color: rgba(0,229,255,0.1);">
-			<p class="text-sm text-mixup-ice/25 italic">Thanks for playing. See you next time.</p>
-		</div>
-	</div>
+	</PlayerScreen>
 </div>
 
 <style>
-	@keyframes fade-in-down {
-		from {
+	.finale {
+		background: var(--page-bg);
+	}
+
+	/* De paginagrond van dit scherm wint van de standaard mixup-page-gradient;
+	   de code-regen erbovenop krijgt dezelfde grond via --cr-backdrop. */
+	.finale :global(.player-screen) {
+		background: var(--page-bg);
+	}
+
+	.hero {
+		flex: 1 0 auto;
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+		gap: 22px;
+		/* Ruimte bovenin zodat de kroon (top -130) niet tegen de notch loopt. */
+		padding-top: 96px;
+	}
+
+	/* ══════════════════════════════════════════════════════════════
+	   DE KAART
+	══════════════════════════════════════════════════════════════ */
+	.card {
+		position: relative;
+		background: linear-gradient(
+			165deg,
+			color-mix(in srgb, var(--team) 85%, transparent) 0%,
+			rgba(10, 9, 18, 0.97) 108%
+		);
+		border: 1px solid color-mix(in srgb, var(--accent) 70%, transparent);
+		border-radius: var(--radius-mixup-modal);
+		box-shadow:
+			0 0 34px color-mix(in srgb, var(--accent) 35%, transparent),
+			0 0 96px color-mix(in srgb, var(--accent) 19%, transparent),
+			inset 0 1px 0 rgba(255, 255, 255, 0.16),
+			inset 0 0 46px color-mix(in srgb, var(--accent) 13%, transparent);
+		padding: 104px 22px 24px;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 8px;
+		text-align: center;
+		animation: ticket-in 0.8s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+	}
+
+	.card__halo {
+		position: absolute;
+		left: 50%;
+		top: 50%;
+		width: 155%;
+		height: 150%;
+		transform: translate(-50%, -50%);
+		pointer-events: none;
+		background: radial-gradient(
+			closest-side,
+			color-mix(in srgb, var(--accent) 24%, transparent) 0%,
+			color-mix(in srgb, var(--accent) 7%, transparent) 46%,
+			transparent 72%
+		);
+	}
+
+	.card__clip {
+		position: absolute;
+		inset: 0;
+		overflow: hidden;
+		border-radius: var(--radius-mixup-modal);
+		pointer-events: none;
+	}
+
+	.card__supreme {
+		position: absolute;
+		left: 50%;
+		top: 54%;
+		width: 96%;
+		transform: translate(-50%, -50%);
+		object-fit: contain;
+		mix-blend-mode: multiply;
+		filter: blur(2px);
+		opacity: 0.85;
+		pointer-events: none;
+	}
+
+	.card__team-bar {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 0;
+		height: 6px;
+		background: var(--team);
+		border-radius: var(--radius-mixup-modal) var(--radius-mixup-modal) 0 0;
+	}
+
+	.card__medal {
+		position: absolute;
+		left: 50%;
+		object-fit: contain;
+		pointer-events: none;
+		filter: drop-shadow(0 10px 26px rgba(0, 0, 0, 0.55))
+			drop-shadow(0 0 28px color-mix(in srgb, var(--accent) 50%, transparent));
+	}
+
+	.card__tag {
+		position: relative;
+		font-family: var(--font-data);
+		font-size: 10px;
+		letter-spacing: 0.24em;
+		color: var(--accent);
+	}
+
+	.card__rank {
+		position: relative;
+		font-family: var(--font-display);
+		font-weight: 900;
+		font-size: 124px;
+		line-height: 0.86;
+		color: var(--metal-face);
+		text-shadow:
+			0 2px 0 var(--metal-shadow),
+			0 10px 30px rgba(0, 0, 0, 0.55);
+	}
+
+	.card__team {
+		position: relative;
+		font-family: var(--font-display);
+		font-weight: 900;
+		font-size: 40px;
+		line-height: 0.92;
+		text-transform: uppercase;
+		color: #ffffff;
+		text-shadow: 0 4px 18px rgba(0, 0, 0, 0.6);
+	}
+
+	.card__score {
+		position: relative;
+		font-family: var(--font-display);
+		font-weight: 900;
+		font-size: 28px;
+		color: #ffffff;
+		text-shadow: 0 4px 16px rgba(0, 0, 0, 0.55);
+	}
+
+	.card__delta {
+		position: relative;
+		font-family: var(--font-data);
+		font-size: 10px;
+		letter-spacing: 0.16em;
+		color: rgba(229, 242, 255, 0.8);
+	}
+
+	.card__crew {
+		position: relative;
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: center;
+		gap: 8px;
+		margin-top: 6px;
+	}
+
+	.card__mate {
+		width: 34px;
+		height: 34px;
+		border-radius: 50%;
+		background: rgba(229, 242, 255, 0.12);
+		border: 1.5px solid rgba(229, 242, 255, 0.5);
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		font-family: var(--font-ui);
+		font-weight: 800;
+		font-size: 11px;
+		color: var(--color-mixup-paper);
+	}
+
+	.card__foil {
+		position: relative;
+		width: 100%;
+		height: 10px;
+		margin-top: 12px;
+		border-radius: 99px;
+		background: var(--foil);
+	}
+
+	/* ══════════════════════════════════════════════════════════════
+	   VOET VAN HET ARTBOARD
+	══════════════════════════════════════════════════════════════ */
+	.hero__foot {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 10px;
+	}
+
+	.replay {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		height: 52px;
+		padding: 0 28px;
+		border-radius: 24px;
+		background: rgba(229, 242, 255, 0.06);
+		border: 1px solid rgba(229, 242, 255, 0.2);
+		font-family: var(--font-ui);
+		font-weight: 800;
+		font-size: 15px;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--color-mixup-muted);
+		text-decoration: none;
+	}
+
+	.hero__hint {
+		font-family: var(--font-data);
+		font-size: 10px;
+		letter-spacing: 0.2em;
+		color: var(--color-mixup-dim);
+	}
+
+	/* ══════════════════════════════════════════════════════════════
+	   TERUGBLIK
+	══════════════════════════════════════════════════════════════ */
+	.recap {
+		display: flex;
+		flex-direction: column;
+		gap: 14px;
+		padding: 56px 0 8px;
+	}
+
+	.recap__stats {
+		display: flex;
+		gap: 10px;
+	}
+
+	.stat {
+		flex: 1 1 0;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 3px;
+		padding: 12px 6px;
+		border-radius: var(--radius-mixup-sm);
+		background: rgba(229, 242, 255, 0.04);
+		border: 1px solid rgba(229, 242, 255, 0.12);
+	}
+
+	.stat__value {
+		font-family: var(--font-display);
+		font-weight: 900;
+		font-size: 30px;
+		line-height: 1;
+		color: var(--color-mixup-paper);
+	}
+
+	.stat__value--score {
+		color: var(--color-mixup-yellow);
+	}
+
+	.stat__of {
+		font-size: 16px;
+		color: var(--color-mixup-muted);
+	}
+
+	.stat__label {
+		font-family: var(--font-data);
+		font-size: 9px;
+		letter-spacing: 0.16em;
+		color: var(--color-mixup-dim);
+	}
+
+	.best {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 12px 14px;
+		border-radius: var(--radius-mixup-card);
+		background: rgba(255, 45, 170, 0.07);
+		border: 1px solid rgba(255, 45, 170, 0.22);
+	}
+
+	.best__label {
+		font-family: var(--font-ui);
+		font-weight: 800;
+		font-size: 10px;
+		letter-spacing: 0.16em;
+		color: var(--color-mixup-magenta);
+		flex: 0 0 auto;
+	}
+
+	.best__title {
+		font-family: var(--font-ui);
+		font-weight: 700;
+		font-size: 13px;
+		color: var(--color-mixup-paper);
+		flex: 1 1 auto;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.best__score {
+		font-family: var(--font-display);
+		font-weight: 900;
+		font-size: 20px;
+		color: var(--color-mixup-magenta);
+		flex: 0 0 auto;
+	}
+
+	.recap__heading {
+		font-family: var(--font-data);
+		font-size: 10px;
+		letter-spacing: 0.22em;
+		color: var(--color-mixup-dim);
+	}
+
+	.recap__list {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+
+	.ch {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 10px 12px;
+		border-radius: var(--radius-mixup-sm);
+		background: rgba(229, 242, 255, 0.04);
+		border: 1px solid rgba(229, 242, 255, 0.12);
+	}
+
+	.ch__icon {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 30px;
+		height: 30px;
+		border-radius: 10px;
+		flex: 0 0 auto;
+	}
+
+	.ch__body {
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+		flex: 1 1 auto;
+	}
+
+	.ch__title {
+		font-family: var(--font-ui);
+		font-weight: 700;
+		font-size: 13px;
+		color: var(--color-mixup-paper);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.ch__variant {
+		font-family: var(--font-data);
+		font-size: 10px;
+		letter-spacing: 0.1em;
+		color: var(--color-mixup-dim);
+		text-transform: uppercase;
+	}
+
+	.ch__score {
+		font-family: var(--font-display);
+		font-weight: 900;
+		font-size: 20px;
+		color: var(--color-mixup-yellow);
+		flex: 0 0 auto;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.ch__score--zero {
+		color: var(--color-mixup-dim);
+	}
+
+	.recap__outro {
+		margin-top: 6px;
+		text-align: center;
+		font-family: var(--font-ui);
+		font-weight: 500;
+		font-size: 12px;
+		font-style: italic;
+		color: var(--color-mixup-muted);
+	}
+
+	/* ══════════════════════════════════════════════════════════════
+	   MOTION
+	══════════════════════════════════════════════════════════════ */
+	@keyframes ticket-in {
+		0% {
+			transform: translateY(70px) rotate(-3deg);
 			opacity: 0;
-			transform: translateY(-16px);
 		}
-		to {
+		70% {
+			transform: translateY(-6px) rotate(1deg);
 			opacity: 1;
-			transform: translateY(0);
 		}
-	}
-
-	.hero-enter {
-		animation: fade-in-down 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
-	}
-
-	@keyframes card-slide-in {
-		from {
-			opacity: 0;
-			transform: translateY(10px);
-		}
-		to {
+		100% {
+			transform: translateY(0) rotate(0deg);
 			opacity: 1;
-			transform: translateY(0);
 		}
 	}
 
-	.card-enter {
-		animation: card-slide-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+	@media (prefers-reduced-motion: reduce) {
+		.card {
+			animation: none;
+		}
 	}
 </style>
