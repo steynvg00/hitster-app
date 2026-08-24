@@ -38,6 +38,7 @@
 	import PlayerScreen from '$lib/components/game/PlayerScreen.svelte';
 	import TrackSegmentBar from '$lib/components/game/TrackSegmentBar.svelte';
 	import { teamHex as teamHexFor, teamOnColor } from '$lib/team-theme';
+	import { stripSetNameFromTitle } from '$lib/challenge-title';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -47,6 +48,13 @@
 	const teamHex = $derived(teamHexFor(data.team.color));
 	/** Leesbare tekstkleur op een vlak in de teamkleur (geel is te licht voor wit). */
 	const teamOn = $derived(teamOnColor(data.team.color));
+
+	// Kop van het antwoordformulier: alleen de challenge, niet de set. Hosts
+	// noemen challenges "<Setnaam> <Challenge>" ("Vrienden Weekend 2026
+	// Hitster"), en op 7B is die prefix ruis. Weergave-only — de titel in de
+	// database blijft ongemoeid, en zonder setnaam-overlap staat er gewoon de
+	// volledige titel.
+	const challengeTitle = $derived(stripSetNameFromTitle(data.challenge.title, data.activeSetName));
 
 	// ── Draft (localStorage) ──────────────────────────────────────────────────
 	// New shape: Record<tabPosition, SlotDraft[]>
@@ -1911,12 +1919,12 @@
 			</div>
 		</div>
 
-		<!-- Titel -->
+		<!-- Titel — alleen de challenge-naam, zie `challengeTitle`. -->
 		<h1
 			class="px-5 pt-2.5 font-display text-[34px] leading-[0.95] font-black text-mixup-paper uppercase"
 			style="text-shadow: 0 0 26px rgba(124,77,255,0.85);"
 		>
-			{data.challenge.title}
+			{challengeTitle}
 		</h1>
 
 		<!-- Segmentbalk: horizontaal scrollend, min-width 96px per tab, werkt bij

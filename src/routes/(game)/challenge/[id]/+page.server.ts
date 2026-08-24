@@ -493,6 +493,9 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 	// ── Active set + NFC lock guard ───────────────────────────────────────────
 	let activeSetId: string | null = null;
 	let activeSetRecapState: string | null = null;
+	// Alleen voor de kop van het antwoordformulier: hosts noemen challenges
+	// "<Setnaam> <Challenge>", en daar hoort de setnaam niet nog eens bij.
+	let activeSetName: string | null = null;
 	if (locals.playerId) {
 		const { data: playerRow } = await admin
 			.from('players')
@@ -502,12 +505,13 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		if (playerRow?.set_id) {
 			const { data: gs } = await admin
 				.from('game_sets')
-				.select('id, recap_state, nfc_lock_enabled')
+				.select('id, name, recap_state, nfc_lock_enabled')
 				.eq('id', playerRow.set_id)
 				.maybeSingle();
 			if (gs) {
 				activeSetId = gs.id;
 				activeSetRecapState = gs.recap_state ?? null;
+				activeSetName = (gs as { name?: string | null }).name ?? null;
 
 				if (isNfcUnlockRequired(challenge, gs) && locals.teamId) {
 					const { data: unlockRow } = await admin
@@ -684,6 +688,7 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		priorResult,
 		attempt,
 		activeSetId,
+		activeSetName,
 		activeSetRecapState,
 		showHint,
 		hintUsed,
