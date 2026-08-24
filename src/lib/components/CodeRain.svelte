@@ -38,13 +38,11 @@
 	let { layers = 3, opacity = 1, class: className = '' }: Props = $props();
 
 	const tile = `url(${OVERLAY_ASSETS.codeRain})`;
+
+	let wrapperClass = $derived(`mixup-coderain ${className}`.trim());
 </script>
 
-<div
-	class="mixup-coderain {className}"
-	aria-hidden="true"
-	style="--cr-tile: {tile}; --cr-scale: {opacity};"
->
+<div class={wrapperClass} aria-hidden="true" style="--cr-tile: {tile}; --cr-scale: {opacity};">
 	<div class="cr-layer cr-layer--cyan"></div>
 	<div class="cr-layer cr-layer--magenta"></div>
 	{#if layers >= 3}
