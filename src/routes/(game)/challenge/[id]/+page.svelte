@@ -1,9 +1,15 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { goto } from '$app/navigation';
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import type { PageData, ActionData } from './$types';
-	import type { AnswerField, InputMode, ChallengeResult } from '$lib/types/index.js';
+	import type {
+		AnswerField,
+		InputMode,
+		ChallengeResult,
+		FieldResult,
+		TabFieldResult
+	} from '$lib/types/index.js';
 	import Combobox from '$lib/components/ui/Combobox.svelte';
 	import MultipleChoice from '$lib/components/ui/MultipleChoice.svelte';
 	import OpenText from '$lib/components/ui/OpenText.svelte';
@@ -27,19 +33,18 @@
 	import PowerupRevealModal from '$lib/components/game/PowerupRevealModal.svelte';
 	import TapToBreakOverlay from '$lib/components/game/TapToBreakOverlay.svelte';
 	import AllSeeingEyeModal from '$lib/components/game/AllSeeingEyeModal.svelte';
-	import { getTypeIcon, getTypeColor } from '$lib/variants';
+	import PlayerScreen from '$lib/components/game/PlayerScreen.svelte';
+	import TrackSegmentBar from '$lib/components/game/TrackSegmentBar.svelte';
+	import { teamHex as teamHexFor, teamOnColor } from '$lib/team-theme';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
-	const teamColors: Record<string, string> = {
-		blue: '#3b82f6',
-		yellow: '#eab308',
-		green: '#22c55e',
-		red: '#ef4444',
-		indigo: '#6366f1',
-		black: '#1e293b'
-	};
-	const teamHex = $derived(teamColors[data.team.color] ?? '#ef4444');
+	// Teamkleur uit de gedeelde fase-1/2-bron (src/lib/team-theme.ts), niet uit
+	// een eigen kopie: de actieve tab, de jaarchips en de play-knop van scherm 7B
+	// moeten dezelfde kleur dragen als de team-hub en de randomizer.
+	const teamHex = $derived(teamHexFor(data.team.color));
+	/** Leesbare tekstkleur op een vlak in de teamkleur (geel is te licht voor wit). */
+	const teamOn = $derived(teamOnColor(data.team.color));
 
 	// ── Draft (localStorage) ──────────────────────────────────────────────────
 	// New shape: Record<tabPosition, SlotDraft[]>
@@ -339,6 +344,13 @@
 		}
 		return d;
 	}
+
+	// Aantal te raden tracks, voor de variant-pil op de pre-game poort. Som van de
+	// bron-tracks over alle tabs: een mashup met 3 bronnen in één tab telt als 3,
+	// een standaard challenge met 5 tabs als 5.
+	const gateTrackCount = $derived(
+		data.tabs.reduce((n, t) => n + Math.max(t.sourceTracks.length, 1), 0)
+	);
 
 	// ── Tab state ─────────────────────────────────────────────────────────────
 	let activeTabIndex = $state(0);
@@ -734,6 +746,29 @@
 		return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 	}
 
+	// Kleurtrap van de klok uit de designbron (7B): boven een minuut gedempt,
+	// onder een minuut geel, laatste 30 seconden magenta — telkens met een
+	// bijpassende glow eronder.
+	const timerSec = $derived(timerMs === null ? null : Math.ceil(timerMs / 1000));
+	const timerColor = $derived(
+		timerSec === null
+			? '#8E9BC9'
+			: timerSec > 60
+				? '#8E9BC9'
+				: timerSec > 30
+					? '#FFE600'
+					: '#FF2DAA'
+	);
+	const timerGlow = $derived(
+		timerSec === null
+			? 'rgba(142,155,201,0.2)'
+			: timerSec > 60
+				? 'rgba(142,155,201,0.2)'
+				: timerSec > 30
+					? 'rgba(255,230,0,0.4)'
+					: 'rgba(255,45,170,0.55)'
+	);
+
 	// ── Form + auto-submit ────────────────────────────────────────────────────
 	let formEl = $state<HTMLFormElement | undefined>(undefined);
 	let submitting = $state(false);
@@ -1011,10 +1046,42 @@
 	const formError = $derived<string | null>(f?.formError ?? null);
 	const reviewError = $derived<string | null>(f?.reviewError ?? null);
 
-	let resultTabIndex = $state(0);
-	const resultTab = $derived(result?.tabs?.[resultTabIndex] ?? null);
-	// Legacy flat result for simple display when tabs not present
-	const resultTrack = $derived(result?.tracks?.[resultTabIndex] ?? null);
+	// ── Resultaten-accordeon (scherm 8) ───────────────────────────────────────
+	// De designbron toont elke track als een uitklapkaart in plaats van de oude
+	// tabstrip; de eerste staat open. Puur weergave — de scores zelf komen
+	// onveranderd uit `result` / de realtime-subscription.
+	//
+	// De oude `resultTabIndex` (en de `resultTab`/`resultTrack` die eruit
+	// werden afgeleid) is daarmee vervallen: elke tab rendert nu, in plaats van
+	// alleen de geselecteerde. De legacy platte weergave (`result.tracks`, voor
+	// resultaten van vóór de tab-architectuur) loopt om dezelfde reden over de
+	// volledige lijst.
+	let openResultTab = $state(0);
+	function toggleResultTab(i: number) {
+		openResultTab = openResultTab === i ? -1 : i;
+	}
+
+	/**
+	 * BASIS-score van een veld: `score` is de teambijdrage inclusief bonusartiesten,
+	 * `maxScore` is de basis-max. Rechtstreeks vergelijken zou een perfect antwoord
+	 * mét bonusartiest als "deels goed" markeren — dezelfde splitsing die de
+	 * bestaande veldrijen al maken.
+	 */
+	const baseScoreOf = (fr: FieldResult) => fr.score - (fr.bonusScore ?? 0);
+
+	/** "x/y GOED" per resultaat-tab, over alle slots heen. */
+	function tabMarks(t: TabFieldResult): { ok: number; total: number } {
+		let ok = 0;
+		let total = 0;
+		for (const slot of t.slots) {
+			for (const fr of slot.fields) {
+				if (fr.isBonus) continue;
+				total++;
+				if (baseScoreOf(fr) === fr.maxScore) ok++;
+			}
+		}
+		return { ok, total };
+	}
 
 	// ── Totals block: base | bonus+extras | total ─────────────────────────────
 	// BASE is the scorer's own bonus-excluded sum (thresholdTotal) — the exact
@@ -1106,16 +1173,34 @@
 	});
 
 	// ── Field labels ──────────────────────────────────────────────────────────
+	// Speler-facing labels zijn Nederlands, net als de rest van de speler-flow
+	// (fase 2) en de designbron ("ARTIEST", "TITEL", "UIT WELK JAAR?").
 	const FIELD_LABELS: Record<string, string> = {
-		artist: 'Artist',
-		title: 'Title',
-		year: 'Year',
-		label: 'Record Label',
+		artist: 'Artiest',
+		title: 'Titel',
+		year: 'Uit welk jaar?',
+		label: 'Platenlabel',
 		festival: 'Festival',
-		grouping: 'Which fragments?'
+		vocal_source: 'Vocal',
+		grouping: 'Welke fragmenten?'
 	};
 	function fieldLabel(field: AnswerField) {
 		return FIELD_LABELS[field as string] ?? field;
+	}
+
+	// Korte variant voor de resultaatrijen (scherm 8): daar staat het label in een
+	// smalle kolom naast het gegeven antwoord, dus "Uit welk jaar?" past niet.
+	const RESULT_FIELD_LABELS: Record<string, string> = {
+		artist: 'Artiest',
+		title: 'Titel',
+		year: 'Jaar',
+		label: 'Label',
+		festival: 'Festival',
+		vocal_source: 'Vocal',
+		grouping: 'Groep'
+	};
+	function resultFieldLabel(field: AnswerField) {
+		return RESULT_FIELD_LABELS[field as string] ?? fieldLabel(field);
 	}
 
 	const bonusFieldSet = $derived(new Set(data.bonusFields));
@@ -1124,9 +1209,6 @@
 	}
 
 	let reviewingKey = $state<string | null>(null);
-
-	const TypeIcon = $derived(getTypeIcon(data.challenge.variant));
-	const typeColor = $derived(getTypeColor(data.challenge.variant));
 
 	// ── Live result (realtime submissions subscription) ───────────────────────
 	let liveScore = $state<number | null>(null);
@@ -1176,21 +1258,42 @@
 		return () => supabaseBrowser.removeChannel(channel);
 	});
 
+	/**
+	 * Count-up naar de eindscore (scherm 8).
+	 *
+	 * Twee eisen uit de designspec, allebei expliciet afgedwongen:
+	 *
+	 *  1. STOPT EXACT OP DE EINDWAARDE. De laatste frame zet `target` letterlijk,
+	 *     zonder afronding van een interpolatie — een frame die net na `dur`
+	 *     valt kan anders op target±1 blijven staan.
+	 *  2. TIMER OPGERUIMD BIJ UNMOUNT. De teardown van dit effect cancelt de
+	 *     lopende rAF, dus er loopt nooit een teller door op een verdwenen
+	 *     scherm (en een nieuwe score herstart hem netjes vanaf de huidige stand).
+	 *
+	 * `from` wordt met `untrack` gelezen: `animatedScore` is ook wat dit effect
+	 * schrijft, dus zonder untrack zou elke frame het effect opnieuw laten
+	 * starten en de easing per frame resetten.
+	 */
 	$effect(() => {
 		const target = liveScore ?? 0;
+		const from = untrack(() => animatedScore);
+		if (target === from) return;
 		if (target === 0) {
 			animatedScore = 0;
 			return;
 		}
-		const from = animatedScore;
 		const dur = Math.min(1400, 400 + Math.abs(target - from) * 8);
 		const startTime = performance.now();
-		let rafId: number;
+		let rafId = 0;
 		const tick = (now: number) => {
 			const p = Math.min((now - startTime) / dur, 1);
+			if (p >= 1) {
+				animatedScore = target;
+				return;
+			}
 			const eased = 1 - Math.pow(1 - p, 3);
 			animatedScore = Math.round(from + (target - from) * eased);
-			if (p < 1) rafId = requestAnimationFrame(tick);
+			rafId = requestAnimationFrame(tick);
 		};
 		rafId = requestAnimationFrame(tick);
 		return () => cancelAnimationFrame(rafId);
@@ -1278,305 +1381,309 @@
 		</div>
 	</div>
 {:else if result}
-	<!-- ── Results screen ──────────────────────────────────────────────────── -->
-	<div class="mx-auto min-h-screen max-w-lg p-4">
-		<div class="pt-4 pb-6">
-			<span
-				class="rounded-full px-3 py-1 text-xs font-bold tracking-widest text-white uppercase"
-				style="background-color: {teamHex};">{data.team.display_name}</span
+	<!--
+		── Scherm 8 · RESULTATEN ────────────────────────────────────────────────
+		Bron: design/"M!XUP Player Flow v2.dc.html", artboard "8 Resultaten".
+		Kop + teampil boven, uitklapkaart per track in het midden, en onderaan
+		de drie cellen BASIS · BONUS · TOTAAL met de count-up op TOTAAL.
+
+		Alles hieronder is presentatie. De review-aanvraag draait nog steeds via
+		dezelfde `?/requestReview` action met exact dezelfde velden, en de score
+		komt onveranderd uit `result` / de realtime-subscription.
+	-->
+	<PlayerScreen class="px-5">
+		<div class="flex items-center justify-between">
+			<span class="flex items-center gap-[7px] rounded-full px-3 py-1.5 mixup-glass squircle">
+				<span
+					class="h-2.5 w-2.5 rounded-full"
+					style="background: {teamHex}; box-shadow: 0 0 10px {teamHex};"
+				></span>
+				<span class="text-[11px] font-extrabold tracking-[0.1em] text-mixup-paper uppercase"
+					>{data.team.display_name}</span
+				>
+			</span>
+			<span class="truncate pl-3 text-[11px] font-medium tracking-[0.12em] text-mixup-muted"
+				>{data.challenge.title}</span
 			>
 		</div>
-		<h1 class="mb-1 text-2xl font-black">Results</h1>
-		<p class="mb-4 text-sm text-zinc-400">{data.challenge.title}</p>
 
-		{#if reviewError}
-			<div class="mb-4 rounded-xl border border-red-600/50 bg-red-900/30 p-3 text-sm text-red-300">
-				{reviewError}
-			</div>
-		{/if}
-		{#if reviewJustResolved && liveStatus === 'review_approved'}
-			<div
-				class="mb-4 rounded-xl border border-green-600/50 bg-green-900/30 p-3 text-sm text-green-300"
-			>
-				✓ Review approved{pointsAwarded > 0 ? ` — +${pointsAwarded} points added!` : ''}
-			</div>
-		{:else if reviewJustResolved && liveStatus === 'review_rejected'}
-			<div
-				class="mb-4 rounded-xl border border-zinc-600/50 bg-zinc-800/60 p-3 text-sm text-zinc-400"
-			>
-				Review rejected — your original score stands.
-			</div>
-		{/if}
+		<h1
+			class="mt-2.5 font-display text-[34px] leading-[0.95] font-black text-mixup-paper uppercase"
+			style="text-shadow: 0 0 26px rgba(124,77,255,0.85);"
+		>
+			Resultaten
+		</h1>
 
-		<!-- Tab tabs (multi-tab) -->
-		{#if (result.tabs?.length ?? 0) > 1}
-			<div class="mb-4 flex gap-1 overflow-x-auto pb-1">
-				{#each result.tabs ?? [] as tr, i}
-					<!-- Base-only, like the field badges: tr.total carries the bonus but
-					     tr.maxTotal is base-only, so the raw pair would read "15/10". -->
-					{@const tabBase = tr.slots.reduce((s, sl) => s + thresholdOfFields(sl.fields).total, 0)}
-					<button
-						type="button"
-						onclick={() => (resultTabIndex = i)}
-						class="shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors {resultTabIndex ===
-						i
-							? 'text-white'
-							: 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}"
-						style={resultTabIndex === i ? `background-color: ${teamHex};` : ''}
-					>
-						Tab {tr.tabIndex} <span class="ml-1 text-xs opacity-70">{tabBase}/{tr.maxTotal}</span>
-					</button>
-				{/each}
-			</div>
-		{/if}
+		<div class="mt-2.5 flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto">
+			{#if reviewError}
+				<div
+					class="rounded-mixup-sm border border-mixup-magenta/50 bg-mixup-magenta/10 p-3 text-sm text-mixup-magenta squircle"
+				>
+					{reviewError}
+				</div>
+			{/if}
+			{#if reviewJustResolved && liveStatus === 'review_approved'}
+				<div
+					class="rounded-mixup-sm border border-mixup-green/50 bg-mixup-green/10 p-3 text-sm text-mixup-green squircle"
+				>
+					✓ Review goedgekeurd{pointsAwarded > 0 ? ` — +${pointsAwarded} punten erbij!` : ''}
+				</div>
+			{:else if reviewJustResolved && liveStatus === 'review_rejected'}
+				<div class="rounded-mixup-sm p-3 text-sm text-mixup-muted mixup-glass squircle">
+					Review afgewezen — je oorspronkelijke score blijft staan.
+				</div>
+			{/if}
 
-		<!-- Per-tab results (use slots within tab) -->
-		{#if resultTab}
-			{#each resultTab.slots as slot, slotIdx (slotIdx)}
-				{#if slotIdx > 0}
-					<div class="mb-3 flex items-center gap-2 text-xs text-zinc-500">
-						<div class="h-px flex-1 bg-zinc-800"></div>
-						<span>Slot {slotIdx + 1}</span>
-						<div class="h-px flex-1 bg-zinc-800"></div>
-					</div>
-				{/if}
-				<div class="mb-4 space-y-1 rounded-2xl bg-zinc-900 p-5">
-					{#each slot.fields as fr, i}
-						<!-- The badge and the ✓/~/✗ marker are BASE-only: fr.score is the
-						     team's contribution (main + bonus artists), fr.maxScore is the
-						     base max. Comparing those two directly would call a perfect
-						     answer with a bonus artist "partial" (or worse, score > max).
-						     The bonus is shown separately, in the star lines below. -->
-						{@const baseScore = fr.score - (fr.bonusScore ?? 0)}
-						{@const isPartial = baseScore > 0 && baseScore < fr.maxScore}
-						{@const isCorrect = baseScore === fr.maxScore}
-						{@const reviewKey = `tab_${resultTab.tabPosition}_slot_${slot.slotIndex}_${fr.field}`}
+			{#if (result.tabs?.length ?? 0) > 0}
+				{#each result.tabs ?? [] as tr, ti (tr.tabPosition)}
+					{@const marks = tabMarks(tr)}
+					{@const isOpen = openResultTab === ti}
+					<div class="overflow-hidden rounded-mixup-lg mixup-glass-strong squircle">
+						<button
+							type="button"
+							onclick={() => toggleResultTab(ti)}
+							aria-expanded={isOpen}
+							class="flex w-full cursor-pointer items-center justify-between gap-2.5 border-none bg-transparent px-4 py-[13px]"
+						>
+							<span class="text-xs font-extrabold tracking-[0.12em] text-mixup-paper uppercase"
+								>Track {tr.tabIndex}</span
+							>
+							<span class="flex items-center gap-2.5">
+								<span
+									class="text-[11px] font-bold tracking-[0.08em]"
+									style="color: {marks.ok === marks.total ? '#2BD97A' : '#FF6FC4'};"
+									>{marks.ok}/{marks.total} goed</span
+								>
+								<span class="font-display text-xl font-black text-mixup-yellow">+{tr.total}</span>
+								<span class="text-xs font-bold text-mixup-muted">{isOpen ? '▴' : '▾'}</span>
+							</span>
+						</button>
 
-						{#if i > 0}<div class="border-t border-zinc-800"></div>{/if}
-						<div class="py-3">
-							<div class="flex items-center justify-between">
-								<div>
-									<div
-										class="mb-0.5 flex items-center gap-1.5 text-xs font-semibold tracking-wide text-zinc-500 uppercase"
-									>
-										{fieldLabel(fr.field)}
-										{#if fr.isBonus}
-											<span
-												class="rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-amber-300 normal-case"
-												>Bonus</span
-											>
-										{/if}
-									</div>
-									<div class="font-semibold">{fr.submitted || '—'}</div>
-									{#if !isCorrect}
-										<div class="text-xs text-zinc-500">Correct: {fr.correct}</div>
-										{#if fr.fuzzyScore !== undefined}
-											<div class="text-xs text-zinc-600">
-												Match: {Math.round(fr.fuzzyScore * 100)}%
-											</div>
-										{/if}
-									{/if}
-									<!-- Which bonus artists the player caught, and what each was worth.
-									     The badge on the right is the field TOTAL (mains + bonus); these
-									     lines name the bonus part of it — additional detail, not a
-									     replacement. Only matched artists are listed, so a missed bonus
-									     artist renders nothing at all. -->
-									{#each fr.bonusArtists ?? [] as ba (ba.name)}
+						{#if isOpen}
+							<div class="flex flex-col gap-2 px-4 pb-3.5">
+								{#each tr.slots as slot, slotIdx (slotIdx)}
+									{#if slotIdx > 0}
 										<div
-											class="mt-1 flex items-center gap-1.5 text-xs font-semibold text-amber-300"
+											class="flex items-center gap-2 pt-1 text-[10px] tracking-[0.14em] text-mixup-dim uppercase"
 										>
-											<span>⭐</span>
-											<span>{ba.name}</span>
-											<span class="text-amber-400/70">+{ba.points} bonus</span>
+											<span class="h-px flex-1 bg-mixup-paper/10"></span>
+											<span>Slot {slotIdx + 1}</span>
+											<span class="h-px flex-1 bg-mixup-paper/10"></span>
 										</div>
-									{/each}
-								</div>
-								<div class="ml-4 shrink-0 text-right">
-									<div
-										class="text-xl font-black {isCorrect
-											? 'text-green-400'
-											: isPartial
-												? 'text-yellow-400'
-												: 'text-red-400'}"
-									>
-										{isCorrect ? '✓' : isPartial ? '~' : '✗'}
-									</div>
-									<div class="text-sm text-zinc-400">
-										{#if fr.isBonus}
-											+{fr.score} bonus
-										{:else}
-											+{baseScore} / {fr.maxScore}
-										{/if}
-									</div>
-								</div>
-							</div>
+									{/if}
+									{#each slot.fields as fr (fr.field)}
+										{@const baseScore = baseScoreOf(fr)}
+										{@const isPartial = baseScore > 0 && baseScore < fr.maxScore}
+										{@const isCorrect = baseScore === fr.maxScore}
+										{@const reviewKey = `tab_${tr.tabPosition}_slot_${slot.slotIndex}_${fr.field}`}
+										<div class="border-t border-mixup-paper/10 pt-2">
+											<div class="flex items-baseline gap-2.5">
+												<span
+													class="w-3.5 shrink-0 text-sm font-extrabold"
+													style="color: {isCorrect
+														? '#2BD97A'
+														: isPartial
+															? '#FFC24B'
+															: '#FF2DAA'};">{isCorrect ? '✓' : isPartial ? '~' : '✗'}</span
+												>
+												<span
+													class="w-[62px] shrink-0 text-[10px] font-bold tracking-[0.12em] text-mixup-muted uppercase"
+												>
+													{resultFieldLabel(fr.field)}
+												</span>
+												<span class="min-w-0 flex-1 text-sm font-medium text-mixup-paper"
+													>{fr.submitted || '—'}</span
+												>
+												<span class="shrink-0 text-right">
+													{#if fr.isBonus}
+														<span class="text-[11px] font-medium text-mixup-amber"
+															>+{fr.score} bonus</span
+														>
+													{:else}
+														<span class="text-[11px] font-medium text-mixup-muted"
+															>+{baseScore}/{fr.maxScore}</span
+														>
+													{/if}
+												</span>
+											</div>
+											{#if !isCorrect}
+												<div class="mt-1 pl-6 text-[11px] font-medium" style="color: #FF6FC4;">
+													Goede antwoord: {fr.correct}
+													{#if fr.fuzzyScore !== undefined}
+														<span class="text-mixup-dim"
+															>· {Math.round(fr.fuzzyScore * 100)}% match</span
+														>
+													{/if}
+												</div>
+											{/if}
+											{#each fr.bonusArtists ?? [] as ba (ba.name)}
+												<div
+													class="mt-1 flex items-center gap-1.5 pl-6 text-[11px] font-semibold text-mixup-amber"
+												>
+													<span>⭐</span>
+													<span>{ba.name}</span>
+													<span class="text-mixup-amber/70">+{ba.points} bonus</span>
+												</div>
+											{/each}
 
-							{#if (baseScore === 0 || isPartial) && data.fieldModes[fr.field] === 'open_text'}
-								{@const effectiveStatus = liveStatus ?? result.status}
-								{@const alreadyRequested =
-									reviewedKeys.has(reviewKey) ||
-									effectiveStatus === 'review_requested' ||
-									effectiveStatus === 'review_approved' ||
-									effectiveStatus === 'review_rejected'}
-								{#if alreadyRequested}
-									<p class="mt-2 text-xs text-amber-400">Review requested ✓</p>
-								{:else}
-									<div class="mt-2">
-										{#if reviewingKey === reviewKey}
-											<form
-												method="POST"
-												action="?/requestReview"
-												use:enhance={() =>
-													async ({ update }) => {
-														reviewingKey = null;
-														await update();
-													}}
-											>
-												<input type="hidden" name="submission_id" value={result.submissionId} />
-												<input type="hidden" name="team_id" value={data.team.id} />
-												<input type="hidden" name="field_name" value={reviewKey} />
-												<input type="hidden" name="track_id" value={slot.matchedTrackId ?? ''} />
-												<textarea
-													name="player_message"
-													placeholder="Optional: explain why you think this is correct"
-													rows="2"
-													class="mb-2 w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200 focus:outline-none"
-												></textarea>
-												<div class="flex gap-2">
-													<button
-														type="submit"
-														class="rounded-lg px-3 py-1.5 text-xs font-bold text-white transition-colors hover:opacity-90"
-														style="background-color: {teamHex};">Send request</button
+											{#if (baseScore === 0 || isPartial) && data.fieldModes[fr.field] === 'open_text'}
+												{@const effectiveStatus = liveStatus ?? result.status}
+												{@const alreadyRequested =
+													reviewedKeys.has(reviewKey) ||
+													effectiveStatus === 'review_requested' ||
+													effectiveStatus === 'review_approved' ||
+													effectiveStatus === 'review_rejected'}
+												{#if alreadyRequested}
+													<p class="mt-1.5 pl-6 text-[11px] text-mixup-amber">
+														Review aangevraagd ✓
+													</p>
+												{:else if reviewingKey === reviewKey}
+													<form
+														method="POST"
+														action="?/requestReview"
+														class="mt-2 pl-6"
+														use:enhance={() =>
+															async ({ update }) => {
+																reviewingKey = null;
+																await update();
+															}}
 													>
+														<input type="hidden" name="submission_id" value={result.submissionId} />
+														<input type="hidden" name="team_id" value={data.team.id} />
+														<input type="hidden" name="field_name" value={reviewKey} />
+														<input
+															type="hidden"
+															name="track_id"
+															value={slot.matchedTrackId ?? ''}
+														/>
+														<textarea
+															name="player_message"
+															placeholder="Optioneel: waarom denk je dat dit goed is?"
+															rows="2"
+															class="mb-2 w-full rounded-mixup-sm px-3 py-2 text-sm text-mixup-paper mixup-glass squircle focus:outline-none"
+														></textarea>
+														<div class="flex gap-2">
+															<button
+																type="submit"
+																class="rounded-full px-3 py-1.5 text-[11px] font-bold squircle"
+																style="background: {teamHex}; color: {teamOn};">Versturen</button
+															>
+															<button
+																type="button"
+																onclick={() => (reviewingKey = null)}
+																class="rounded-full border border-mixup-paper/20 px-3 py-1.5 text-[11px] text-mixup-muted squircle"
+																>Annuleren</button
+															>
+														</div>
+													</form>
+												{:else}
 													<button
 														type="button"
-														onclick={() => (reviewingKey = null)}
-														class="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200"
-														>Cancel</button
+														onclick={() => (reviewingKey = reviewKey)}
+														class="mt-1.5 ml-6 text-[11px] font-medium underline underline-offset-2"
+														style="color: {teamHex};">Handmatige review aanvragen</button
 													>
-												</div>
-											</form>
-										{:else}
-											<button
-												type="button"
-												onclick={() => (reviewingKey = reviewKey)}
-												class="text-xs font-medium underline underline-offset-2"
-												style="color: {teamHex};">Request manual review</button
-											>
-										{/if}
-									</div>
-								{/if}
-							{/if}
-						</div>
-					{/each}
-				</div>
-			{/each}
-		{:else if resultTrack}
-			<!-- Fallback: old flat result -->
-			<div class="mb-6 space-y-1 rounded-2xl bg-zinc-900 p-5">
-				{#each resultTrack.fields as fr, i}
-					{@const isCorrect = fr.score === fr.maxScore}
-					{@const isPartial = fr.score > 0 && fr.score < fr.maxScore}
-					{#if i > 0}<div class="border-t border-zinc-800"></div>{/if}
-					<div class="py-3">
-						<div class="flex items-center justify-between">
-							<div>
-								<div
-									class="mb-0.5 flex items-center gap-1.5 text-xs font-semibold tracking-wide text-zinc-500 uppercase"
-								>
-									{fieldLabel(fr.field)}
-									{#if fr.isBonus}
-										<span
-											class="rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-amber-300 normal-case"
-											>Bonus</span
-										>
-									{/if}
-								</div>
-								<div class="font-semibold">{fr.submitted || '—'}</div>
-								{#if !isCorrect}<div class="text-xs text-zinc-500">Correct: {fr.correct}</div>{/if}
+												{/if}
+											{/if}
+										</div>
+									{/each}
+								{/each}
 							</div>
-							<div class="ml-4 shrink-0 text-right">
-								<div
-									class="text-xl font-black {isCorrect
-										? 'text-green-400'
-										: isPartial
-											? 'text-yellow-400'
-											: 'text-red-400'}"
-								>
-									{isCorrect ? '✓' : isPartial ? '~' : '✗'}
-								</div>
-								<div class="text-sm text-zinc-400">
-									{#if fr.isBonus}
-										+{fr.score} bonus
-									{:else}
-										+{fr.score} / {fr.maxScore}
-									{/if}
-								</div>
-							</div>
-						</div>
+						{/if}
 					</div>
 				{/each}
-			</div>
-		{/if}
+			{:else}
+				<!-- Terugval: oud plat resultaat zonder tabs (van vóór de tab-architectuur). -->
+				{#each result.tracks ?? [] as track (track.trackId)}
+					<div class="flex flex-col gap-2 rounded-mixup-lg p-4 mixup-glass-strong squircle">
+						<div class="text-[11px] font-extrabold tracking-[0.12em] text-mixup-yellow uppercase">
+							Track {track.trackIndex} · +{track.total}
+						</div>
+						{#each track.fields as fr (fr.field)}
+							{@const isCorrect = fr.score === fr.maxScore}
+							{@const isPartial = fr.score > 0 && fr.score < fr.maxScore}
+							<div class="flex items-baseline gap-2.5 border-t border-mixup-paper/10 pt-2">
+								<span
+									class="w-3.5 shrink-0 text-sm font-extrabold"
+									style="color: {isCorrect ? '#2BD97A' : isPartial ? '#FFC24B' : '#FF2DAA'};"
+									>{isCorrect ? '✓' : isPartial ? '~' : '✗'}</span
+								>
+								<span
+									class="w-[62px] shrink-0 text-[10px] font-bold tracking-[0.12em] text-mixup-muted uppercase"
+									>{resultFieldLabel(fr.field)}</span
+								>
+								<span class="min-w-0 flex-1 text-sm font-medium text-mixup-paper"
+									>{fr.submitted || '—'}</span
+								>
+								<span class="shrink-0 text-[11px] font-medium text-mixup-muted"
+									>+{fr.score}/{fr.maxScore}</span
+								>
+							</div>
+						{/each}
+					</div>
+				{/each}
+			{/if}
 
-		{#if result.breakdown}
-			<BonusTracker breakdown={result.breakdown} teamColor={teamHex} />
-		{/if}
+			{#if result.breakdown}
+				<BonusTracker breakdown={result.breakdown} teamColor={teamHex} />
+			{/if}
+		</div>
 
 		<!--
-			Three quantities, side by side, instead of one merged "N out of M":
-			base points | bonus + extras | total. Total is the hero (it's the number
-			that lands on the leaderboard) and keeps the count-up animation; the other
-			two explain how it was reached. base + bonus === total always, by
-			construction — see baseTotal/extrasTotal above.
+			Drie cellen naast elkaar: basis | bonus + extra's | totaal. Totaal is de
+			held (dat is het getal dat op het leaderboard landt) en draagt de
+			count-up; base + bonus === totaal, per constructie.
 		-->
-		<div
-			class="mb-6 grid grid-cols-3 rounded-2xl border p-5 text-center"
-			style="border-color: {teamHex}40; background-color: {teamHex}1a;"
-		>
-			<div class="flex flex-col justify-center px-1">
-				<div class="text-[10px] font-bold tracking-wider text-zinc-400 uppercase">Base</div>
-				<div class="text-2xl font-black text-white tabular-nums">{baseTotal}</div>
-				{#if result.thresholdMax}
-					<div class="text-[10px] text-zinc-500">of {result.thresholdMax}</div>
-				{/if}
+		<div class="mt-3 flex gap-2.5">
+			<div class="flex-1 rounded-mixup-card p-2.5 text-center mixup-glass squircle">
+				<div class="font-display text-2xl font-black text-mixup-paper tabular-nums">
+					{baseTotal}
+				</div>
+				<div class="text-[9px] font-bold tracking-[0.1em] text-mixup-muted uppercase">
+					Basis{#if result.thresholdMax}<span class="text-mixup-dim">
+							/{result.thresholdMax}</span
+						>{/if}
+				</div>
 			</div>
-
-			<div class="flex flex-col justify-center border-x px-1" style="border-color: {teamHex}33;">
-				<div class="text-[10px] font-bold tracking-wider text-zinc-400 uppercase">Bonus</div>
-				<!-- Amber ties this to the ⭐ bonus-artist lines above. A no-bonus
-				     challenge shows a dimmed 0 rather than hiding the cell, so the three
-				     columns don't reflow between challenges. -->
+			<div class="flex-1 rounded-mixup-card p-2.5 text-center mixup-glass squircle">
 				<div
-					class="text-2xl font-black tabular-nums {extrasTotal > 0
-						? 'text-amber-300'
-						: 'text-zinc-600'}"
+					class="font-display text-2xl font-black tabular-nums {extrasTotal > 0
+						? 'text-mixup-cyan'
+						: 'text-mixup-dim'}"
 				>
 					{extrasTotal > 0 ? `+${extrasTotal}` : '0'}
 				</div>
+				<div class="text-[9px] font-bold tracking-[0.1em] text-mixup-muted uppercase">Bonus</div>
 			</div>
-
-			<div class="flex flex-col justify-center px-1">
-				<div class="text-[10px] font-bold tracking-wider text-zinc-400 uppercase">Total</div>
-				<div class="text-4xl font-black text-white tabular-nums transition-none">
-					{animatedScore}
+			<div
+				class="rounded-mixup-card p-2.5 text-center squircle"
+				style="flex: 1.2; background: rgba(255,230,0,0.08); border: 1px solid rgba(255,230,0,0.5); box-shadow: 0 0 20px rgba(255,230,0,0.15);"
+			>
+				<div
+					class="font-display text-2xl font-black tabular-nums"
+					style="background: linear-gradient(90deg,#FFE600,#FF7F11); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; color: transparent;"
+				>
+					+{animatedScore}
 				</div>
+				<div class="text-[9px] font-bold tracking-[0.1em] text-mixup-yellow uppercase">Totaal</div>
 			</div>
 		</div>
 
-		<div class="flex flex-col items-center gap-3">
+		<div class="mt-3 flex flex-col items-center gap-2.5">
 			<a
 				href="/team"
-				class="w-full rounded-xl py-3 text-center text-sm font-bold text-zinc-950"
-				style="background-color: {teamHex};"
+				class="flex h-[54px] w-full items-center justify-center rounded-mixup-modal text-base font-extrabold tracking-[0.06em] uppercase squircle"
+				style="background: linear-gradient(90deg,#FFE600,#FF7F11); color: #1A1400; box-shadow: 0 10px 30px rgba(255,127,17,0.35);"
 			>
-				Back to team console
+				Terug naar je team
 			</a>
-			<a href="/leaderboard" class="text-sm underline underline-offset-2" style="color: {teamHex};"
-				>View leaderboard →</a
+			<a
+				href="/leaderboard"
+				class="text-xs font-semibold tracking-[0.08em] uppercase underline underline-offset-4"
+				style="color: {teamHex};">Bekijk de stand →</a
 			>
 		</div>
-	</div>
+	</PlayerScreen>
 {:else if !data.attempt && data.challenge.status !== 'active'}
 	<!-- ── Challenge ended ────────────────────────────────────────────────────── -->
 	<div class="mx-auto min-h-screen max-w-lg p-4">
@@ -1600,59 +1707,116 @@
 		</div>
 	</div>
 {:else if !data.attempt}
-	<!-- ── Pre-game gate ──────────────────────────────────────────────────────── -->
-	<div class="mx-auto min-h-screen max-w-lg p-4">
-		<div class="pt-4 pb-6">
-			<span
-				class="rounded-full px-3 py-1 text-xs font-bold tracking-widest text-white uppercase"
-				style="background-color: {teamHex};">{data.team.display_name}</span
+	<!--
+		── Scherm 6 · PRE-GAME-POORT ────────────────────────────────────────────
+		Bron: design/"M!XUP Player Flow v2.dc.html", artboard
+		"6 Pre-game poort" ("TIMER START PAS BIJ TAP").
+
+		Dit is de wachtstate vóór de start: er is nog geen challenge_attempts-rij,
+		dus de timer loopt nog niet. Eén gecentreerde glaskaart met de variant-pil,
+		de titel en de uitleg, daaronder de startknop en de timer-noot.
+
+		Code-regen staat hier WEL aan (het enige scherm in deze fase dat hem heeft;
+		7B en 8 hebben in de bron alleen de kristal-hoeken). CodeRain schildert zelf
+		zijn ondergrond via --cr-backdrop, en de default daarvan is exact de
+		radiale paginagradient die dit scherm ook heeft — dus geen override nodig.
+
+		De start-conditie en de startknop zijn NIET aangeraakt: hetzelfde
+		?/startChallenge met dezelfde use:enhance en dezelfde window.location.reload()
+		bij succes, die de volle mount forceert waar onMount de countdown uit
+		timerEndsAt opzet.
+	-->
+	<PlayerScreen rain corners={0.4}>
+		<!--
+			Geen teampil en geen banner op dit scherm: het artboard laat de poort
+			bewust leeg op één gecentreerde kaart na. De speler heeft zijn team al
+			gezien in de lobby en op de team-console, vóór hij de challenge aantikte.
+			De pil komt terug op het antwoordformulier (7B).
+		-->
+		<div class="flex min-h-0 flex-1 flex-col justify-center gap-4 px-5">
+			<div
+				class="flex flex-col gap-3.5 rounded-mixup-hero px-5 py-6 mixup-glass-strong squircle"
+				style="background: linear-gradient(135deg, rgba(229,242,255,0.10), rgba(229,242,255,0.03));"
 			>
-		</div>
-		<div class="mb-6">
-			<div class="mb-2">
 				<span
-					class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-bold {typeColor}"
+					class="self-start rounded-full border px-3 py-[5px] text-[10px] font-extrabold tracking-[0.16em] text-mixup-cyan uppercase"
+					style="border-color: rgba(0,229,255,0.5);"
 				>
-					<TypeIcon size={12} />
-					{data.challenge.variant}
+					{data.challenge.variant} · {gateTrackCount}
+					{gateTrackCount === 1 ? 'track' : 'tracks'}
 				</span>
+
+				<h1
+					class="font-display text-[44px] leading-[0.95] font-black text-mixup-paper uppercase"
+					style="text-shadow: 0 0 26px rgba(124,77,255,0.85);"
+				>
+					{data.challenge.title}
+				</h1>
+
+				{#if data.tutorialText}
+					<div
+						class="flex flex-col gap-1.5 border-t pt-3"
+						style="border-color: rgba(229,242,255,0.12);"
+					>
+						<span class="text-[11px] font-extrabold tracking-[0.14em] text-mixup-yellow uppercase"
+							>Hoe werkt het</span
+						>
+						<p class="text-sm leading-[1.5] font-medium text-mixup-muted">{data.tutorialText}</p>
+					</div>
+				{/if}
 			</div>
-			<h1 class="text-2xl font-black">{data.challenge.title}</h1>
-		</div>
-		{#if data.tutorialText}
-			<div class="mb-8 rounded-2xl border border-zinc-700 bg-zinc-900 p-6">
-				<h2 class="mb-3 text-xs font-bold tracking-widest text-zinc-400 uppercase">How to play</h2>
-				<p class="text-sm leading-relaxed text-zinc-200">{data.tutorialText}</p>
-			</div>
-		{/if}
-		<form
-			method="POST"
-			action="?/startChallenge"
-			use:enhance={() => {
-				startingChallenge = true;
-				return async ({ result: res }) => {
-					if (res.type === 'success') {
-						window.location.reload();
-					} else {
-						startingChallenge = false;
-					}
-				};
-			}}
-		>
-			<button
-				type="submit"
-				disabled={startingChallenge}
-				class="w-full rounded-xl py-4 text-lg font-black tracking-widest text-white uppercase transition-colors hover:opacity-90 disabled:opacity-50"
-				style="background-color: {teamHex};"
+
+			<form
+				method="POST"
+				action="?/startChallenge"
+				use:enhance={() => {
+					startingChallenge = true;
+					return async ({ result: res }) => {
+						if (res.type === 'success') {
+							window.location.reload();
+						} else {
+							startingChallenge = false;
+						}
+					};
+				}}
 			>
-				{startingChallenge ? 'Starting…' : 'Start challenge'}
-			</button>
-		</form>
-		<p class="mt-3 text-center text-xs text-zinc-600">Timer begins when you tap Start</p>
-	</div>
+				<button
+					type="submit"
+					disabled={startingChallenge}
+					class="h-[54px] w-full rounded-mixup-modal text-base font-extrabold tracking-[0.06em] uppercase squircle disabled:cursor-not-allowed disabled:opacity-50"
+					style="background: linear-gradient(90deg,#FFE600,#FF7F11); color: #1A1400; box-shadow: 0 10px 30px rgba(255,127,17,0.35);"
+				>
+					{startingChallenge ? 'Starten…' : 'Start de challenge'}
+				</button>
+			</form>
+
+			<p class="text-center text-xs font-medium text-mixup-dim">⏱ De timer begint zodra je tapt</p>
+		</div>
+	</PlayerScreen>
 {:else}
-	<!-- ── Challenge form ─────────────────────────────────────────────────────── -->
-	<div class="mx-auto min-h-screen max-w-lg p-4">
+	<!--
+		── Scherm 7B · ANTWOORDFORMULIER ────────────────────────────────────────
+		Bron: design/"M!XUP Player Flow v2.dc.html", artboard
+		"7B Antwoordformulier var B" (de definitieve variant).
+
+		Volgorde uit de designbron: teampil + klok · titel · segmentbalk ·
+		audiokaart · antwoordkaart (scrollt) · powerup-rij · navigatie.
+
+		PUUR PRESENTATIE. De submit-weg is onveranderd: hetzelfde <form
+		method="POST" action="?/submit">, dezelfde `use:enhance` die
+		`answers_json` uit `buildAnswersForSubmit()` zet, dezelfde
+		`formEl.requestSubmit()` bij een verlopen timer, en dezelfde
+		bind:value-velden per tab/slot.
+
+		Eén structurele noot: de powerup-rij staat in het design TUSSEN de
+		antwoordkaart en de knoppenrij, maar HeldPowerups rendert een modal die
+		zélf een <form> bevat — genest in het antwoordformulier zou de browser
+		die binnenste form weggooien en powerup-activatie breken. De
+		antwoord-<form> sluit daarom vóór de powerup-rij, en de knoppen erna
+		horen er via het standaard `form="challenge-answer-form"`-attribuut nog
+		steeds bij. Voor de browser is dat exact dezelfde submit.
+	-->
+	<PlayerScreen>
 		<!-- Freeze overlay (stuk 2): blocking frost layer, clears itself after 30s
 		     client-side — no server round-trip, it's a marker row only. -->
 		{#if isFrozen}
@@ -1660,8 +1824,8 @@
 				class="fixed inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-cyan-950/70 backdrop-blur-md"
 			>
 				<span class="text-6xl">🧊</span>
-				<p class="text-lg font-black text-white">Frozen by {freezeSourceName}!</p>
-				<p class="font-mono text-3xl font-black text-cyan-200 tabular-nums">
+				<p class="text-lg font-black text-white">Bevroren door {freezeSourceName}!</p>
+				<p class="font-data text-3xl font-black text-cyan-200 tabular-nums">
 					{Math.ceil(freezeRemainingMs / 1000)}s
 				</p>
 			</div>
@@ -1683,89 +1847,44 @@
 		{#if drainToast}
 			<div class="fixed inset-x-0 top-4 z-50 flex justify-center px-4">
 				<div
-					class="flex items-center gap-2 rounded-xl border border-red-500/50 bg-red-950/90 px-4 py-2.5 text-sm font-semibold text-red-200 shadow-2xl backdrop-blur-sm"
+					class="flex items-center gap-2 rounded-mixup-sm border border-mixup-magenta/50 bg-mixup-magenta/15 px-4 py-2.5 text-sm font-semibold text-mixup-paper shadow-2xl backdrop-blur-sm squircle"
 				>
 					<span class="text-lg">⏳</span>
-					<span>−15s — {drainToast.sourceName} drained your time!</span>
+					<span>−15s — {drainToast.sourceName} pakte je tijd af!</span>
 				</div>
 			</div>
 		{/if}
 
-		<div class="flex items-center justify-between pt-4 pb-3">
-			<span
-				class="rounded-full px-3 py-1 text-xs font-bold tracking-widest text-white uppercase"
-				style="background-color: {teamHex};">{data.team.display_name}</span
-			>
-			{#if timerMs !== null}
+		<!-- Teampil + klok -->
+		<div class="flex items-center justify-between px-5">
+			<span class="flex items-center gap-[7px] rounded-full px-3 py-1.5 mixup-glass squircle">
 				<span
-					class="font-mono text-sm font-bold tabular-nums {timerMs < 30_000
-						? 'text-red-400'
-						: timerMs < 60_000
-							? 'text-yellow-400'
-							: 'text-zinc-400'}">{fmtMs(timerMs)}</span
+					class="h-2.5 w-2.5 rounded-full"
+					style="background: {teamHex}; box-shadow: 0 0 10px {teamHex};"
+				></span>
+				<span class="text-[11px] font-extrabold tracking-[0.1em] text-mixup-paper uppercase"
+					>{data.team.display_name}</span
 				>
-			{/if}
-		</div>
-
-		{#if data.activeSetId}
-			<IncomingEffectsListener
-				teamId={data.team.id}
-				setId={data.activeSetId}
-				effects={data.activeEffects}
-			/>
-		{/if}
-
-		{#if data.activeSetId && data.heldPowerups}
-			<div class="pb-1">
-				{#if data.activeEffects?.length > 0}
-					<div class="pb-2">
-						<ActiveEffectsBanner
-							teamId={data.team.id}
-							setId={data.activeSetId}
-							effects={data.activeEffects}
-						/>
-					</div>
-				{/if}
-				<HeldPowerups
-					teamId={data.team.id}
-					setId={data.activeSetId}
-					powerups={data.heldPowerups}
-					currentChallengeId={data.challenge.id}
-					variantFields={activeTab?.fields ?? variantFields.map((f) => String(f))}
-					tabId={activeTab?.id}
-					slotIndex={activeSlotEffective}
-					{revealTabs}
-					setTeams={data.setTeams}
-					draftSnapshot={() => JSON.stringify(buildAnswersForSubmit())}
-					onactivated={onPowerupActivated}
-					onlifeline={onLifelineHints}
-				/>
-				{#if xrayError}
-					<!-- A refused X-Ray reveal (no track behind this tab, no open attempt, …).
-					     Shown once here rather than under every field: the budget is one
-					     thing, and a refusal costs none of it. -->
-					<p class="text-xs font-semibold text-red-400">🔎 {xrayError}</p>
-				{/if}
-			</div>
-		{/if}
-
-		<div class="mb-4 flex items-start justify-between gap-3">
-			<h1 class="text-2xl font-black">{data.challenge.title}</h1>
-			<div class="flex shrink-0 gap-2">
+			</span>
+			<div class="flex items-center gap-2">
 				{#if tutorialEntry.length > 0}
 					<button
+						type="button"
 						onclick={() => (showTutorial = true)}
-						class="rounded-full px-3 py-1 text-xs font-semibold transition-colors"
-						style="background-color: {teamHex}22; color: {teamHex}; border: 1px solid {teamHex}44;"
+						aria-label="Uitleg"
+						class="flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold squircle"
+						style="background: {teamHex}22; color: {teamHex}; border: 1px solid {teamHex}44;"
 						>ⓘ</button
 					>
 				{/if}
 				{#if data.challenge.hint_text && data.hintUsed}
 					<button
+						type="button"
 						onclick={() => (showHintModal = true)}
-						class="rounded-full px-3 py-1 text-xs font-semibold transition-colors"
-						style="background-color: {teamHex}22; color: {teamHex}; border: 1px solid {teamHex}44;"
-						>💡 Hint</button
+						aria-label="Hint"
+						class="flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold squircle"
+						style="background: {teamHex}22; color: {teamHex}; border: 1px solid {teamHex}44;"
+						>💡</button
 					>
 				{/if}
 				<!-- Persistent re-open, the same shape the Hint button uses: once the Eye
@@ -1773,87 +1892,53 @@
 				     rest of it, rather than being a one-shot the player can lose. -->
 				{#if eyeTeams.length}
 					<button
+						type="button"
 						onclick={() => (showEyeModal = true)}
-						class="rounded-full border border-purple-500/40 bg-purple-500/10 px-3 py-1 text-xs font-semibold text-purple-300 transition-colors hover:bg-purple-500/20"
-						>👁️ Eye</button
+						aria-label="All-seeing eye"
+						class="flex h-8 w-8 items-center justify-center rounded-full border border-mixup-violet/50 bg-mixup-violet/15 text-xs font-bold text-mixup-violet squircle"
+						>👁️</button
+					>
+				{/if}
+				{#if timerMs !== null}
+					<span
+						class="text-[28px] leading-none font-bold tabular-nums"
+						style="color: {timerColor}; text-shadow: 0 0 16px {timerGlow};">{fmtMs(timerMs)}</span
 					>
 				{/if}
 			</div>
 		</div>
 
-		<!--
-			Tab strip (multi-tab). Stays behind isMultiTab: on a single-tab challenge
-			the strip does not exist today, and a fill dot there would only restate
-			what the one visible form already shows, while a per-tab doubt flag has
-			nothing to distinguish. Adding chrome where there is none is the only way
-			this could get worse for the single-tab case, so it doesn't.
+		<!-- Titel -->
+		<h1
+			class="px-5 pt-2.5 font-display text-[34px] leading-[0.95] font-black text-mixup-paper uppercase"
+			style="text-shadow: 0 0 26px rgba(124,77,255,0.85);"
+		>
+			{data.challenge.title}
+		</h1>
 
-			Each entry is a wrapper holding TWO sibling buttons — the tab pill and the
-			doubt toggle. They cannot nest (a button inside a button is invalid), and
-			the pill must keep its exact goToTab(i) behaviour.
-		-->
+		<!-- Segmentbalk: horizontaal scrollend, min-width 96px per tab, werkt bij
+		     élk aantal tracks. Voedt exact dezelfde goToTab()/toggleDoubt() als
+		     de oude tabstrip. -->
 		{#if isMultiTab}
-			<div class="mb-4 flex gap-1.5 overflow-x-auto pb-1">
-				{#each data.tabs as _tab, i}
-					{@const status = tabFillStatus[i]}
-					<div class="flex shrink-0 items-center gap-0.5">
-						<button
-							type="button"
-							onclick={() => goToTab(i)}
-							class="flex shrink-0 items-center gap-1.5 rounded-l-lg rounded-r-sm px-3 py-1.5 text-sm font-semibold transition-colors {activeTabIndex ===
-							i
-								? 'text-white'
-								: 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}"
-							style={activeTabIndex === i ? `background-color: ${teamHex};` : ''}
-						>
-							<!--
-								Fill dot. Outline = empty, solid yellow = partial, solid cyan =
-								full — colour AND fill differ, so the three read apart without
-								relying on hue alone. Both colours are existing festival tokens.
-							-->
-							<span
-								class="h-2 w-2 shrink-0 rounded-full {status === 'full'
-									? 'bg-mixup-cyan'
-									: status === 'partial'
-										? 'bg-mixup-yellow'
-										: 'border border-zinc-500 bg-transparent'}"
-								aria-hidden="true"
-							></span>
-							Tab {i + 1}
-							<span class="sr-only">
-								{status === 'full'
-									? '— all answers filled in'
-									: status === 'partial'
-										? '— partly filled in'
-										: '— nothing filled in'}{doubtTabs[i] ? ', marked as unsure' : ''}
-							</span>
-						</button>
-						<!--
-							Doubt toggle — a SECOND layer next to the fill dot, never a
-							replacement for it. Session-only (see doubtTabs).
-						-->
-						<button
-							type="button"
-							onclick={() => toggleDoubt(i)}
-							aria-pressed={doubtTabs[i]}
-							title={doubtTabs[i]
-								? `Tab ${i + 1}: unsure — tap to clear`
-								: `Mark tab ${i + 1} as unsure`}
-							class="flex h-[30px] w-6 shrink-0 items-center justify-center rounded-l-sm rounded-r-lg text-sm font-black transition-colors {doubtTabs[
-								i
-							]
-								? 'bg-mixup-magenta text-white'
-								: 'bg-zinc-800 text-zinc-600 hover:text-zinc-300'}"
-						>
-							?
-						</button>
-					</div>
-				{/each}
+			<div class="px-5 pt-3 pb-2.5">
+				<TrackSegmentBar
+					count={data.tabs.length}
+					activeIndex={activeTabIndex}
+					fillStatus={tabFillStatus}
+					doubt={doubtTabs}
+					hex={teamHex}
+					onColor={teamOn}
+					onselect={goToTab}
+					ontoggledoubt={toggleDoubt}
+				/>
 			</div>
 		{/if}
 
-		<!-- Audio player(s) -->
-		<div class="mb-6 rounded-2xl bg-zinc-900 p-5">
+		<!-- Audiokaart -->
+		<div
+			class="mx-5 mb-2.5 rounded-mixup-lg px-3.5 py-3 mixup-glass-strong squircle"
+			style="background: linear-gradient(135deg, rgba(229,242,255,0.10), rgba(229,242,255,0.03));"
+		>
 			{#if activeTab && activeTab.clips.length > 1}
 				<!--
 					Numbered clip strip at top. Was fragments-only; C2 un-gates it for any
@@ -1862,12 +1947,6 @@
 					guard already makes this byte-identical to before for every
 					single-clip tab (normal, mashup, effects), so no separate variant
 					check is needed to protect that regression.
-
-					Label: fragments keeps its "Fragment N" numbering (fragmentNumber is
-					the fragments-only field, set when the host adds a fragment there).
-					Normal tabs never populate fragmentNumber (C2 deliberately leaves it
-					null — see StandardEditor), so they read "Part N" from the clip's
-					position in the already sort_order-sorted list.
 				-->
 				<div class="mb-3 flex flex-wrap gap-1.5">
 					{#each activeTab.clips as clipItem, ci}
@@ -1877,28 +1956,28 @@
 								activeClipIndex = ci;
 								isPlaying = false;
 							}}
-							class="rounded-lg px-3 py-1.5 text-xs font-bold transition-colors {activeClipIndex ===
-							ci
-								? 'text-white'
-								: 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}"
-							style={activeClipIndex === ci ? `background-color: ${teamHex};` : ''}
+							class="rounded-mixup-chip px-3 py-1.5 text-xs font-bold transition-colors squircle"
+							style={activeClipIndex === ci
+								? `background: ${teamHex}; color: ${teamOn}; border: 1px solid ${teamHex};`
+								: 'background: rgba(229,242,255,0.05); color: #9FB1D9; border: 1px solid rgba(229,242,255,0.16);'}
 						>
-							{isFragments ? `Fragment ${clipItem.fragmentNumber ?? ci + 1}` : `Part ${ci + 1}`}
+							{isFragments ? `Fragment ${clipItem.fragmentNumber ?? ci + 1}` : `Deel ${ci + 1}`}
 						</button>
 					{/each}
 				</div>
 			{/if}
 
-			<div class="flex items-center gap-4">
+			<div class="flex items-center gap-3">
+				<!-- Play-knop in de teamkleur — 56px, witte ring, gloed in dezelfde kleur. -->
 				<button
 					type="button"
 					onclick={togglePlay}
-					class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full transition-colors hover:opacity-90"
-					style="background-color: {teamHex};"
-					aria-label={isPlaying ? 'Pause' : 'Play'}
+					class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full transition-transform active:scale-95"
+					style="background: {teamHex}; border: 2px solid rgba(229,242,255,0.5); box-shadow: 0 0 22px {teamHex}88; color: {teamOn};"
+					aria-label={isPlaying ? 'Pauze' : 'Afspelen'}
 				>
 					{#if isPlaying}
-						<svg class="h-5 w-5 text-white" fill="currentColor" viewBox="0 0 20 20"
+						<svg class="h-5 w-5" fill="currentColor" viewBox="0 0 20 20"
 							><rect x="5" y="4" width="3" height="12" rx="1" /><rect
 								x="12"
 								y="4"
@@ -1908,19 +1987,19 @@
 							/></svg
 						>
 					{:else}
-						<svg class="ml-0.5 h-5 w-5 text-white" fill="currentColor" viewBox="0 0 20 20"
+						<svg class="ml-0.5 h-5 w-5" fill="currentColor" viewBox="0 0 20 20"
 							><path
 								d="M6.3 2.841A1.5 1.5 0 004 4.11v11.78a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"
 							/></svg
 						>
 					{/if}
 				</button>
-				<div class="min-w-0 flex-1 space-y-1.5">
+				<div class="min-w-0 flex-1 space-y-1">
 					{#key `${activeTabIndex}-${activeClipIndex}`}
 						<Waveform
 							bind:this={waveformRef}
 							src={activeTab?.clips[activeClipIndex]?.clipUrl ?? activeTab?.primaryClipUrl ?? ''}
-							height={48}
+							height={34}
 							progressColor={teamHex}
 							effects={activeTab?.clips[activeClipIndex]?.effects ??
 								activeTab?.primaryClipEffects ??
@@ -1932,41 +2011,47 @@
 							}}
 						/>
 					{/key}
-					<div class="font-mono text-xs text-zinc-500">{timeLabel}</div>
 				</div>
+				<span class="shrink-0 font-data text-[11px] font-medium text-mixup-muted">{timeLabel}</span>
 			</div>
 		</div>
 
+		{#if data.activeSetId}
+			<IncomingEffectsListener
+				teamId={data.team.id}
+				setId={data.activeSetId}
+				effects={data.activeEffects}
+			/>
+		{/if}
+
+		{#if data.activeSetId && data.activeEffects?.length > 0}
+			<div class="mb-2 px-5">
+				<ActiveEffectsBanner
+					teamId={data.team.id}
+					setId={data.activeSetId}
+					effects={data.activeEffects}
+				/>
+			</div>
+		{/if}
+
 		{#if formError}
-			<div class="mb-4 rounded-xl border border-red-600/50 bg-red-900/30 p-3 text-sm text-red-300">
+			<div
+				class="mx-5 mb-2.5 rounded-mixup-sm border border-mixup-magenta/50 bg-mixup-magenta/10 p-3 text-sm text-mixup-magenta squircle"
+			>
 				{formError}
 			</div>
 		{/if}
 		{#if timerMs === 0}
 			<div
-				class="mb-4 rounded-xl border border-amber-600/50 bg-amber-900/30 p-3 text-sm text-amber-300"
+				class="mx-5 mb-2.5 rounded-mixup-sm border border-mixup-amber/50 bg-mixup-amber/10 p-3 text-sm text-mixup-amber squircle"
 			>
-				Time's up — submitting your answers…
+				Tijd is om — je antwoorden worden ingeleverd…
 			</div>
-		{/if}
-
-		<!-- Challenge intro (mashup/fragments/effects) -->
-		{#if isMashup && activeTab}
-			<p class="mb-4 text-sm font-semibold text-zinc-400">
-				Identify the {activeTab.sourceTracks.length} songs in this mashup:
-			</p>
-		{:else if isFragments && activeTab}
-			<p class="mb-4 text-sm font-semibold text-zinc-400">
-				Identify the {activeTab.sourceTracks.length} tracks and group the fragments:
-			</p>
-		{:else if isEffects}
-			<p class="mb-4 text-sm font-semibold text-zinc-400">
-				The audio has been processed with effects — identify the original track:
-			</p>
 		{/if}
 
 		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 		<form
+			id="challenge-answer-form"
 			bind:this={formEl}
 			onkeydown={onFormKeydown}
 			method="POST"
@@ -1979,24 +2064,40 @@
 					submitting = false;
 				};
 			}}
-			class="space-y-5 {isFrozen ? 'pointer-events-none opacity-40' : ''}"
+			class="mx-4 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto rounded-mixup-hero p-4 mixup-glass-strong squircle {isFrozen
+				? 'pointer-events-none opacity-40'
+				: ''}"
+			style="background: linear-gradient(135deg, rgba(229,242,255,0.10), rgba(229,242,255,0.03));"
 		>
 			<input type="hidden" name="team_id" value={data.team.id} />
+
+			<!-- Eyebrow: welke track je nu invult, plus de variant-uitleg eronder. -->
+			<div class="text-[11px] font-bold tracking-[0.14em] text-mixup-yellow uppercase">
+				Track {activeTabIndex + 1}{#if isMultiTab}<span class="text-mixup-yellow/60">
+						/ {data.tabs.length}</span
+					>{/if}
+				{#if isMashup && activeTab}
+					· {activeTab.sourceTracks.length} nummers in deze mashup
+				{:else if isFragments && activeTab}
+					· {activeTab.sourceTracks.length} tracks + groepering
+				{:else if isEffects}
+					· bewerkt met effecten
+				{/if}
+			</div>
 
 			{#key activeTabIndex}
 				{#if isMultiSource && activeTab}
 					<!-- Answer slot tabs (one per source track: mashup + fragments) -->
 					{#if activeTab.sourceTracks.length > 1}
-						<div class="mb-4 flex gap-1 overflow-x-auto pb-1">
+						<div class="flex gap-1.5 overflow-x-auto pb-1">
 							{#each Array.from({ length: activeTab.sourceTracks.length }, (_, i) => i) as si}
 								<button
 									type="button"
 									onclick={() => (activeSlotIndex = si)}
-									class="shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors {activeSlotIndex ===
-									si
-										? 'text-white'
-										: 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}"
-									style={activeSlotIndex === si ? `background-color: ${teamHex};` : ''}
+									class="shrink-0 rounded-mixup-chip px-3.5 py-1.5 text-sm font-bold transition-colors squircle"
+									style={activeSlotIndex === si
+										? `background: ${teamHex}; color: ${teamOn}; border: 1px solid ${teamHex};`
+										: 'background: rgba(229,242,255,0.05); color: #9FB1D9; border: 1px solid rgba(229,242,255,0.16);'}
 								>
 									{si + 1}
 								</button>
@@ -2005,153 +2106,156 @@
 					{/if}
 					<!-- Same clamped slot the free_answer reveal is addressed to. -->
 					{@const slotIdx = activeSlotEffective}
-					<div class="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
-						{#each variantFields.filter((f) => f !== 'grouping') as field (field)}
-							{@const mode = data.fieldModes[field] as InputMode}
-							<div class="mb-4">
-								<!-- Label row: the field's own label, plus X-Ray's reveal button while a
-								     budget is running. The button sits BESIDE the label, not inside it
-								     (a button in a <label> hijacks the label's click), and is
-								     type="button" — so the answer form is untouched: no nested form,
-								     no accidental submit, and the tab dots / Next / Previous are
-								     unaffected. -->
-								<div class="mb-1.5 flex items-center justify-between gap-2">
-									<label class="flex items-center gap-1.5 text-sm font-semibold text-zinc-400">
-										{fieldLabel(field)}
-										{#if isBonusField(field)}
-											<span
-												class="rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-amber-300 uppercase"
-												>Bonus</span
-											>
-										{/if}
-									</label>
-									{#if xrayRemaining > 0 && !revealFor(String(field), slotIdx)}
-										<button
-											type="button"
-											onclick={() => spendXrayReveal(String(field), slotIdx)}
-											disabled={!!xraySpending}
-											class="shrink-0 rounded-lg border border-amber-600/50 bg-amber-500/10 px-2 py-0.5 text-[11px] font-bold text-amber-300 transition-colors hover:bg-amber-500/20 disabled:opacity-40"
-										>
-											{xraySpending ===
-											freeAnswerRevealKey(activeTab?.id ?? '', slotIdx, String(field))
-												? '…'
-												: `🔎 Reveal (${xrayRemaining})`}
-										</button>
-									{/if}
-								</div>
-								{#if revealFor(String(field), slotIdx)}
-									<div
-										class="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-amber-300"
-									>
-										<span>💡</span>
-										<span>Revealed: {revealFor(String(field), slotIdx)}</span>
-									</div>
-								{/if}
-								<!-- Lifeline hint: read-only, never an input, never written into the
-								     draft. Suppressed when this cell has a full reveal — the answer
-								     beats a mask of it. Cyan rather than the reveal's amber so the
-								     two never read as the same thing. -->
-								{#if lifelineFor(String(field), slotIdx) && !revealFor(String(field), slotIdx)}
-									<div class="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-cyan-300">
-										<span>🆘</span>
-										<span class="font-mono tracking-[0.15em]"
-											>{lifelineFor(String(field), slotIdx)}</span
-										>
-									</div>
-								{/if}
-
-								{#if field === 'artist' && artistIsTagged}
-									<ArtistTagInput
-										name="artist_{slotIdx}"
-										bind:tags={artistTags[activeTabIndex][slotIdx]}
-										pool={artistPool}
-										accentHex={teamHex}
-										placeholder={artistPool.length > 0
-											? 'Search artists, Enter to add…'
-											: 'Type a name, Enter to add…'}
-									/>
-									<p class="mt-1 text-xs text-zinc-600">
-										Add every artist on the track — each one is worth part of the points.
-									</p>
-								{:else if mode === 'combobox'}
-									<Combobox
-										name="{field}_{slotIdx}"
-										pool={data.pools[field] ?? []}
-										{teamHex}
-										bind:value={allDrafts[activeTabIndex][slotIdx].fieldValues[field]}
-									/>
-								{:else if mode === 'multiple_choice'}
-									<MultipleChoice
-										name="{field}_{slotIdx}"
-										options={data.multipleChoiceOptions[field] ?? []}
-										{teamHex}
-										bind:value={allDrafts[activeTabIndex][slotIdx].fieldValues[field]}
-									/>
-								{:else if mode === 'open_text'}
-									<OpenText
-										name="{field}_{slotIdx}"
-										{teamHex}
-										bind:value={allDrafts[activeTabIndex][slotIdx].fieldValues[field]}
-									/>
-								{:else if mode === 'slider'}
-									<YearInput
-										name="{field}_{slotIdx}"
-										mode="slider"
-										{teamHex}
-										bind:value={allYearValues[activeTabIndex][slotIdx]}
-										ontouched={() => markYearTouched(activeTabIndex, slotIdx)}
-									/>
-								{:else if mode === 'typeable_number'}
-									<YearInput
-										name="{field}_{slotIdx}"
-										mode="typeable_number"
-										{teamHex}
-										bind:value={allYearValues[activeTabIndex][slotIdx]}
-										ontouched={() => markYearTouched(activeTabIndex, slotIdx)}
-									/>
-								{/if}
-							</div>
-						{/each}
-
-						<!-- Fragment grouping chips -->
-						{#if hasGrouping && activeTab}
-							<div>
-								<label class="mb-1.5 block text-sm font-semibold text-zinc-400"
-									>Which fragments belong to this track?</label
+					{#each variantFields.filter((f) => f !== 'grouping') as field (field)}
+						{@const mode = data.fieldModes[field] as InputMode}
+						<div class="flex flex-col gap-1.5">
+							<!-- Label row: the field's own label, plus X-Ray's reveal button while a
+							     budget is running. The button sits BESIDE the label, not inside it
+							     (a button in a <label> hijacks the label's click), and is
+							     type="button" — so the answer form is untouched: no nested form,
+							     no accidental submit, and the tab dots / Next / Previous are
+							     unaffected. -->
+							<div class="flex items-center justify-between gap-2">
+								<label
+									class="flex items-center gap-1.5 text-[11px] font-extrabold tracking-[0.14em] text-mixup-paper uppercase"
 								>
-								<div class="flex flex-wrap gap-2">
-									{#each activeTab.clips as clipItem, ci}
-										{@const fragNum = clipItem.fragmentNumber ?? ci + 1}
-										{@const selected = (
-											allDrafts[activeTabIndex]?.[slotIdx]?.fragments ?? []
-										).includes(fragNum)}
-										<button
-											type="button"
-											onclick={() => toggleFragment(activeTabIndex, slotIdx, fragNum)}
-											class="rounded-full px-3 py-1 text-sm font-bold transition-colors"
-											style={selected
-												? `background-color: ${teamHex}; color: white;`
-												: 'background-color: #27272a; color: #a1a1aa;'}
+									{fieldLabel(field)}
+									{#if isBonusField(field)}
+										<span
+											class="rounded-full bg-mixup-amber/20 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-mixup-amber normal-case squircle"
+											>Bonus</span
 										>
-											{fragNum}
-										</button>
-									{/each}
-								</div>
+									{/if}
+								</label>
+								{#if xrayRemaining > 0 && !revealFor(String(field), slotIdx)}
+									<button
+										type="button"
+										onclick={() => spendXrayReveal(String(field), slotIdx)}
+										disabled={!!xraySpending}
+										class="shrink-0 rounded-mixup-chip border border-mixup-amber/50 bg-mixup-amber/10 px-2 py-0.5 text-[11px] font-bold text-mixup-amber transition-colors squircle disabled:opacity-40"
+									>
+										{xraySpending ===
+										freeAnswerRevealKey(activeTab?.id ?? '', slotIdx, String(field))
+											? '…'
+											: `🔎 Onthul (${xrayRemaining})`}
+									</button>
+								{/if}
 							</div>
-						{/if}
-					</div>
+							{#if revealFor(String(field), slotIdx)}
+								<div class="flex items-center gap-1.5 text-xs font-semibold text-mixup-amber">
+									<span>💡</span>
+									<span>Onthuld: {revealFor(String(field), slotIdx)}</span>
+								</div>
+							{/if}
+							<!-- Lifeline hint: read-only, never an input, never written into the
+							     draft. Suppressed when this cell has a full reveal — the answer
+							     beats a mask of it. Cyan rather than the reveal's amber so the
+							     two never read as the same thing. -->
+							{#if lifelineFor(String(field), slotIdx) && !revealFor(String(field), slotIdx)}
+								<div class="flex items-center gap-1.5 text-xs font-semibold text-mixup-cyan">
+									<span>🆘</span>
+									<span class="font-data tracking-[0.15em]"
+										>{lifelineFor(String(field), slotIdx)}</span
+									>
+								</div>
+							{/if}
+
+							{#if field === 'artist' && artistIsTagged}
+								<ArtistTagInput
+									name="artist_{slotIdx}"
+									bind:tags={artistTags[activeTabIndex][slotIdx]}
+									pool={artistPool}
+									accentHex={teamHex}
+									placeholder={artistPool.length > 0
+										? 'Zoek artiesten, Enter om toe te voegen…'
+										: 'Typ een naam, Enter om toe te voegen…'}
+								/>
+								<p class="text-[11px] text-mixup-dim">
+									Voeg elke artiest op de track toe — elk is een deel van de punten waard.
+								</p>
+							{:else if mode === 'combobox'}
+								<Combobox
+									name="{field}_{slotIdx}"
+									pool={data.pools[field] ?? []}
+									{teamHex}
+									bind:value={allDrafts[activeTabIndex][slotIdx].fieldValues[field]}
+								/>
+							{:else if mode === 'multiple_choice'}
+								<MultipleChoice
+									name="{field}_{slotIdx}"
+									options={data.multipleChoiceOptions[field] ?? []}
+									{teamHex}
+									onColor={teamOn}
+									layout={field === 'year' ? 'chips' : 'list'}
+									bind:value={allDrafts[activeTabIndex][slotIdx].fieldValues[field]}
+								/>
+							{:else if mode === 'open_text'}
+								<OpenText
+									name="{field}_{slotIdx}"
+									{teamHex}
+									placeholder="Typ je antwoord…"
+									bind:value={allDrafts[activeTabIndex][slotIdx].fieldValues[field]}
+								/>
+							{:else if mode === 'slider'}
+								<YearInput
+									name="{field}_{slotIdx}"
+									mode="slider"
+									{teamHex}
+									bind:value={allYearValues[activeTabIndex][slotIdx]}
+									ontouched={() => markYearTouched(activeTabIndex, slotIdx)}
+								/>
+							{:else if mode === 'typeable_number'}
+								<YearInput
+									name="{field}_{slotIdx}"
+									mode="typeable_number"
+									{teamHex}
+									bind:value={allYearValues[activeTabIndex][slotIdx]}
+									ontouched={() => markYearTouched(activeTabIndex, slotIdx)}
+								/>
+							{/if}
+						</div>
+					{/each}
+
+					<!-- Fragment grouping chips -->
+					{#if hasGrouping && activeTab}
+						<div class="flex flex-col gap-2">
+							<span class="text-[11px] font-extrabold tracking-[0.14em] text-mixup-paper uppercase"
+								>Welke fragmenten horen bij deze track?</span
+							>
+							<div class="flex flex-wrap gap-2">
+								{#each activeTab.clips as clipItem, ci}
+									{@const fragNum = clipItem.fragmentNumber ?? ci + 1}
+									{@const selected = (
+										allDrafts[activeTabIndex]?.[slotIdx]?.fragments ?? []
+									).includes(fragNum)}
+									<button
+										type="button"
+										onclick={() => toggleFragment(activeTabIndex, slotIdx, fragNum)}
+										class="rounded-mixup-chip px-3.5 py-2 text-sm font-bold transition-colors squircle"
+										style={selected
+											? `background: ${teamHex}; color: ${teamOn}; border: 1px solid ${teamHex}; box-shadow: 0 0 18px ${teamHex}80;`
+											: 'background: rgba(229,242,255,0.05); color: #9FB1D9; border: 1px solid rgba(229,242,255,0.16);'}
+									>
+										{fragNum}
+									</button>
+								{/each}
+							</div>
+						</div>
+					{/if}
 				{:else}
 					<!-- Single-slot layout (standard / anthem / label) -->
 					{#each variantFields as field (field)}
 						{@const mode = data.fieldModes[field] as InputMode}
-						<div>
+						<div class="flex flex-col gap-1.5">
 							<!-- Same label row as the multi-slot layout above, always slot 0. -->
-							<div class="mb-1.5 flex items-center justify-between gap-2">
-								<label class="flex items-center gap-1.5 text-sm font-semibold text-zinc-400">
+							<div class="flex items-center justify-between gap-2">
+								<label
+									class="flex items-center gap-1.5 text-[11px] font-extrabold tracking-[0.14em] text-mixup-paper uppercase"
+								>
 									{fieldLabel(field)}
 									{#if isBonusField(field)}
 										<span
-											class="rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-amber-300 uppercase"
+											class="rounded-full bg-mixup-amber/20 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-mixup-amber normal-case squircle"
 											>Bonus</span
 										>
 									{/if}
@@ -2161,26 +2265,26 @@
 										type="button"
 										onclick={() => spendXrayReveal(String(field), 0)}
 										disabled={!!xraySpending}
-										class="shrink-0 rounded-lg border border-amber-600/50 bg-amber-500/10 px-2 py-0.5 text-[11px] font-bold text-amber-300 transition-colors hover:bg-amber-500/20 disabled:opacity-40"
+										class="shrink-0 rounded-mixup-chip border border-mixup-amber/50 bg-mixup-amber/10 px-2 py-0.5 text-[11px] font-bold text-mixup-amber transition-colors squircle disabled:opacity-40"
 									>
 										{xraySpending === freeAnswerRevealKey(activeTab?.id ?? '', 0, String(field))
 											? '…'
-											: `🔎 Reveal (${xrayRemaining})`}
+											: `🔎 Onthul (${xrayRemaining})`}
 									</button>
 								{/if}
 							</div>
 							<!-- Single-slot layout: always slot 0 of the active tab. -->
 							{#if revealFor(String(field), 0)}
-								<div class="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-amber-300">
+								<div class="flex items-center gap-1.5 text-xs font-semibold text-mixup-amber">
 									<span>💡</span>
-									<span>Revealed: {revealFor(String(field), 0)}</span>
+									<span>Onthuld: {revealFor(String(field), 0)}</span>
 								</div>
 							{/if}
 							<!-- Same read-only Lifeline hint as the multi-slot layout, always slot 0. -->
 							{#if lifelineFor(String(field), 0) && !revealFor(String(field), 0)}
-								<div class="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-cyan-300">
+								<div class="flex items-center gap-1.5 text-xs font-semibold text-mixup-cyan">
 									<span>🆘</span>
-									<span class="font-mono tracking-[0.15em]">{lifelineFor(String(field), 0)}</span>
+									<span class="font-data tracking-[0.15em]">{lifelineFor(String(field), 0)}</span>
 								</div>
 							{/if}
 
@@ -2191,11 +2295,11 @@
 									pool={artistPool}
 									accentHex={teamHex}
 									placeholder={artistPool.length > 0
-										? 'Search artists, Enter to add…'
-										: 'Type a name, Enter to add…'}
+										? 'Zoek artiesten, Enter om toe te voegen…'
+										: 'Typ een naam, Enter om toe te voegen…'}
 								/>
-								<p class="mt-1 text-xs text-zinc-600">
-									Add every artist on the track — each one is worth part of the points.
+								<p class="text-[11px] text-mixup-dim">
+									Voeg elke artiest op de track toe — elk is een deel van de punten waard.
 								</p>
 							{:else if mode === 'combobox'}
 								<Combobox
@@ -2209,12 +2313,15 @@
 									name={field}
 									options={data.multipleChoiceOptions[field] ?? []}
 									{teamHex}
+									onColor={teamOn}
+									layout={field === 'year' ? 'chips' : 'list'}
 									bind:value={allDrafts[activeTabIndex][0].fieldValues[field]}
 								/>
 							{:else if mode === 'open_text'}
 								<OpenText
 									name={field}
 									{teamHex}
+									placeholder="Typ je antwoord…"
 									bind:value={allDrafts[activeTabIndex][0].fieldValues[field]}
 								/>
 							{:else if mode === 'slider'}
@@ -2238,56 +2345,92 @@
 					{/each}
 				{/if}
 			{/key}
+		</form>
 
-			<!--
-				Submit exists ONLY on the last tab. Every earlier tab gets Next instead
-				(type="button", so it can't submit), which is what stops a team from
-				finishing a multi-tab challenge with a half answer — submit is is_final.
-				A single-tab challenge takes the {:else} branch and is unchanged.
-				Auto-submit at timer 0 does NOT go through this button: triggerSubmit()
-				calls formEl.requestSubmit() with no submitter, which submits the form
-				itself from whatever tab the team is parked on.
-			-->
+		<!-- Powerup-rij — buiten de antwoord-<form>, zie de noot bovenaan. -->
+		{#if data.activeSetId && data.heldPowerups}
+			<div class="flex items-center gap-2 px-5 pt-2.5">
+				<span
+					class="shrink-0 text-[9px] font-extrabold tracking-[0.18em] text-mixup-yellow uppercase"
+					>Powerups</span
+				>
+				<div class="min-w-0 flex-1">
+					<HeldPowerups
+						teamId={data.team.id}
+						setId={data.activeSetId}
+						powerups={data.heldPowerups}
+						currentChallengeId={data.challenge.id}
+						variantFields={activeTab?.fields ?? variantFields.map((f) => String(f))}
+						tabId={activeTab?.id}
+						slotIndex={activeSlotEffective}
+						{revealTabs}
+						setTeams={data.setTeams}
+						draftSnapshot={() => JSON.stringify(buildAnswersForSubmit())}
+						onactivated={onPowerupActivated}
+						onlifeline={onLifelineHints}
+					/>
+				</div>
+			</div>
+			{#if xrayError}
+				<!-- A refused X-Ray reveal (no track behind this tab, no open attempt, …).
+				     Shown once here rather than under every field: the budget is one
+				     thing, and a refusal costs none of it. -->
+				<p class="px-5 pt-1 text-xs font-semibold text-mixup-magenta">🔎 {xrayError}</p>
+			{/if}
+		{/if}
+
+		<!--
+			Submit exists ONLY on the last tab. Every earlier tab gets Next instead
+			(type="button", so it can't submit), which is what stops a team from
+			finishing a multi-tab challenge with a half answer — submit is is_final.
+			A single-tab challenge takes the {:else} branch and is unchanged.
+			Auto-submit at timer 0 does NOT go through this button: triggerSubmit()
+			calls formEl.requestSubmit() with no submitter, which submits the form
+			itself from whatever tab the team is parked on.
+		-->
+		<div class="flex gap-2.5 px-4 pt-3">
 			{#if isMultiTab}
-				<div class="flex gap-3">
+				{#if activeTabIndex > 0}
 					<button
 						type="button"
 						onclick={() => goToTab(activeTabIndex - 1)}
-						disabled={activeTabIndex === 0}
-						class="rounded-xl border border-zinc-700 px-6 py-4 text-lg font-black tracking-widest text-zinc-300 uppercase transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
+						class="h-[54px] flex-1 rounded-mixup-modal text-base font-extrabold tracking-[0.06em] uppercase squircle"
+						style="background: rgba(229,242,255,0.06); color: #8E9BC9; border: 1px solid rgba(229,242,255,0.2);"
 					>
-						Previous
+						← Vorige
 					</button>
-					{#if isLastTab}
-						<button
-							type="submit"
-							disabled={!canSubmit}
-							class="flex-1 rounded-xl py-4 text-lg font-black tracking-widest text-white uppercase transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-							style="background-color: {teamHex};"
-						>
-							{submitting ? 'Submitting…' : 'Submit'}
-						</button>
-					{:else}
-						<button
-							type="button"
-							onclick={() => goToTab(activeTabIndex + 1)}
-							class="flex-1 rounded-xl py-4 text-lg font-black tracking-widest text-white uppercase transition-colors hover:opacity-90"
-							style="background-color: {teamHex};"
-						>
-							Next
-						</button>
-					{/if}
-				</div>
+				{/if}
+				{#if isLastTab}
+					<button
+						type="submit"
+						form="challenge-answer-form"
+						disabled={!canSubmit || isFrozen}
+						class="h-[54px] flex-1 rounded-mixup-modal text-base font-extrabold tracking-[0.06em] uppercase squircle disabled:cursor-not-allowed disabled:opacity-50"
+						style="background: linear-gradient(90deg,#FFE600,#FF7F11); color: #1A1400; box-shadow: 0 10px 30px rgba(255,127,17,0.35);"
+					>
+						{submitting ? 'Inleveren…' : 'Inleveren'}
+					</button>
+				{:else}
+					<button
+						type="button"
+						onclick={() => goToTab(activeTabIndex + 1)}
+						class="h-[54px] flex-1 rounded-mixup-modal text-base font-extrabold tracking-[0.06em] uppercase squircle"
+						style="background: rgba(255,230,0,0.10); color: #FFE600; border: 1px solid #FFE600;"
+					>
+						Volgende →
+					</button>
+				{/if}
 			{:else}
 				<button
 					type="submit"
-					disabled={!canSubmit}
-					class="w-full rounded-xl py-4 text-lg font-black tracking-widest text-white uppercase transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-					style="background-color: {teamHex};"
+					form="challenge-answer-form"
+					disabled={!canSubmit || isFrozen}
+					class="h-[54px] w-full rounded-mixup-modal text-base font-extrabold tracking-[0.06em] uppercase squircle disabled:cursor-not-allowed disabled:opacity-50"
+					style="background: linear-gradient(90deg,#FFE600,#FF7F11); color: #1A1400; box-shadow: 0 10px 30px rgba(255,127,17,0.35);"
 				>
-					{submitting ? 'Submitting…' : 'Submit'}
+					{submitting ? 'Inleveren…' : 'Inleveren'}
 				</button>
 			{/if}
-		</form>
-	</div>
+		</div>
+	</PlayerScreen>
 {/if}
