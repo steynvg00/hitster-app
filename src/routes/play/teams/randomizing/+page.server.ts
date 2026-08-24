@@ -3,22 +3,16 @@ import type { PageServerLoad } from './$types';
 import { TEAM_COLOR_ORDER } from '$lib/server/randomize';
 import type { TeamColor } from '$lib/types';
 
+// Puur presentatie: het reveal-scherm zet deze naam op 58px in Barlow
+// Condensed. De stagenamen ("Indigo — Rawstyler") passen daar niet en de
+// designbron toont alleen de teamnaam.
 const TEAM_LABELS: Record<TeamColor, string> = {
-	blue: 'Blue — Raw',
-	yellow: 'Yellow — UV',
-	green: 'Green — Mainstage',
-	red: 'Red — Mainstage',
-	indigo: 'Indigo — Rawstyler',
-	black: 'Black — Freedom'
-};
-
-const TEAM_BG: Record<TeamColor, string> = {
-	blue: '#1d4ed8',
-	yellow: '#ca8a04',
-	green: '#15803d',
-	red: '#b91c1c',
-	indigo: '#4338ca',
-	black: '#27272a'
+	blue: 'Team Blauw',
+	yellow: 'Team Geel',
+	green: 'Team Groen',
+	red: 'Team Rood',
+	indigo: 'Team Indigo',
+	black: 'Team Zwart'
 };
 
 export const load: PageServerLoad = async ({ url, locals }) => {
@@ -29,7 +23,6 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 
 	return {
 		team: teamParam,
-		label: TEAM_LABELS[teamParam],
-		bg: TEAM_BG[teamParam]
+		label: TEAM_LABELS[teamParam]
 	};
 };

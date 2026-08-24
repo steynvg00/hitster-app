@@ -71,7 +71,11 @@
 
 	.player-screen__body {
 		position: relative;
-		z-index: 1;
+		/* BEWUST geen z-index: een z-index maakt hier een stacking context en dan
+		   kan mix-blend-mode:screen binnen het scherm (splashvideo, gameset-logo)
+		   niet meer tegen de paginagradient blenden — dan blijft het zwart staan.
+		   De body is een positioned sibling NA de overlays, dus hij schildert er
+		   sowieso overheen. */
 		display: flex;
 		flex-direction: column;
 		flex: 1 1 auto;
