@@ -192,6 +192,13 @@
 	const winner = $derived(teamAtPlace(1));
 	const winnerRevealed = $derived(winner !== null && isRevealed(winner.id));
 
+	/**
+	 * Scoreweergave. `setScore` staat al in `data.rankedTeams` — het is dezelfde
+	 * som die de plek-afleiding voedt, dus geen extra query en geen extra bron.
+	 * Zelfde nl-NL-notatie als het TV-leaderboard, zodat 1840 overal "1.840" is.
+	 */
+	const nl = new Intl.NumberFormat('nl-NL');
+
 	const title = $derived(
 		winnerRevealed && winner ? `${winner.display_name} pakt de kroon!` : 'Wie pakt de kroon?'
 	);
@@ -274,6 +281,12 @@
 							<span class="low__name">
 								{revealed ? low.team.display_name : '— nog verborgen —'}
 							</span>
+							<!-- Altijd in de DOM, pas zichtbaar bij de onthulling: zo houdt de
+							     naamkolom dezelfde breedte en springt de rij niet op het moment
+							     dat de host onthult. -->
+							<span class="low__score" class:low__score--on={revealed}>
+								{nl.format(low.team.setScore)}
+							</span>
 						</div>
 					{/each}
 				</div>
@@ -329,6 +342,12 @@
 
 							<div class="ped squircle">
 								<span class="ped__num">{slot.place}</span>
+								<!-- De zuil heeft een VASTE hoogte (--ped-h), dus de score erbij
+								     verandert niets aan de podiumopbouw. Zichtbaar vanaf de
+								     onthulling, net als de teamnaam in het blok erboven. -->
+								<span class="ped__score" class:ped__score--on={revealed}>
+									{nl.format(team.setScore)}<span class="ped__unit">ptn</span>
+								</span>
 							</div>
 						</div>
 					{/each}
@@ -613,6 +632,32 @@
 		color: var(--color-mixup-paper);
 	}
 
+	/* Score per rij, zelfde gele display-cijfers als op de zuil en het
+	   TV-leaderboard. Staat altijd in de DOM zodat de naamkolom niet van
+	   breedte verspringt bij de onthulling. */
+	.low__score {
+		flex: 0 0 auto;
+		font-family: var(--font-display);
+		font-weight: 900;
+		font-size: calc(20 * var(--u));
+		line-height: 1;
+		color: var(--color-mixup-yellow);
+		text-shadow: 0 0 calc(14 * var(--u)) rgba(255, 230, 0, 0.35);
+		font-variant-numeric: tabular-nums;
+		visibility: hidden;
+		opacity: 0;
+		transition: opacity 0.4s ease 0.1s;
+	}
+
+	.lows--docked .low__score {
+		font-size: calc(15 * var(--u));
+	}
+
+	.low__score--on {
+		visibility: visible;
+		opacity: 1;
+	}
+
 	/* ── Het podium ─────────────────────────────────────────────── */
 	.stage {
 		display: flex;
@@ -747,8 +792,10 @@
 	/* Zuil — teamkleur zodra onthuld, anders de plek-accentkleur. */
 	.ped {
 		display: flex;
-		align-items: flex-start;
-		justify-content: center;
+		flex-direction: column;
+		align-items: center;
+		justify-content: flex-start;
+		gap: calc(2 * var(--u));
 		box-sizing: border-box;
 		width: calc(var(--ped-w) * var(--u));
 		height: calc(var(--ped-h) * var(--u));
@@ -769,6 +816,47 @@
 		font-size: calc(var(--ped-num) * var(--u));
 		line-height: 1;
 		color: rgba(var(--accent), 0.35);
+	}
+
+	/* De score op de zuil. Gele cijfers in de display-stijl van het
+	   TV-leaderboard, zodat een score er overal in het redesign hetzelfde
+	   uitziet. Onzichtbaar tot de host de plek onthult — de ruimte is dan al
+	   gereserveerd, dus er verschuift niets op het onthulmoment. */
+	.ped__score {
+		display: flex;
+		align-items: baseline;
+		gap: calc(4 * var(--u));
+		font-family: var(--font-display);
+		font-weight: 900;
+		font-size: calc(var(--ped-num) * 0.4 * var(--u));
+		line-height: 1;
+		color: var(--color-mixup-yellow);
+		text-shadow: 0 0 calc(16 * var(--u)) rgba(255, 230, 0, 0.4);
+		font-variant-numeric: tabular-nums;
+		visibility: hidden;
+		opacity: 0;
+		transform: scale(0.8);
+		transition:
+			opacity 0.45s ease 0.15s,
+			transform 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.3) 0.15s;
+	}
+
+	/* Iets na de revealPop van het teamblok, zodat de score de plek volgt
+	   in plaats van hem aan te kondigen. */
+	.ped__score--on {
+		visibility: visible;
+		opacity: 1;
+		transform: scale(1);
+	}
+
+	.ped__unit {
+		font-family: var(--font-ui);
+		font-weight: 800;
+		font-size: calc(var(--ped-num) * 0.17 * var(--u));
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: var(--color-mixup-muted);
+		text-shadow: none;
 	}
 
 	/* ── Animaties (designbron: revealPop / pulse) ──────────────── */
@@ -807,7 +895,9 @@
 		.lows,
 		.stage,
 		.crown,
-		.low {
+		.low,
+		.ped__score,
+		.low__score {
 			transition: none;
 		}
 	}
