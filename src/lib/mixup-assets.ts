@@ -68,7 +68,23 @@ export const OVERLAY_ASSETS = {
 /** Splash rond de teamcirkel bij de randomizer-reveal. */
 export const SPLASH_VIDEO = `${BASE}/splash-mixup.mp4`;
 
+/**
+ * Bestandsnamen in `static/uploads/Powerups/` die NIET gelijk zijn aan het
+ * `powerup_types.id` waar ze bij horen. Alleen een naam-alias — de id blijft
+ * overal wat hij is.
+ */
+const POWERUP_ICON_ALIAS: Record<string, string> = {
+	power_spin: 'powerspin'
+};
+
 /** Powerup-icoon voor een powerup-type-id (zie powerup_types.id). */
 export function powerupIcon(typeId: string): string {
-	return `${BASE}/Powerups/${typeId}.png`;
+	return `${BASE}/Powerups/${POWERUP_ICON_ALIAS[typeId] ?? typeId}.png`;
 }
+
+/**
+ * De iconen waar de slotmachine (scherm 5) doorheen rolt vóór hij landt.
+ * Puur decor: welke powerup je wint is al door de server bepaald voordat dit
+ * scherm opent. Dezelfde vijf als in de designbron.
+ */
+export const SLOT_REEL_ICON_IDS = ['freeze', 'x_ray', 'shield', 'power_spin', 'lifeline'] as const;

@@ -294,7 +294,7 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		const { data: hpRows } = await admin
 			.from('team_powerups')
 			.select(
-				'id, powerup_type_id, granted_at, powerup_types(id, name, icon, description, holdable, immediate_use)'
+				'id, powerup_type_id, granted_at, powerup_types(id, name, icon, description, holdable, immediate_use, category)'
 			)
 			.eq('team_id', locals.teamId)
 			.eq('set_id', playerSetId)
