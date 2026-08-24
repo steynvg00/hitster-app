@@ -1826,7 +1826,11 @@
 		horen er via het standaard `form="challenge-answer-form"`-attribuut nog
 		steeds bij. Voor de browser is dat exact dezelfde submit.
 	-->
-	<PlayerScreen>
+	<!-- fitViewport: 7B is het enige scherm met een eigen scrollgebied (de
+	     antwoordkaart) én een vaste voet. Zonder vaste viewporthoogte groeit de
+	     kolom met de inhoud mee, scrollt de pagina in plaats van de kaart, en
+	     lopen de powerup-rij en de knoppenbalk uit beeld. -->
+	<PlayerScreen fitViewport>
 		<!-- Freeze overlay (stuk 2): blocking frost layer, clears itself after 30s
 		     client-side — no server round-trip, it's a marker row only. De
 		     vormgeving zit sinds fase 4 in FreezeOverlay; `freezeUntil` en
