@@ -1,20 +1,35 @@
 <script lang="ts">
+	/**
+	 * 1D · ONBOARDING (redesign fase 2) — mobiel, referentie 390x844.
+	 *
+	 * Twee states uit de designbron:
+	 *  (a) gameset-logo ingesteld → logo 200px bovenaan, spinlogo vult de rest
+	 *  (b) default → alleen het M!XUP-spinlogo
+	 * Camera/galerij verschijnen pas NA een tik op de fotocirkel.
+	 *
+	 * De formulier- en uploadlogica is ongewijzigd: zelfde POST-action, zelfde
+	 * enhance-injectie van het bestand, zelfde velden (name, photo, next).
+	 */
 	import { enhance } from '$app/forms';
+	import PlayerScreen from '$lib/components/game/PlayerScreen.svelte';
+	import { MIXUP_LOGO } from '$lib/mixup-assets';
 	import type { PageData, ActionData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
-	type PhotoMode = 'camera' | 'gallery';
-
-	let photoMode = $state<PhotoMode | null>(null);
+	let photoOpen = $state(false);
 	let photoPreviewUrl = $state<string | null>(null);
 	let photoFile = $state<File | null>(null);
 	let submitting = $state(false);
 
 	const isTeams = $derived(data.mode === 'teams');
-	const heading = $derived(isTeams ? 'Join the Team Game' : 'Play Solo');
-	const subheading = $derived(
-		isTeams ? 'Enter your name to join your team' : 'Enter your name to start playing'
+	const hasPhoto = $derived(photoPreviewUrl !== null);
+	const photoHint = $derived(
+		hasPhoto
+			? 'FOTO TOEGEVOEGD · TIK OM TE WIJZIGEN'
+			: photoOpen
+				? 'KIES EEN BRON'
+				: 'TIK VOOR EEN PROFIELFOTO'
 	);
 
 	function handleFileChange(e: Event) {
@@ -24,197 +39,217 @@
 		if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
 		photoFile = file;
 		photoPreviewUrl = URL.createObjectURL(file);
-	}
-
-	function clearPhoto() {
-		if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
-		photoPreviewUrl = null;
-		photoFile = null;
-		photoMode = null;
+		photoOpen = false;
 	}
 </script>
 
 <svelte:head>
-	<title>{heading} — Hitster</title>
+	<title>{isTeams ? 'Doe mee' : 'Solo spelen'} — M!XUP</title>
 </svelte:head>
 
-<div class="flex min-h-screen flex-col bg-zinc-950 px-5 py-8">
-	<a href="/" class="mb-8 self-start text-sm text-zinc-500 transition-colors hover:text-zinc-300">
-		← Back
-	</a>
+<PlayerScreen rain corners={0.4} class="px-5">
+	{#if data.gamesetLogo}
+		<!-- State (a): gameset-logo bovenaan -->
+		<img
+			src={data.gamesetLogo}
+			alt="Gameset"
+			class="mt-3 w-[200px] self-center object-contain"
+			style="mix-blend-mode: screen;"
+		/>
+	{/if}
 
-	<div class="mx-auto w-full max-w-sm flex-1">
-		<div class="mb-8">
-			<h1 class="text-3xl font-black text-white">{heading}</h1>
-			<p class="mt-1 text-sm text-zinc-400">{subheading}</p>
+	<div class="flex min-h-0 flex-1 items-center justify-center" class:pt-5={!data.gamesetLogo}>
+		<img
+			src={MIXUP_LOGO}
+			alt="M!XUP"
+			class="max-h-full w-full object-contain"
+			style="filter: drop-shadow(0 0 40px rgba(124, 77, 255, 0.65));"
+		/>
+	</div>
+
+	{#if form?.error}
+		<div
+			class="mb-3 rounded-mixup-sm border border-[rgba(255,59,74,0.5)] bg-[rgba(255,59,74,0.12)] px-4 py-3 text-sm text-[#FF6FC4] squircle"
+		>
+			{form.error}
 		</div>
+	{/if}
 
-		{#if form?.error}
-			<div
-				class="mb-5 rounded-lg border border-red-800 bg-red-950/60 px-4 py-3 text-sm text-red-300"
-			>
-				{form.error}
-			</div>
+	<form
+		method="POST"
+		enctype="multipart/form-data"
+		use:enhance={({ formData }) => {
+			if (photoFile) formData.set('photo', photoFile, photoFile.name);
+			submitting = true;
+			return async ({ update }) => {
+				submitting = false;
+				await update();
+			};
+		}}
+	>
+		{#if data.next}
+			<input type="hidden" name="next" value={data.next} />
 		{/if}
 
-		<!--
-			enctype="multipart/form-data" required for file upload.
-			The photo file is stored in `photoFile` state and injected into FormData
-			via the use:enhance callback — this works even when the <input> is not in the
-			DOM (e.g. when the preview is showing instead).
-		-->
-		<form
-			method="POST"
-			enctype="multipart/form-data"
-			use:enhance={({ formData }) => {
-				// Inject the in-memory file into FormData regardless of DOM state
-				if (photoFile) formData.set('photo', photoFile, photoFile.name);
-				submitting = true;
-				return async ({ update }) => {
-					submitting = false;
-					await update();
-				};
-			}}
-			class="space-y-6"
-		>
-			{#if data.next}
-				<input type="hidden" name="next" value={data.next} />
-			{/if}
-			<!-- Name -->
-			<div>
-				<label class="mb-1.5 block text-sm font-semibold text-zinc-300" for="player-name">
-					Your name
-				</label>
-				<input
-					id="player-name"
-					name="name"
-					type="text"
-					value={form?.name ?? ''}
-					required
-					minlength="2"
-					maxlength="30"
-					placeholder="Enter your name"
-					autocomplete="given-name"
-					class="player-input"
-				/>
-			</div>
-
-			<!-- Photo section (entirely optional) -->
-			<div>
-				<div class="mb-2 flex items-center justify-between">
-					<span class="text-sm font-semibold text-zinc-300">
-						Photo <span class="font-normal text-zinc-500">(optional)</span>
-					</span>
-					{#if photoPreviewUrl}
-						<button
-							type="button"
-							onclick={clearPhoto}
-							class="text-xs text-zinc-500 transition-colors hover:text-red-400"
-						>
-							Remove
-						</button>
-					{/if}
-				</div>
-
-				{#if photoPreviewUrl}
-					<!-- Preview -->
-					<div class="flex justify-center py-2">
-						<img
-							src={photoPreviewUrl}
-							alt="Selected avatar preview"
-							class="h-28 w-28 rounded-full object-cover ring-2 ring-amber-400/50"
-						/>
-					</div>
-				{:else}
-					<!-- Mode picker buttons -->
-					<div class="flex gap-3">
-						<button
-							type="button"
-							onclick={() => (photoMode = 'camera')}
-							class="flex flex-1 flex-col items-center gap-1.5 rounded-xl border py-4 text-sm font-medium transition-colors {photoMode ===
-							'camera'
-								? 'border-amber-400 bg-amber-400/10 text-amber-300'
-								: 'border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'}"
-						>
-							<span class="text-2xl">📷</span>
-							Take photo
-						</button>
-						<button
-							type="button"
-							onclick={() => (photoMode = 'gallery')}
-							class="flex flex-1 flex-col items-center gap-1.5 rounded-xl border py-4 text-sm font-medium transition-colors {photoMode ===
-							'gallery'
-								? 'border-amber-400 bg-amber-400/10 text-amber-300'
-								: 'border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200'}"
-						>
-							<span class="text-2xl">🖼</span>
-							Upload
-						</button>
-					</div>
-
-					<!--
-						File inputs: only one is mounted at a time.
-						capture="user" on the camera variant opens the front camera directly on
-						Android Chrome. On iOS Safari it presents a system sheet (Camera / Photo
-						Library / Browse) regardless of the capture attribute — expected iOS behaviour.
-					-->
-					{#if photoMode === 'camera'}
-						<label
-							class="mt-3 flex cursor-pointer items-center justify-center rounded-lg border border-dashed border-zinc-600 py-4 text-sm text-zinc-400 transition-colors hover:border-zinc-400 hover:text-zinc-200"
-						>
-							Tap to open camera
-							<input
-								type="file"
-								accept="image/*"
-								capture="user"
-								class="sr-only"
-								onchange={handleFileChange}
-							/>
-						</label>
-					{:else if photoMode === 'gallery'}
-						<label
-							class="mt-3 flex cursor-pointer items-center justify-center rounded-lg border border-dashed border-zinc-600 py-4 text-sm text-zinc-400 transition-colors hover:border-zinc-400 hover:text-zinc-200"
-						>
-							Tap to choose from gallery
-							<input
-								type="file"
-								accept="image/*"
-								class="sr-only"
-								onchange={handleFileChange}
-							/>
-						</label>
-					{/if}
-				{/if}
-			</div>
-
+		<!-- Glaskaart met fotocirkel + naamveld -->
+		<div class="onb-card mb-[18px] rounded-mixup-hero squircle">
 			<button
-				type="submit"
-				disabled={submitting}
-				class="w-full rounded-xl bg-amber-400 py-4 text-lg font-black text-zinc-950 transition-all hover:bg-amber-300 active:scale-[0.98] disabled:opacity-50"
+				type="button"
+				class="onb-photo"
+				class:onb-photo--filled={hasPhoto}
+				onclick={() => (photoOpen = !photoOpen)}
+				aria-label="Profielfoto toevoegen"
 			>
-				{submitting ? 'Saving…' : 'Continue →'}
+				{#if photoPreviewUrl}
+					<img src={photoPreviewUrl} alt="" class="h-full w-full rounded-full object-cover" />
+				{:else}
+					+
+				{/if}
 			</button>
 
-			<p class="text-center text-xs text-zinc-600">
-				No account needed. Session lasts 12 hours.
-			</p>
-		</form>
+			<div class="text-[11px] font-bold tracking-[0.12em] text-mixup-muted">{photoHint}</div>
+
+			{#if photoOpen}
+				<div class="onb-sources flex w-full gap-2">
+					<label class="onb-source rounded-mixup-chip squircle">
+						📷 CAMERA
+						<input
+							type="file"
+							accept="image/*"
+							capture="user"
+							class="sr-only"
+							onchange={handleFileChange}
+						/>
+					</label>
+					<label class="onb-source rounded-mixup-chip squircle">
+						🖼 GALERIJ
+						<input type="file" accept="image/*" class="sr-only" onchange={handleFileChange} />
+					</label>
+				</div>
+			{/if}
+
+			<input
+				name="name"
+				type="text"
+				value={form?.name ?? ''}
+				required
+				minlength="2"
+				maxlength="30"
+				placeholder="Typ je naam…"
+				autocomplete="given-name"
+				class="onb-name rounded-mixup-sm squircle"
+			/>
+		</div>
+
+		<button type="submit" disabled={submitting} class="onb-submit squircle">
+			{submitting ? 'BEZIG…' : 'VERDER'}
+		</button>
+	</form>
+
+	<div class="mt-3 text-center text-xs font-medium text-mixup-dim">
+		Geen account nodig · je sessie blijft 12 uur geldig
 	</div>
-</div>
+</PlayerScreen>
 
 <style>
-	:global(.player-input) {
-		width: 100%;
-		background: #27272a;
-		border: 1px solid #3f3f46;
-		border-radius: 0.625rem;
-		padding: 0.75rem 1rem;
-		color: #f4f4f5;
-		font-size: 1rem;
-		transition: border-color 0.15s;
+	.onb-card {
+		background: linear-gradient(135deg, rgba(229, 242, 255, 0.1), rgba(229, 242, 255, 0.03));
+		border: 1px solid rgba(229, 242, 255, 0.22);
+		backdrop-filter: blur(14px);
+		-webkit-backdrop-filter: blur(14px);
+		padding: 20px;
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+		align-items: center;
 	}
-	:global(.player-input:focus) {
+
+	.onb-photo {
+		width: 96px;
+		height: 96px;
+		border-radius: 50%;
+		cursor: pointer;
+		font-family: var(--font-ui);
+		font-weight: 800;
+		font-size: 34px;
+		overflow: hidden;
+		background: rgba(11, 11, 31, 0.5);
+		color: var(--color-mixup-muted);
+		border: 2px dashed rgba(229, 242, 255, 0.35);
+	}
+
+	.onb-photo--filled {
+		background: linear-gradient(135deg, #7c4dff, #ff2daa);
+		color: #ffffff;
+		border: 2px solid rgba(229, 242, 255, 0.7);
+	}
+
+	.onb-sources {
+		animation: onb-fade-up 0.28s ease both;
+	}
+
+	@keyframes onb-fade-up {
+		0% {
+			transform: translateY(18px);
+			opacity: 0;
+		}
+		100% {
+			transform: translateY(0);
+			opacity: 1;
+		}
+	}
+
+	.onb-source {
+		flex: 1;
+		height: 44px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-family: var(--font-ui);
+		font-weight: 800;
+		font-size: 12px;
+		letter-spacing: 0.08em;
+		cursor: pointer;
+		background: rgba(229, 242, 255, 0.06);
+		color: #9fb1d9;
+		border: 1px solid rgba(229, 242, 255, 0.2);
+	}
+
+	.onb-name {
+		width: 100%;
+		box-sizing: border-box;
+		background: rgba(11, 11, 31, 0.62);
+		border: 1px solid rgba(229, 242, 255, 0.22);
+		padding: 14px;
+		color: var(--color-mixup-paper);
+		font-family: var(--font-ui);
+		font-weight: 500;
+		/* 16px voorkomt de auto-zoom van iOS Safari bij focus. */
+		font-size: 16px;
 		outline: none;
-		border-color: #fbbf24;
+	}
+
+	.onb-name:focus {
+		border-color: var(--color-mixup-cyan);
+	}
+
+	.onb-submit {
+		width: 100%;
+		height: 54px;
+		border-radius: 26px;
+		font-family: var(--font-ui);
+		font-weight: 800;
+		font-size: 16px;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		cursor: pointer;
+		border: 1px solid transparent;
+		background: linear-gradient(90deg, #ffe600, #ff7f11);
+		color: #1a1400;
+		box-shadow: 0 10px 30px rgba(255, 127, 17, 0.35);
+	}
+
+	.onb-submit:disabled {
+		opacity: 0.6;
 	}
 </style>

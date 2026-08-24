@@ -1,5 +1,6 @@
 import * as LucideIcons from 'lucide-svelte';
 import type { ChallengeType } from '$lib/types/index.js';
+import { CHALLENGE_LOGOS } from '$lib/mixup-assets';
 
 export const CHALLENGE_TYPES = [
 	'standard',
@@ -53,6 +54,25 @@ export function getTypeColor(type: string): string {
 
 export function getTypeDescription(type: string): string {
 	return TYPE_DESCRIPTION[type as ChallengeType] ?? '';
+}
+
+/**
+ * Challenge-logo per type, met de hoogte uit de designspec. Elk van de zes
+ * challenge-types heeft precies een logo-afbeelding; de hoogtes (31/39/23/28/
+ * 44/24px) staan vast en de logo's zijn links uitgelijnd op max-width 150px.
+ * Bron: design_handoff_mixup_redesign/README.md, scherm 5 (team-hub console).
+ */
+const TYPE_LOGO: Record<ChallengeType, { src: string; height: number }> = {
+	standard: CHALLENGE_LOGOS.hitster,
+	anthem: CHALLENGE_LOGOS.anthems,
+	label: CHALLENGE_LOGOS.icons,
+	effects: CHALLENGE_LOGOS.effects,
+	fragments: CHALLENGE_LOGOS.fragments,
+	mashup: CHALLENGE_LOGOS.mashups
+};
+
+export function getTypeLogo(type: string): { src: string; height: number } | null {
+	return TYPE_LOGO[type as ChallengeType] ?? null;
 }
 
 // Legacy aliases — callers import these without breaking

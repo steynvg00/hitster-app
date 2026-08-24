@@ -31,7 +31,14 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 	if (locals.playerId) redirect(302, postOnboardRedirect(mode, url.searchParams.get('next')));
 
 	const next = url.searchParams.get('next');
-	return { mode, next };
+
+	// gamesetLogo voedt state (a) van scherm 1D (logo 200px bovenaan, spinlogo
+	// eronder). `game_sets` heeft nog GEEN logokolom, dus dit is voorlopig altijd
+	// null en onboarding rendert state (b) — het default-scherm met alleen het
+	// M!XUP-spinlogo. Zodra de kolom bestaat is dit de enige plek die wijzigt.
+	const gamesetLogo: string | null = null;
+
+	return { mode, next, gamesetLogo };
 };
 
 export const actions: Actions = {
@@ -74,7 +81,9 @@ export const actions: Actions = {
 				return fail(500, { error: 'Photo upload failed — try again', name });
 			}
 
-			({ data: { publicUrl: photo_url } } = db.storage.from(PHOTO_BUCKET).getPublicUrl(objectPath));
+			({
+				data: { publicUrl: photo_url }
+			} = db.storage.from(PHOTO_BUCKET).getPublicUrl(objectPath));
 		}
 
 		const { data: player, error: insertError } = await db
