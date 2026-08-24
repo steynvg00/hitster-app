@@ -2,14 +2,143 @@
 @plugin '@tailwindcss/forms';
 @plugin '@tailwindcss/typography';
 
-@theme {
-	--color-mixup-magenta: #ff2daa;
-	--color-mixup-cyan: #00e5ff;
-	--color-mixup-yellow: #ffe600;
-	--color-mixup-violet: #7c4dff;
-	--color-mixup-orange: #ff7f11;
-	--color-mixup-night: #0b0b1f;
-	--color-mixup-ice: #e5f2ff;
+/* ══════════════════════════════════════════════════════════════════
+   M!XUP DESIGN TOKENS
+   Bron: design_handoff_mixup_redesign/README.md +
+         "M!XUP UI for Claude Code.dc.html" (masterdocument).
+   Tailwind v4 — tokens leven hier, NIET in tailwind.config.js.
+   Alles in @theme wordt ook als CSS custom property op :root gezet,
+   dus var(--color-mixup-cyan) werkt net zo goed als class="text-mixup-cyan".
+══════════════════════════════════════════════════════════════════ */
+
+@theme static {
+	/* ── Kernpalet ────────────────────────────────────────────── */
+	--color-mixup-ink: #0b0b1f; /* basis-achtergrond */
+	--color-mixup-night: #0b0b1f; /* alias van ink (bestaande naam) */
+	--color-mixup-deep-violet: #221546; /* top van de radiale gradient */
+	--color-mixup-paper: #e5f2ff; /* primaire tekst */
+	--color-mixup-ice: #e5f2ff; /* alias van paper (bestaande naam) */
+	--color-mixup-muted: #8e9bc9; /* secundaire tekst */
+	--color-mixup-cyan: #00e5ff; /* actief / focus / live */
+	--color-mixup-violet: #7c4dff; /* glow, accentverloop */
+	--color-mixup-magenta: #ff2daa; /* urgentie, aanval */
+	--color-mixup-yellow: #ffe600; /* score, powerups */
+	--color-mixup-green: #2bd97a; /* compleet / bevestigd */
+	--color-mixup-amber: #ffc24b; /* twijfel / half */
+	--color-mixup-orange: #ff7f11; /* warme accent (legacy) */
+
+	/* Tertiaire tekstkleur uit het masterdocument (labels, meta) */
+	--color-mixup-dim: #5a648c;
+	--color-mixup-soft: #b9c4e4;
+
+	/* ── Teamkleuren ──────────────────────────────────────────── */
+	--color-team-blue: #2e7bff;
+	--color-team-yellow: #ffe600;
+	--color-team-green: #2bd97a;
+	--color-team-red: #ff3b4a;
+	--color-team-indigo: #7c4dff;
+	--color-team-black: #171a2b;
+	/* Zwart krijgt een witte glow i.p.v. een eigen kleur */
+	--color-team-black-glow: rgba(255, 255, 255, 0.85);
+
+	/* ── Typografie ───────────────────────────────────────────── */
+	--font-display: 'Barlow Condensed', 'Oswald', system-ui, sans-serif;
+	--font-ui: 'Rubik', system-ui, -apple-system, sans-serif;
+	--font-data: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+
+	/* Letter-spacing voor labels / eyebrows (0.14–0.22em) */
+	--tracking-mixup-tight: 0.08em;
+	--tracking-mixup-label: 0.14em;
+	--tracking-mixup-eyebrow: 0.2em;
+	--tracking-mixup-wide: 0.22em;
+
+	/* ── Vormen (squircle-radii 12–28px) ──────────────────────── */
+	--radius-mixup-xs: 12px; /* kleine chip / swatch */
+	--radius-mixup-chip: 14px; /* chip */
+	--radius-mixup-sm: 16px; /* rij / kleine kaart */
+	--radius-mixup-card: 20px; /* kaart */
+	--radius-mixup-lg: 22px; /* grote kaart */
+	--radius-mixup-modal: 26px; /* modal */
+	--radius-mixup-hero: 28px; /* hero */
+
+	/* ── Spacing ──────────────────────────────────────────────── */
+	--spacing-mixup-gutter: 18px; /* zijmarge speler-scherm (390px ref) */
+	--spacing-mixup-top: 56px; /* bovenmarge speler-scherm */
+	--spacing-mixup-bottom: 30px; /* ondermarge speler-scherm */
+	--spacing-mixup-hit: 44px; /* minimale hit target */
+
+	/* ── Gradients ────────────────────────────────────────────── */
+	--gradient-mixup-page: radial-gradient(120% 70% at 50% 0%, #221546 0%, #0b0b1f 62%);
+	--gradient-mixup-brand: linear-gradient(90deg, #00e5ff, #7c4dff 50%, #ff2daa);
+
+	/* ── Glas ─────────────────────────────────────────────────── */
+	--color-mixup-glass: rgba(229, 242, 255, 0.04);
+	--color-mixup-glass-border: rgba(229, 242, 255, 0.14);
+	--color-mixup-glass-border-soft: rgba(229, 242, 255, 0.12);
+	--color-mixup-glass-border-strong: rgba(229, 242, 255, 0.22);
+	--blur-mixup-glass: 14px;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   UTILITIES
+══════════════════════════════════════════════════════════════════ */
+
+/* Radiale achtergrond-gradient van elk donker M!XUP-scherm. */
+@utility mixup-page {
+	background: var(--gradient-mixup-page);
+	color: var(--color-mixup-paper);
+}
+
+/* M!XUP-gradient (cyaan → violet → magenta) als vlak. */
+@utility mixup-gradient {
+	background-image: var(--gradient-mixup-brand);
+}
+
+/* Dezelfde gradient als tekstvulling. */
+@utility mixup-gradient-text {
+	background-image: var(--gradient-mixup-brand);
+	background-clip: text;
+	-webkit-background-clip: text;
+	color: transparent;
+}
+
+/* Squircle-hoeken waar de browser het ondersteunt; radius apart zetten
+   met rounded-mixup-* (of een eigen border-radius). */
+@utility squircle {
+	corner-shape: squircle;
+}
+
+/* Glaskaart — rand 0.14. */
+@utility mixup-glass {
+	background: var(--color-mixup-glass);
+	border: 1px solid var(--color-mixup-glass-border);
+	backdrop-filter: blur(var(--blur-mixup-glass));
+	-webkit-backdrop-filter: blur(var(--blur-mixup-glass));
+}
+
+/* Glaskaart met zachtere rand (0.12) — rijen, lijsten. */
+@utility mixup-glass-soft {
+	background: var(--color-mixup-glass);
+	border: 1px solid var(--color-mixup-glass-border-soft);
+	backdrop-filter: blur(var(--blur-mixup-glass));
+	-webkit-backdrop-filter: blur(var(--blur-mixup-glass));
+}
+
+/* Glaskaart met nadrukkelijke rand (0.22) — modals, hero-kaarten. */
+@utility mixup-glass-strong {
+	background: var(--color-mixup-glass);
+	border: 1px solid var(--color-mixup-glass-border-strong);
+	backdrop-filter: blur(var(--blur-mixup-glass));
+	-webkit-backdrop-filter: blur(var(--blur-mixup-glass));
+}
+
+/* Eyebrow / mono-label uit het designsysteem. */
+@utility mixup-eyebrow {
+	font-family: var(--font-data);
+	font-size: 11px;
+	letter-spacing: var(--tracking-mixup-wide);
+	text-transform: uppercase;
+	color: var(--color-mixup-muted);
 }
 
 body {
