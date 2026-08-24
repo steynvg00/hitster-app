@@ -12,8 +12,8 @@
 	let {
 		name,
 		pool,
-		placeholder = 'Type to search…',
-		teamHex = '#ef4444',
+		placeholder = 'Typ om te zoeken…',
+		teamHex = '#2E7BFF',
 		value = $bindable('')
 	}: Props = $props();
 
@@ -53,7 +53,10 @@
 
 	const filtered = $derived(
 		inputText.length >= 1
-			? fuse.search(inputText).map((r) => r.item).slice(0, 8)
+			? fuse
+					.search(inputText)
+					.map((r) => r.item)
+					.slice(0, 8)
 			: pool.slice(0, 8)
 	);
 
@@ -91,26 +94,27 @@
 		onblur={handleBlur}
 		{placeholder}
 		autocomplete="off"
-		class="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3 text-zinc-100 transition-colors focus:outline-none"
-		style="border-color: {value ? teamHex : ''}"
+		class="mixup-input w-full rounded-mixup-sm squircle"
+		style={value ? `border-color: ${teamHex};` : ''}
 	/>
 	<!-- Hidden input carries the confirmed value into the form -->
-	<input type="hidden" {name} value={value} />
+	<input type="hidden" {name} {value} />
 
 	{#if open}
 		<div
-			class="absolute left-0 right-0 z-20 mt-1 max-h-52 overflow-y-auto rounded-xl border border-zinc-700 bg-zinc-800 shadow-xl"
+			class="absolute right-0 left-0 z-20 mt-1 max-h-52 overflow-y-auto rounded-mixup-sm shadow-xl mixup-glass-strong squircle"
+			style="background: #14142e;"
 		>
 			{#if noMatches}
-				<div class="px-4 py-3 text-sm italic text-zinc-500">
-					No matches — check spelling or ask the host
+				<div class="px-4 py-3 text-sm text-mixup-dim italic">
+					Geen treffers — check de spelling of vraag de host
 				</div>
 			{:else}
 				{#each filtered as item}
 					<button
 						type="button"
 						onclick={() => select(item)}
-						class="w-full px-4 py-2.5 text-left text-sm text-zinc-200 transition-colors hover:bg-zinc-700"
+						class="w-full px-4 py-2.5 text-left text-sm text-mixup-paper transition-colors hover:bg-mixup-paper/10"
 					>
 						{item}
 					</button>
@@ -120,6 +124,23 @@
 	{/if}
 
 	{#if value === '' && inputText.length > 0 && !noMatches}
-		<p class="mt-1 text-xs text-zinc-500">Select an option from the list</p>
+		<p class="mt-1 text-xs text-mixup-dim">Kies een optie uit de lijst</p>
 	{/if}
 </div>
+
+<style>
+	.mixup-input {
+		background: rgba(11, 11, 31, 0.62);
+		border: 1px solid rgba(229, 242, 255, 0.22);
+		padding: 13px 14px;
+		color: var(--color-mixup-paper);
+		font-family: var(--font-ui);
+		font-weight: 500;
+		font-size: 16px;
+		outline: none;
+		transition: border-color 0.18s ease;
+	}
+	.mixup-input::placeholder {
+		color: var(--color-mixup-dim);
+	}
+</style>

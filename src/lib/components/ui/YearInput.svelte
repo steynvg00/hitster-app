@@ -1,4 +1,16 @@
 <script lang="ts">
+	/**
+	 * Jaar-invoer (redesign fase 3, scherm 7B).
+	 *
+	 * De designbron toont het jaar als een rij chips in de teamkleur; die vorm
+	 * is de `multiple_choice`-modus (zie MultipleChoice, layout="chips"). Deze
+	 * component dekt de twee numerieke modi:
+	 *
+	 *   slider          — groot jaartal in de teamkleur + een range in dezelfde kleur
+	 *   typeable_number — −/+ knoppen (44px hit target) rond een getalveld
+	 *
+	 * De teamkleur draagt in beide modi, net als de actieve tab en de play-knop.
+	 */
 	interface Props {
 		name: string;
 		mode?: 'slider' | 'typeable_number';
@@ -20,7 +32,7 @@
 	let {
 		name,
 		mode = 'slider',
-		teamHex = '#ef4444',
+		teamHex = '#2E7BFF',
 		min = 2000,
 		max = 2026,
 		value = $bindable(2013),
@@ -30,7 +42,12 @@
 
 <div>
 	{#if mode === 'slider'}
-		<div class="mb-3 text-center tabular-nums text-7xl font-black text-white">{value}</div>
+		<div
+			class="mb-2 text-center font-display text-6xl leading-none font-black tabular-nums"
+			style="color: {teamHex}; text-shadow: 0 0 26px {teamHex}66;"
+		>
+			{value}
+		</div>
 		<input
 			type="range"
 			{name}
@@ -41,7 +58,7 @@
 			class="w-full"
 			style="accent-color: {teamHex};"
 		/>
-		<div class="mt-1 flex justify-between text-xs text-zinc-600">
+		<div class="mt-1 flex justify-between font-data text-[11px] text-mixup-dim">
 			<span>{min}</span>
 			<span>{max}</span>
 		</div>
@@ -49,11 +66,12 @@
 		<div class="flex items-center gap-3">
 			<button
 				type="button"
+				aria-label="Jaar omlaag"
 				onclick={() => {
 					value = Math.max(min, value - 1);
 					ontouched?.();
 				}}
-				class="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-zinc-700 text-xl text-zinc-300 transition-colors hover:bg-zinc-800"
+				class="mixup-step flex h-11 w-11 shrink-0 items-center justify-center rounded-mixup-sm text-xl squircle"
 			>
 				−
 			</button>
@@ -64,18 +82,43 @@
 				oninput={() => ontouched?.()}
 				{min}
 				{max}
-				class="flex-1 rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3 text-center tabular-nums text-3xl font-black text-white focus:outline-none"
+				class="mixup-year flex-1 rounded-mixup-sm text-center tabular-nums squircle"
+				style="color: {teamHex};"
 			/>
 			<button
 				type="button"
+				aria-label="Jaar omhoog"
 				onclick={() => {
 					value = Math.min(max, value + 1);
 					ontouched?.();
 				}}
-				class="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-zinc-700 text-xl text-zinc-300 transition-colors hover:bg-zinc-800"
+				class="mixup-step flex h-11 w-11 shrink-0 items-center justify-center rounded-mixup-sm text-xl squircle"
 			>
 				+
 			</button>
 		</div>
 	{/if}
 </div>
+
+<style>
+	.mixup-step {
+		background: rgba(229, 242, 255, 0.05);
+		border: 1px solid rgba(229, 242, 255, 0.16);
+		color: var(--color-mixup-muted);
+		transition: color 0.18s ease;
+	}
+	.mixup-step:hover {
+		color: var(--color-mixup-paper);
+	}
+
+	.mixup-year {
+		background: rgba(11, 11, 31, 0.62);
+		border: 1px solid rgba(229, 242, 255, 0.22);
+		padding: 10px 14px;
+		font-family: var(--font-display);
+		font-weight: 900;
+		font-size: 30px;
+		line-height: 1;
+		outline: none;
+	}
+</style>
