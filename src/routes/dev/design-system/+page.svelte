@@ -238,6 +238,33 @@
 			</div>
 		</section>
 
+		<!-- Blur-bewijs: half glas over de regen, half niet -->
+		<section class="flex flex-col gap-4">
+			<span class="mixup-eyebrow text-mixup-yellow">5b · Blur-bewijs</span>
+			<span class="font-ui text-xs text-mixup-muted"
+				>De linkerhelft ligt onder een glaskaart, de rechterhelft niet — zelfde regen, zelfde
+				moment.</span
+			>
+			<div
+				class="relative h-64 overflow-hidden rounded-mixup-lg border border-[rgba(229,242,255,0.16)] squircle"
+			>
+				<CodeRain />
+				<GlassCard
+					border="strong"
+					radius="lg"
+					class="absolute top-6 bottom-6 left-6 z-10 flex w-[46%] flex-col justify-end gap-1 p-5"
+				>
+					<span class="font-data text-[10px] tracking-mixup-label text-mixup-cyan"
+						>BACKDROP-FILTER: BLUR(14PX)</span
+					>
+					<span class="font-ui text-sm text-mixup-soft">De regen hierachter is wazig.</span>
+				</GlassCard>
+				<div class="absolute right-6 bottom-6 z-10">
+					<span class="font-ui text-sm text-mixup-soft">Scherp — geen glas.</span>
+				</div>
+			</div>
+		</section>
+
 		<!-- Assets -->
 		<section class="flex flex-col gap-4">
 			<span class="mixup-eyebrow text-mixup-yellow">6 · Assets in static/uploads/</span>

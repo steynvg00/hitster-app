@@ -12,7 +12,13 @@
 	 * Laag 3 — groen,   opacity 0.18, hue-rotate(118deg) sat 1.4, 13s
 	 *
 	 * Nooit statisch. De wrapper krijgt overflow:hidden + contain:paint, de
-	 * lagen will-change:transform.
+	 * lagen mix-blend-mode:screen + will-change:transform.
+	 *
+	 * De wrapper is NIET transparant: hij schildert zelf de donkere paginagrond
+	 * (--cr-backdrop, standaard de radiale M!XUP-gradient) waar de lagen op
+	 * screenen. Dat is visueel identiek aan een transparante overlay boven
+	 * dezelfde grond, maar houdt de regen zichtbaar voor de backdrop-filter van
+	 * glaskaarten die eroverheen liggen.
 	 *
 	 * De tegel herhaalt op een VASTE maat (426px breed vanaf 768px, een volle
 	 * kolom daaronder) met de hoogte afgeleid uit de natuurlijke 788x1400-
@@ -63,8 +69,16 @@
 		overflow: hidden;
 		contain: paint;
 		pointer-events: none;
-		mix-blend-mode: screen;
 		z-index: 0;
+
+		/* De wrapper draagt ZELF de donkere ondergrond waar de lagen op
+		   screenen. Daardoor gebeurt het blenden binnen deze groep en blijft
+		   het resultaat een gewone, niet-geblende laag — precies wat een
+		   backdrop-filter (de glaskaarten) nodig heeft om de regen te kunnen
+		   vervagen. Chromium sluit mix-blend-mode-content namelijk uit van de
+		   backdrop van een backdrop-filter.
+		   Zet --cr-backdrop als een scherm een andere ondergrond heeft. */
+		background: var(--cr-backdrop, var(--gradient-mixup-page));
 
 		/* Referentiepunt voor 100cqw = de eigen breedte van de wrapper. */
 		container-type: inline-size;
