@@ -32,6 +32,11 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 	const position = (allTeams ?? []).findIndex((t) => t.id === locals.teamId) + 1 || 1;
 	const totalTeams = (allTeams ?? []).length;
 
+	// Hoogste teamscore, afgeleid uit dezelfde (aflopend gesorteerde) query —
+	// geen extra request. Voedt de kroon-weergave in de banner: die toont bij
+	// ELK team met score === topScore, en alleen als topScore > 0.
+	const topScore = (allTeams ?? [])[0]?.score ?? 0;
+
 	// Determine active set_id for challenge filtering (resolved below with player lookup)
 	let playerSetId: string | null = null;
 	if (locals.playerId) {
@@ -364,6 +369,7 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		team,
 		position,
 		totalTeams,
+		topScore,
 		challenges: challengeList,
 		recentActivity: recentActivity ?? [],
 		activeSet,

@@ -16,9 +16,19 @@
 	let liveScore = $state(data.team.score);
 	let livePosition = $state(data.position);
 	let livePlayState = $state(data.activeSet?.play_state ?? 'playing');
-	let crownHolderTeamId = $state(data.crownHolderTeamId);
+	let liveTopScore = $state(data.topScore);
 
-	const iscrownHolder = $derived(crownHolderTeamId === data.team.id);
+	/**
+	 * Kroon-WEERGAVE volgt de score, niet de kroon-mechaniek: zichtbaar bij elk
+	 * team waarvan de score gelijk is aan de hoogste score, en alleen als die
+	 * hoogste score boven 0 ligt. Bij 0-0 dus geen kroon; bij een gedeelde
+	 * topscore dragen alle koplopers er een.
+	 *
+	 * game_sets.crown_holder_team_id blijft de MECHANIEK (de +1 steal en de +2
+	 * bij de recap) en stuurt de weergave niet meer aan; dit component leest die
+	 * kolom daarom niet langer.
+	 */
+	const showsCrown = $derived(liveTopScore > 0 && liveScore === liveTopScore);
 
 	// Lobby realtime: players joining teams
 	type LobbyPlayer = {
@@ -72,6 +82,9 @@
 						.order('score', { ascending: false });
 					if (allTeams) {
 						livePosition = allTeams.findIndex((t) => t.id === data.team.id) + 1 || 1;
+						// Zelfde (aflopend gesorteerde) rijen die de positie bepalen —
+						// geen extra query voor de kroon-weergave.
+						liveTopScore = allTeams[0]?.score ?? 0;
 					}
 				}
 			)
@@ -94,10 +107,8 @@
 						const p = payload.new as {
 							play_state?: string;
 							recap_state?: string;
-							crown_holder_team_id?: string | null;
 						};
 						if (p.play_state) livePlayState = p.play_state;
-						if ('crown_holder_team_id' in p) crownHolderTeamId = p.crown_holder_team_id ?? null;
 						if (p.play_state === 'recap' && data.activeSet) {
 							window.location.href = `/play/waiting?set_id=${data.activeSet.id}`;
 						}
@@ -243,8 +254,8 @@
 					<div class="hub-banner__eyebrow" style="color: {onColor}; opacity: 0.75;">JOUW TEAM</div>
 					<div class="hub-banner__team" style="color: {onColor};">{data.team.display_name}</div>
 				</div>
-				{#if iscrownHolder}
-					<img src={RANK_ASSETS.crown} alt="Plek 1" class="hub-crown" />
+				{#if showsCrown}
+					<img src={RANK_ASSETS.crown} alt="Koploper" class="hub-crown" />
 				{/if}
 			</div>
 		</div>

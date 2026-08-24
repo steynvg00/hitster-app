@@ -9,7 +9,14 @@
 	let { data }: { data: PageData } = $props();
 	let teams = $state<TeamRow[]>([...data.teams]);
 	let maxScore = $derived(Math.max(...teams.map((t) => t.score), 20));
-	let crownHolderTeamId = $state(data.crownHolderTeamId);
+	/**
+	 * Kroon-WEERGAVE volgt de score: zichtbaar bij elk team waarvan de score
+	 * gelijk is aan de hoogste score, en alleen als die boven 0 ligt. Bij 0-0
+	 * dus geen kroon; bij een gedeelde topscore dragen alle koplopers er een.
+	 * LET OP: maxScore hierboven heeft een ondergrens van 20 voor de balkbreedtes
+	 * en is daarom NIET bruikbaar als topscore.
+	 */
+	let topScore = $derived(Math.max(...teams.map((t) => t.score), 0));
 
 	// Position change tracking
 	let prevRanks = $state<Map<string, number>>(new Map(teams.map((t, i) => [t.id, i])));
@@ -57,10 +64,17 @@
 				.channel(`tv-leaderboard-set-${data.activeSetId}`)
 				.on(
 					'postgres_changes',
-					{ event: 'UPDATE', schema: 'public', table: 'game_sets', filter: `id=eq.${data.activeSetId}` },
-					(payload) => {
-						const gs = payload.new as { crown_holder_team_id?: string | null };
-						if ('crown_holder_team_id' in gs) crownHolderTeamId = gs.crown_holder_team_id ?? null;
+					{
+						event: 'UPDATE',
+						schema: 'public',
+						table: 'game_sets',
+						filter: `id=eq.${data.activeSetId}`
+					},
+					() => {
+						// Dit kanaal bestond alleen om crown_holder_team_id te volgen. De kroon
+						// volgt nu de score (zie topScore hierboven), die via het teams-kanaal
+						// binnenkomt. De subscriptie blijft bewust staan zodat het TV-scherm
+						// zijn game_sets-kanaal houdt; er is nu niets te doen bij een update.
 					}
 				)
 				.subscribe();
@@ -124,7 +138,7 @@
 					<!-- Name -->
 					<div class="flex min-w-0 flex-1 items-center gap-2">
 						<div class="truncate text-lg font-bold text-white md:text-xl">{team.display_name}</div>
-						{#if crownHolderTeamId === team.id}
+						{#if topScore > 0 && team.score === topScore}
 							<Crown size={18} style="color: #ffe600; flex-shrink: 0;" />
 						{/if}
 					</div>
