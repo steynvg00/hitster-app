@@ -37,6 +37,21 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		}
 	}
 
+	// De poort hierboven is het team-cookie (7 dagen), maar de set-resolutie hangt aan
+	// het speler-cookie (12 uur). Een speler met een verlopen sessie — of een rij waar
+	// set_id nog niet gezet is — komt dus wel binnen zonder set, en viel daardoor terug
+	// op scoresHidden: false (geen suspense) én activeSetId: null (geen realtime).
+	// Zelfde patroon als /admin/live: pak dan gewoon de actieve set.
+	if (!activeSet) {
+		const { data: gs } = await admin
+			.from('game_sets')
+			.select('id, status, play_state, recap_state, scores_hidden, crown_holder_team_id')
+			.eq('status', 'active')
+			.limit(1)
+			.maybeSingle();
+		if (gs) activeSet = { ...gs, scores_hidden: (gs as unknown as { scores_hidden?: boolean }).scores_hidden ?? false };
+	}
+
 	// Doorsturen naar het wachtscherm hoort ALLEEN te gebeuren als de recap echt
 	// loopt. Dat signaal is play_state === 'recap' — hetzelfde signaal dat de
 	// realtime-handler op deze pagina al gebruikt.
