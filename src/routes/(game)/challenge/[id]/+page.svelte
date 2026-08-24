@@ -1728,24 +1728,11 @@
 	-->
 	<PlayerScreen rain corners={0.4}>
 		<!--
-			Teampil, op dezelfde plek als op 7B. De artboard toont hem niet, maar een
-			speler die net een NFC-kaart heeft gescand landt hier als eerste — dit is
-			de enige plek waar hij vóór de start ziet voor welk team zijn cookie
-			staat. Absoluut gepositioneerd, zodat de kaart eronder gecentreerd blijft
-			zoals in de bron.
+			Geen teampil en geen banner op dit scherm: het artboard laat de poort
+			bewust leeg op één gecentreerde kaart na. De speler heeft zijn team al
+			gezien in de lobby en op de team-console, vóór hij de challenge aantikte.
+			De pil komt terug op het antwoordformulier (7B).
 		-->
-		<span
-			class="absolute top-0 left-5 flex items-center gap-[7px] rounded-full px-3 py-1.5 mixup-glass squircle"
-		>
-			<span
-				class="h-2.5 w-2.5 rounded-full"
-				style="background: {teamHex}; box-shadow: 0 0 10px {teamHex};"
-			></span>
-			<span class="text-[11px] font-extrabold tracking-[0.1em] text-mixup-paper uppercase"
-				>{data.team.display_name}</span
-			>
-		</span>
-
 		<div class="flex min-h-0 flex-1 flex-col justify-center gap-4 px-5">
 			<div
 				class="flex flex-col gap-3.5 rounded-mixup-hero px-5 py-6 mixup-glass-strong squircle"
