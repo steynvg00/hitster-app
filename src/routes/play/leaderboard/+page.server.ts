@@ -14,7 +14,13 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		.order('score', { ascending: false });
 
 	// Determine the player's active set
-	let activeSet: { id: string; status: string; recap_state: string | null; scores_hidden: boolean } | null = null;
+	let activeSet: {
+		id: string;
+		status: string;
+		play_state: string | null;
+		recap_state: string | null;
+		scores_hidden: boolean;
+	} | null = null;
 	if (locals.playerId) {
 		const { data: player } = await admin
 			.from('players')
@@ -24,14 +30,22 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		if (player?.set_id) {
 			const { data: gs } = await admin
 				.from('game_sets')
-				.select('id, status, recap_state, scores_hidden, crown_holder_team_id')
+				.select('id, status, play_state, recap_state, scores_hidden, crown_holder_team_id')
 				.eq('id', player.set_id)
 				.maybeSingle();
 			if (gs) activeSet = { ...gs, scores_hidden: (gs as unknown as { scores_hidden?: boolean }).scores_hidden ?? false };
 		}
 	}
 
-	if (activeSet?.recap_state) {
+	// Doorsturen naar het wachtscherm hoort ALLEEN te gebeuren als de recap echt
+	// loopt. Dat signaal is play_state === 'recap' — hetzelfde signaal dat de
+	// realtime-handler op deze pagina al gebruikt.
+	//
+	// Dit stond op `activeSet?.recap_state`, maar die kolom is
+	// `text NOT NULL DEFAULT 'pending'` (migratie 0020) en dus ALTIJD truthy:
+	// elke speler met een sessie werd daardoor ook midden in het spel naar het
+	// wachtscherm gestuurd, terwijl /team bij een actieve set juist hierheen linkt.
+	if (activeSet?.play_state === 'recap') {
 		redirect(302, `/play/waiting?set_id=${activeSet.id}`);
 	}
 
