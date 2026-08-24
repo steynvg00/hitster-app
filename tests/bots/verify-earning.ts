@@ -21,9 +21,11 @@
 //   6. query team_powerups (count, by type) + teams.last_threshold_crossed and
 //      compare against the scenario's expected values. Print a pass/fail row.
 //
-// Determinism: only the chance=0 / chance=1 edges are asserted on COUNT — mid-
-// probability counts are statistical and need many runs (a future check, not
-// built here). WHICH type drops per band is random; only the COUNT is asserted.
+// Determinism: every ladder count here is exact rather than statistical, because
+// the ladder no longer rolls — LADDER_CHANCE is 1, so a fired band with a
+// non-empty pool always awards exactly one (powerups.ts). WHICH type drops per
+// band is still random; only the COUNT is asserted. The inverse channel, which
+// does still roll, is covered by verify-earning-inverse.
 //
 // ── power_spin, and why `total` counts DIRECT awards only ───────────────────
 //
@@ -99,13 +101,17 @@ function loadEnv() {
 const SET_ID = 'e5100000-0000-4000-8000-000000000001';
 
 // The type POOL is derived from powerup_types at run start (deriveWorkingTypes),
-// NOT hardcoded — a hardcoded list silently drifts as the catalog grows and lets
-// un-neutralised types leak awards into the chance=0 scenario. The three filters
-// below are the planner's TYPE-TRAIT predicates (powerups.ts:165-168): coming_soon,
+// NOT hardcoded — a hardcoded list silently drifts as the catalog grows. The
+// three filters below are the planner's TYPE-TRAIT predicates: coming_soon,
 // enabled_by_default, default_inverse. The planner narrows further at runtime by
-// category (:167) and per-type threshold band (:169-170), but those only ever
-// SUBTRACT from the pool — so zeroing `chance` across this trait-eligible superset
-// is the correct, safe basis for emptying the pool.
+// category and per-type score range, but those only ever SUBTRACT from the pool.
+//
+// It is used to give every trait-eligible type the same `chance` override. That
+// override no longer changes the ladder's behaviour (LADDER_CHANCE, powerups.ts)
+// — which is exactly what the "stored chance=0 (ignored)" scenario below now
+// asserts. Deriving the list still matters: the scenario is only meaningful if
+// EVERY ladder type carries the override, so a new catalog entry cannot quietly
+// become the one type that was never overridden.
 //
 // SELF_TYPES stays hardcoded ON PURPOSE: it is part of the ORACLE (the manually
 // reasoned expectation of which awards belong to the `self` category), not the
@@ -232,10 +238,17 @@ function buildScenarios(workingTypes: string[]): Scenario[] {
 			expect: { total: 3, highwater: 75 }
 		},
 		{
-			key: 'cumulative · all_bands · chance=0',
-			note: '0 awards, but highwater STILL advances → 75',
+			// Was: "chance=0 → 0 awards, but highwater STILL advances". That edge no
+			// longer exists. The ladder rolls against LADDER_CHANCE (powerups.ts), a
+			// constant 1, so a stored chance override cannot starve it — which is the
+			// whole point of the guarantee, and the reason this scenario now asserts
+			// the OPPOSITE count with the SAME config. Its value is unchanged in kind:
+			// it is still the only scenario driving a config whose per-type chance is
+			// not 1, and it goes red the moment the call-site starts reading one again.
+			key: 'cumulative · all_bands · stored chance=0 (ignored)',
+			note: 'LADDER_CHANCE: a stored chance cannot starve the ladder — 3 awards, highwater → 75',
 			config: cfg({ threshold_mode: 'cumulative', band_mode: 'all_bands', types: allChance(0, workingTypes) }),
-			expect: { total: 0, highwater: 75 }
+			expect: { total: 3, highwater: 75 }
 		},
 		{
 			key: 'category-off(self) · per_challenge · all_bands · chance=1',

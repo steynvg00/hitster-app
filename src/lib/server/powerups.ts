@@ -714,6 +714,9 @@ export const LIFELINE_DEFAULT_CHANCE = 0.5;
  * Per-type earn-chance defaults, for the types whose designed rate is not 1.
  * A type absent here keeps the historical `?? 1`, so this map changes nothing
  * for the other nineteen.
+ *
+ * Only the inverse channel consults any of this now (see LADDER_CHANCE), which
+ * in practice makes lifeline's entry the only one that can matter.
  */
 const DEFAULT_TYPE_CHANCE: Record<string, number> = {
 	lifeline: LIFELINE_DEFAULT_CHANCE
@@ -722,8 +725,13 @@ const DEFAULT_TYPE_CHANCE: Record<string, number> = {
 /**
  * The probability one eligible type actually drops: the set's own value if the
  * host (or a migration) set one, otherwise the type's designed default,
- * otherwise 1. Used by BOTH earning channels so the ladder and the inverse
- * channel can never disagree about a type's rate.
+ * otherwise 1.
+ *
+ * The INVERSE CHANNEL's rate, and since LADDER_CHANCE below, only that. The
+ * ladder no longer reads it — see that constant for why the two channels stopped
+ * sharing this one. The console still resolves it for display
+ * (powerup-console.ts), which is what keeps a host reading lifeline's real 0.5
+ * rather than a plausible 1.
  *
  * This is the STATIC rate — a property of the type and the set, the same for
  * every team. The inverse channel multiplies it by the team's own safety-net
@@ -740,6 +748,36 @@ export function resolveTypeChance(cfg: PowerupConfigV2, typeId: string): number 
 }
 
 /**
+ * The ladder's earn chance, and the whole of it: every type in the pool takes
+ * part in every draw, so a fired band with a non-empty pool ALWAYS pays out.
+ *
+ * THE RULE it encodes: qualifying IS the pool. A team whose score lands in the
+ * range of at least one ladder type earns a powerup; a team whose score lands in
+ * none earns nothing. There is no third outcome where a qualifying team is
+ * turned away by a coin flip.
+ *
+ * A constant rather than a resolver default, because a default is precisely what
+ * a stored override beats. Sets created before this change carry `chance` values
+ * in their powerup_config jsonb — the console used to write them — so a
+ * `?? 1` fallback would leave exactly the sets a host has already tuned still
+ * rolling. Reading a constant at the call site is the only form no stored value
+ * can reach.
+ *
+ * Scoped to the LADDER on purpose, because the inverse channel's chance is not
+ * the same quantity wearing the same name. That channel has no pool and no pick:
+ * a rate is the only knob it has, it is the endpoint the safety net bends
+ * (resolveChanceModifier), and lifeline's designed 0.5 is a drop-rate rather
+ * than a lottery a candidate can lose. Neutralising it there would delete a
+ * mechanism, not a coin flip.
+ *
+ * Stored `chance` values on ladder types are now inert. They are left in place
+ * rather than migrated away: nothing reads them, and rewriting every set's
+ * config is a far larger risk than a dead key (see "Writing powerup_config back"
+ * above). The console stops offering the input, so no new ones appear.
+ */
+export const LADDER_CHANCE = 1;
+
+/**
  * The neutral weight. 1 for every type until a host sets otherwise, which is
  * what makes the weighted pick bit-identical to the uniform one it replaced.
  */
@@ -749,15 +787,17 @@ export const DEFAULT_TYPE_WEIGHT = 1;
  * How OFTEN a type is drawn relative to the others that made it into the same
  * pool — powerup_config.types[id].weight, read exactly like `chance` above.
  *
- * chance and weight answer DIFFERENT questions and neither replaces the other:
+ * chance and weight answer DIFFERENT questions, and since the ladder's chance
+ * became the constant 1 (LADDER_CHANCE) weight is the only one of the two the
+ * ladder still has:
  *
- *   chance  does this type take part in this band at all, and (because a band
- *           whose candidate list comes up empty awards nothing) how often the
- *           band pays out at all.
- *   weight  given that it and others are taking part, how the draw splits
- *           between them. Changing it moves the RATIO without touching the
- *           drop-rate — which is precisely what chance cannot express: lowering
- *           a type's chance to make it rarer also makes empty bands commoner.
+ *   weight  given that every pool type takes part, how the draw splits between
+ *           them. It moves the RATIO without touching how often a band pays out
+ *           — which is exactly why it, and not chance, is the ladder's rarity
+ *           knob: lowering a type's chance to make it rarer also made empty
+ *           bands commoner, and an empty band handed a qualifying team nothing.
+ *   chance  survives on the inverse channel only, where it is a drop-rate rather
+ *           than a lottery a candidate can lose (resolveTypeChance).
  *
  * Only the ladder's pick consults this. The inverse channel has no pool and no
  * pick — every inverse type decides for itself against its own chance — so a
@@ -786,10 +826,10 @@ export function resolveTypeWeight(cfg: PowerupConfigV2, typeId: string): number 
 // exactly one rand(), so every pinned-RNG test keeps its sequence alignment.
 //
 // ── Why a cumulative sum, and not a fixed ratio table ───────────────────────
-// The candidate list is DIFFERENT on every draw — it is whatever survived the
-// pool filter and then the per-type chance roll. A fixed "shield is 20% of all
-// awards" table cannot express that, because 20% of what depends on who else
-// showed up. A cumulative sum over the candidates ACTUALLY PRESENT normalizes
+// The candidate list is DIFFERENT on every draw — it is whatever the pool filter
+// admitted at this submission's score (and, until LADDER_CHANCE became 1, what
+// then survived the per-type chance roll). A fixed "shield is 20% of all awards"
+// table cannot express that, because 20% of what depends on who else showed up. A cumulative sum over the candidates ACTUALLY PRESENT normalizes
 // itself: weight 3 against weight 1 is 3:1 among those two whenever both are
 // there, and 3 alone takes everything when the other is filtered out. That is
 // the property the wandering pool needs.
@@ -1247,20 +1287,23 @@ export type PlanContext = {
  *  - Normal pool (same for every band): available types (typeIsAvailable) that are
  *    NOT on the inverse channel and whose score is in range (scoreInRange:
  *    min ≤ submissionPct ≤ max, inclusive, overridable per set).
- *  - x bands = up to x awards: each fired band rolls each pool type against its
- *    chance (resolveTypeChance: override ?? the type's designed default ?? 1); if
- *    any survive, one is drawn by weight × the team's safety-net factor
- *    (weightedPick, resolveWeightModifier).
+ *  - x bands = x awards whenever the pool is non-empty: every pool type takes
+ *    part in every band's draw (LADDER_CHANCE is 1, so nothing is filtered out),
+ *    and one is drawn by weight × the team's safety-net factor (weightedPick,
+ *    resolveWeightModifier). An EMPTY pool is the only way a fired band pays
+ *    nothing — that is the score landing outside every type's range, i.e. not
+ *    qualifying, rather than bad luck.
  *  - Inverse channel (per submission, ladder-independent): each available inverse
  *    type whose score is in range — the SAME predicate — rolls its chance × the
  *    team's safety-net factor (resolveChanceModifier).
  *
- * Since laag 1 the three properties are independent, and each means exactly one
- * thing: RANGE says between which scores a type is eligible (scoreInRange),
- * CHANNEL says how it is earned (isInverseChannel), CHANCE/WEIGHT say how often
- * and in what proportion. Lifeline is now expressible as "range 0-40, channel
- * inverse, chance 0.5" with all three independently tunable — and, since laag 4,
- * "and 2× that chance while this team is in the bottom third" on top.
+ * Since laag 1 the properties are independent, and each means exactly one thing:
+ * RANGE says between which scores a type is eligible (scoreInRange), CHANNEL
+ * says how it is earned (isInverseChannel), WEIGHT says in what proportion the
+ * ladder draws it, and CHANCE — on the inverse channel alone — says how often it
+ * drops. Lifeline is still expressible as "range 0-40, channel inverse, chance
+ * 0.5" with all three independently tunable — and, since laag 4, "and 2× that
+ * chance while this team is in the bottom third" on top.
  *
  * Laag 4's two factors are the only part of this that depends on WHO is playing;
  * both are a neutral 1 unless the set's config asks for them, so a set that does
@@ -1300,11 +1343,24 @@ export function planAwards(
 
 	// Ladder channel: one roll-and-pick per fired band.
 	//
-	// The chance roll below is UNCHANGED — it still decides, per type per band,
-	// who takes part (and so whether this band pays out at all). What changed is
-	// only how one winner is drawn from the survivors: a weighted lottery instead
-	// of a uniform index. With every weight at its default 1 the two are the same
-	// draw (see weightedPick), so this is inert until a weight is set.
+	// The roll below no longer DECIDES anything: it rolls against LADDER_CHANCE,
+	// which is 1, so every pool type takes part in every band and a fired band
+	// with a non-empty pool always pays out. Qualifying is the pool; reaching the
+	// pool is the whole of it.
+	//
+	// It stays a roll rather than collapsing to `const rolled = pool` for one
+	// reason — the rand() BUDGET. Every pinned-RNG argument in this module and in
+	// the bots counts draws: one per pool type, then one for the pick (see
+	// weightedPick's neutrality proof above, and verify-weighted-lottery's "2
+	// chance-rolls + 1 trekking = 3 rand-aanroepen"). Dropping the calls would
+	// shift every seeded sequence by the size of the pool, turning a
+	// behaviour-neutral change into a suite-wide reshuffle. `rand() < 1` is always
+	// true (Math.random lives in [0, 1)), so the filter is a no-op that keeps the
+	// stream aligned.
+	//
+	// One winner is drawn from those candidates by a weighted lottery rather than
+	// a uniform index. With every weight at its default 1 the two are the same
+	// draw (see weightedPick), so that half is inert until a weight is set.
 	//
 	// Laag 4 adds ONE multiplication inside that same map: the host's static
 	// weight times this team's safety-net modifier. It is the whole of the
@@ -1318,7 +1374,7 @@ export function planAwards(
 	// (which reasons only about the weights) carries over untouched — same
 	// candidate array, same single rand(), same index.
 	for (let i = 0; i < crossed.length; i++) {
-		const rolled = pool.filter((t) => rand() < resolveTypeChance(cfg, t.id));
+		const rolled = pool.filter(() => rand() < LADDER_CHANCE);
 		if (rolled.length) {
 			const pick = weightedPick(
 				rolled.map((t) => ({
