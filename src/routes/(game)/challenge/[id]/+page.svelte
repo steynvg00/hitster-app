@@ -1,9 +1,15 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { goto } from '$app/navigation';
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import type { PageData, ActionData } from './$types';
-	import type { AnswerField, InputMode, ChallengeResult } from '$lib/types/index.js';
+	import type {
+		AnswerField,
+		InputMode,
+		ChallengeResult,
+		FieldResult,
+		TabFieldResult
+	} from '$lib/types/index.js';
 	import Combobox from '$lib/components/ui/Combobox.svelte';
 	import MultipleChoice from '$lib/components/ui/MultipleChoice.svelte';
 	import OpenText from '$lib/components/ui/OpenText.svelte';
@@ -1034,10 +1040,42 @@
 	const formError = $derived<string | null>(f?.formError ?? null);
 	const reviewError = $derived<string | null>(f?.reviewError ?? null);
 
-	let resultTabIndex = $state(0);
-	const resultTab = $derived(result?.tabs?.[resultTabIndex] ?? null);
-	// Legacy flat result for simple display when tabs not present
-	const resultTrack = $derived(result?.tracks?.[resultTabIndex] ?? null);
+	// ── Resultaten-accordeon (scherm 8) ───────────────────────────────────────
+	// De designbron toont elke track als een uitklapkaart in plaats van de oude
+	// tabstrip; de eerste staat open. Puur weergave — de scores zelf komen
+	// onveranderd uit `result` / de realtime-subscription.
+	//
+	// De oude `resultTabIndex` (en de `resultTab`/`resultTrack` die eruit
+	// werden afgeleid) is daarmee vervallen: elke tab rendert nu, in plaats van
+	// alleen de geselecteerde. De legacy platte weergave (`result.tracks`, voor
+	// resultaten van vóór de tab-architectuur) loopt om dezelfde reden over de
+	// volledige lijst.
+	let openResultTab = $state(0);
+	function toggleResultTab(i: number) {
+		openResultTab = openResultTab === i ? -1 : i;
+	}
+
+	/**
+	 * BASIS-score van een veld: `score` is de teambijdrage inclusief bonusartiesten,
+	 * `maxScore` is de basis-max. Rechtstreeks vergelijken zou een perfect antwoord
+	 * mét bonusartiest als "deels goed" markeren — dezelfde splitsing die de
+	 * bestaande veldrijen al maken.
+	 */
+	const baseScoreOf = (fr: FieldResult) => fr.score - (fr.bonusScore ?? 0);
+
+	/** "x/y GOED" per resultaat-tab, over alle slots heen. */
+	function tabMarks(t: TabFieldResult): { ok: number; total: number } {
+		let ok = 0;
+		let total = 0;
+		for (const slot of t.slots) {
+			for (const fr of slot.fields) {
+				if (fr.isBonus) continue;
+				total++;
+				if (baseScoreOf(fr) === fr.maxScore) ok++;
+			}
+		}
+		return { ok, total };
+	}
 
 	// ── Totals block: base | bonus+extras | total ─────────────────────────────
 	// BASE is the scorer's own bonus-excluded sum (thresholdTotal) — the exact
@@ -1144,6 +1182,21 @@
 		return FIELD_LABELS[field as string] ?? field;
 	}
 
+	// Korte variant voor de resultaatrijen (scherm 8): daar staat het label in een
+	// smalle kolom naast het gegeven antwoord, dus "Uit welk jaar?" past niet.
+	const RESULT_FIELD_LABELS: Record<string, string> = {
+		artist: 'Artiest',
+		title: 'Titel',
+		year: 'Jaar',
+		label: 'Label',
+		festival: 'Festival',
+		vocal_source: 'Vocal',
+		grouping: 'Groep'
+	};
+	function resultFieldLabel(field: AnswerField) {
+		return RESULT_FIELD_LABELS[field as string] ?? fieldLabel(field);
+	}
+
 	const bonusFieldSet = $derived(new Set(data.bonusFields));
 	function isBonusField(field: AnswerField) {
 		return bonusFieldSet.has(String(field));
@@ -1202,21 +1255,42 @@
 		return () => supabaseBrowser.removeChannel(channel);
 	});
 
+	/**
+	 * Count-up naar de eindscore (scherm 8).
+	 *
+	 * Twee eisen uit de designspec, allebei expliciet afgedwongen:
+	 *
+	 *  1. STOPT EXACT OP DE EINDWAARDE. De laatste frame zet `target` letterlijk,
+	 *     zonder afronding van een interpolatie — een frame die net na `dur`
+	 *     valt kan anders op target±1 blijven staan.
+	 *  2. TIMER OPGERUIMD BIJ UNMOUNT. De teardown van dit effect cancelt de
+	 *     lopende rAF, dus er loopt nooit een teller door op een verdwenen
+	 *     scherm (en een nieuwe score herstart hem netjes vanaf de huidige stand).
+	 *
+	 * `from` wordt met `untrack` gelezen: `animatedScore` is ook wat dit effect
+	 * schrijft, dus zonder untrack zou elke frame het effect opnieuw laten
+	 * starten en de easing per frame resetten.
+	 */
 	$effect(() => {
 		const target = liveScore ?? 0;
+		const from = untrack(() => animatedScore);
+		if (target === from) return;
 		if (target === 0) {
 			animatedScore = 0;
 			return;
 		}
-		const from = animatedScore;
 		const dur = Math.min(1400, 400 + Math.abs(target - from) * 8);
 		const startTime = performance.now();
-		let rafId: number;
+		let rafId = 0;
 		const tick = (now: number) => {
 			const p = Math.min((now - startTime) / dur, 1);
+			if (p >= 1) {
+				animatedScore = target;
+				return;
+			}
 			const eased = 1 - Math.pow(1 - p, 3);
 			animatedScore = Math.round(from + (target - from) * eased);
-			if (p < 1) rafId = requestAnimationFrame(tick);
+			rafId = requestAnimationFrame(tick);
 		};
 		rafId = requestAnimationFrame(tick);
 		return () => cancelAnimationFrame(rafId);
@@ -1304,305 +1378,309 @@
 		</div>
 	</div>
 {:else if result}
-	<!-- ── Results screen ──────────────────────────────────────────────────── -->
-	<div class="mx-auto min-h-screen max-w-lg p-4">
-		<div class="pt-4 pb-6">
-			<span
-				class="rounded-full px-3 py-1 text-xs font-bold tracking-widest text-white uppercase"
-				style="background-color: {teamHex};">{data.team.display_name}</span
+	<!--
+		── Scherm 8 · RESULTATEN ────────────────────────────────────────────────
+		Bron: design/"M!XUP Player Flow v2.dc.html", artboard "8 Resultaten".
+		Kop + teampil boven, uitklapkaart per track in het midden, en onderaan
+		de drie cellen BASIS · BONUS · TOTAAL met de count-up op TOTAAL.
+
+		Alles hieronder is presentatie. De review-aanvraag draait nog steeds via
+		dezelfde `?/requestReview` action met exact dezelfde velden, en de score
+		komt onveranderd uit `result` / de realtime-subscription.
+	-->
+	<PlayerScreen class="px-5">
+		<div class="flex items-center justify-between">
+			<span class="flex items-center gap-[7px] rounded-full px-3 py-1.5 mixup-glass squircle">
+				<span
+					class="h-2.5 w-2.5 rounded-full"
+					style="background: {teamHex}; box-shadow: 0 0 10px {teamHex};"
+				></span>
+				<span class="text-[11px] font-extrabold tracking-[0.1em] text-mixup-paper uppercase"
+					>{data.team.display_name}</span
+				>
+			</span>
+			<span class="truncate pl-3 text-[11px] font-medium tracking-[0.12em] text-mixup-muted"
+				>{data.challenge.title}</span
 			>
 		</div>
-		<h1 class="mb-1 text-2xl font-black">Results</h1>
-		<p class="mb-4 text-sm text-zinc-400">{data.challenge.title}</p>
 
-		{#if reviewError}
-			<div class="mb-4 rounded-xl border border-red-600/50 bg-red-900/30 p-3 text-sm text-red-300">
-				{reviewError}
-			</div>
-		{/if}
-		{#if reviewJustResolved && liveStatus === 'review_approved'}
-			<div
-				class="mb-4 rounded-xl border border-green-600/50 bg-green-900/30 p-3 text-sm text-green-300"
-			>
-				✓ Review approved{pointsAwarded > 0 ? ` — +${pointsAwarded} points added!` : ''}
-			</div>
-		{:else if reviewJustResolved && liveStatus === 'review_rejected'}
-			<div
-				class="mb-4 rounded-xl border border-zinc-600/50 bg-zinc-800/60 p-3 text-sm text-zinc-400"
-			>
-				Review rejected — your original score stands.
-			</div>
-		{/if}
+		<h1
+			class="mt-2.5 font-display text-[34px] leading-[0.95] font-black text-mixup-paper uppercase"
+			style="text-shadow: 0 0 26px rgba(124,77,255,0.85);"
+		>
+			Resultaten
+		</h1>
 
-		<!-- Tab tabs (multi-tab) -->
-		{#if (result.tabs?.length ?? 0) > 1}
-			<div class="mb-4 flex gap-1 overflow-x-auto pb-1">
-				{#each result.tabs ?? [] as tr, i}
-					<!-- Base-only, like the field badges: tr.total carries the bonus but
-					     tr.maxTotal is base-only, so the raw pair would read "15/10". -->
-					{@const tabBase = tr.slots.reduce((s, sl) => s + thresholdOfFields(sl.fields).total, 0)}
-					<button
-						type="button"
-						onclick={() => (resultTabIndex = i)}
-						class="shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors {resultTabIndex ===
-						i
-							? 'text-white'
-							: 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}"
-						style={resultTabIndex === i ? `background-color: ${teamHex};` : ''}
-					>
-						Tab {tr.tabIndex} <span class="ml-1 text-xs opacity-70">{tabBase}/{tr.maxTotal}</span>
-					</button>
-				{/each}
-			</div>
-		{/if}
+		<div class="mt-2.5 flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto">
+			{#if reviewError}
+				<div
+					class="rounded-mixup-sm border border-mixup-magenta/50 bg-mixup-magenta/10 p-3 text-sm text-mixup-magenta squircle"
+				>
+					{reviewError}
+				</div>
+			{/if}
+			{#if reviewJustResolved && liveStatus === 'review_approved'}
+				<div
+					class="rounded-mixup-sm border border-mixup-green/50 bg-mixup-green/10 p-3 text-sm text-mixup-green squircle"
+				>
+					✓ Review goedgekeurd{pointsAwarded > 0 ? ` — +${pointsAwarded} punten erbij!` : ''}
+				</div>
+			{:else if reviewJustResolved && liveStatus === 'review_rejected'}
+				<div class="rounded-mixup-sm p-3 text-sm text-mixup-muted mixup-glass squircle">
+					Review afgewezen — je oorspronkelijke score blijft staan.
+				</div>
+			{/if}
 
-		<!-- Per-tab results (use slots within tab) -->
-		{#if resultTab}
-			{#each resultTab.slots as slot, slotIdx (slotIdx)}
-				{#if slotIdx > 0}
-					<div class="mb-3 flex items-center gap-2 text-xs text-zinc-500">
-						<div class="h-px flex-1 bg-zinc-800"></div>
-						<span>Slot {slotIdx + 1}</span>
-						<div class="h-px flex-1 bg-zinc-800"></div>
-					</div>
-				{/if}
-				<div class="mb-4 space-y-1 rounded-2xl bg-zinc-900 p-5">
-					{#each slot.fields as fr, i}
-						<!-- The badge and the ✓/~/✗ marker are BASE-only: fr.score is the
-						     team's contribution (main + bonus artists), fr.maxScore is the
-						     base max. Comparing those two directly would call a perfect
-						     answer with a bonus artist "partial" (or worse, score > max).
-						     The bonus is shown separately, in the star lines below. -->
-						{@const baseScore = fr.score - (fr.bonusScore ?? 0)}
-						{@const isPartial = baseScore > 0 && baseScore < fr.maxScore}
-						{@const isCorrect = baseScore === fr.maxScore}
-						{@const reviewKey = `tab_${resultTab.tabPosition}_slot_${slot.slotIndex}_${fr.field}`}
+			{#if (result.tabs?.length ?? 0) > 0}
+				{#each result.tabs ?? [] as tr, ti (tr.tabPosition)}
+					{@const marks = tabMarks(tr)}
+					{@const isOpen = openResultTab === ti}
+					<div class="overflow-hidden rounded-mixup-lg mixup-glass-strong squircle">
+						<button
+							type="button"
+							onclick={() => toggleResultTab(ti)}
+							aria-expanded={isOpen}
+							class="flex w-full cursor-pointer items-center justify-between gap-2.5 border-none bg-transparent px-4 py-[13px]"
+						>
+							<span class="text-xs font-extrabold tracking-[0.12em] text-mixup-paper uppercase"
+								>Track {tr.tabIndex}</span
+							>
+							<span class="flex items-center gap-2.5">
+								<span
+									class="text-[11px] font-bold tracking-[0.08em]"
+									style="color: {marks.ok === marks.total ? '#2BD97A' : '#FF6FC4'};"
+									>{marks.ok}/{marks.total} goed</span
+								>
+								<span class="font-display text-xl font-black text-mixup-yellow">+{tr.total}</span>
+								<span class="text-xs font-bold text-mixup-muted">{isOpen ? '▴' : '▾'}</span>
+							</span>
+						</button>
 
-						{#if i > 0}<div class="border-t border-zinc-800"></div>{/if}
-						<div class="py-3">
-							<div class="flex items-center justify-between">
-								<div>
-									<div
-										class="mb-0.5 flex items-center gap-1.5 text-xs font-semibold tracking-wide text-zinc-500 uppercase"
-									>
-										{fieldLabel(fr.field)}
-										{#if fr.isBonus}
-											<span
-												class="rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-amber-300 normal-case"
-												>Bonus</span
-											>
-										{/if}
-									</div>
-									<div class="font-semibold">{fr.submitted || '—'}</div>
-									{#if !isCorrect}
-										<div class="text-xs text-zinc-500">Correct: {fr.correct}</div>
-										{#if fr.fuzzyScore !== undefined}
-											<div class="text-xs text-zinc-600">
-												Match: {Math.round(fr.fuzzyScore * 100)}%
-											</div>
-										{/if}
-									{/if}
-									<!-- Which bonus artists the player caught, and what each was worth.
-									     The badge on the right is the field TOTAL (mains + bonus); these
-									     lines name the bonus part of it — additional detail, not a
-									     replacement. Only matched artists are listed, so a missed bonus
-									     artist renders nothing at all. -->
-									{#each fr.bonusArtists ?? [] as ba (ba.name)}
+						{#if isOpen}
+							<div class="flex flex-col gap-2 px-4 pb-3.5">
+								{#each tr.slots as slot, slotIdx (slotIdx)}
+									{#if slotIdx > 0}
 										<div
-											class="mt-1 flex items-center gap-1.5 text-xs font-semibold text-amber-300"
+											class="flex items-center gap-2 pt-1 text-[10px] tracking-[0.14em] text-mixup-dim uppercase"
 										>
-											<span>⭐</span>
-											<span>{ba.name}</span>
-											<span class="text-amber-400/70">+{ba.points} bonus</span>
+											<span class="h-px flex-1 bg-mixup-paper/10"></span>
+											<span>Slot {slotIdx + 1}</span>
+											<span class="h-px flex-1 bg-mixup-paper/10"></span>
 										</div>
-									{/each}
-								</div>
-								<div class="ml-4 shrink-0 text-right">
-									<div
-										class="text-xl font-black {isCorrect
-											? 'text-green-400'
-											: isPartial
-												? 'text-yellow-400'
-												: 'text-red-400'}"
-									>
-										{isCorrect ? '✓' : isPartial ? '~' : '✗'}
-									</div>
-									<div class="text-sm text-zinc-400">
-										{#if fr.isBonus}
-											+{fr.score} bonus
-										{:else}
-											+{baseScore} / {fr.maxScore}
-										{/if}
-									</div>
-								</div>
-							</div>
+									{/if}
+									{#each slot.fields as fr (fr.field)}
+										{@const baseScore = baseScoreOf(fr)}
+										{@const isPartial = baseScore > 0 && baseScore < fr.maxScore}
+										{@const isCorrect = baseScore === fr.maxScore}
+										{@const reviewKey = `tab_${tr.tabPosition}_slot_${slot.slotIndex}_${fr.field}`}
+										<div class="border-t border-mixup-paper/10 pt-2">
+											<div class="flex items-baseline gap-2.5">
+												<span
+													class="w-3.5 shrink-0 text-sm font-extrabold"
+													style="color: {isCorrect
+														? '#2BD97A'
+														: isPartial
+															? '#FFC24B'
+															: '#FF2DAA'};">{isCorrect ? '✓' : isPartial ? '~' : '✗'}</span
+												>
+												<span
+													class="w-[62px] shrink-0 text-[10px] font-bold tracking-[0.12em] text-mixup-muted uppercase"
+												>
+													{resultFieldLabel(fr.field)}
+												</span>
+												<span class="min-w-0 flex-1 text-sm font-medium text-mixup-paper"
+													>{fr.submitted || '—'}</span
+												>
+												<span class="shrink-0 text-right">
+													{#if fr.isBonus}
+														<span class="text-[11px] font-medium text-mixup-amber"
+															>+{fr.score} bonus</span
+														>
+													{:else}
+														<span class="text-[11px] font-medium text-mixup-muted"
+															>+{baseScore}/{fr.maxScore}</span
+														>
+													{/if}
+												</span>
+											</div>
+											{#if !isCorrect}
+												<div class="mt-1 pl-6 text-[11px] font-medium" style="color: #FF6FC4;">
+													Goede antwoord: {fr.correct}
+													{#if fr.fuzzyScore !== undefined}
+														<span class="text-mixup-dim"
+															>· {Math.round(fr.fuzzyScore * 100)}% match</span
+														>
+													{/if}
+												</div>
+											{/if}
+											{#each fr.bonusArtists ?? [] as ba (ba.name)}
+												<div
+													class="mt-1 flex items-center gap-1.5 pl-6 text-[11px] font-semibold text-mixup-amber"
+												>
+													<span>⭐</span>
+													<span>{ba.name}</span>
+													<span class="text-mixup-amber/70">+{ba.points} bonus</span>
+												</div>
+											{/each}
 
-							{#if (baseScore === 0 || isPartial) && data.fieldModes[fr.field] === 'open_text'}
-								{@const effectiveStatus = liveStatus ?? result.status}
-								{@const alreadyRequested =
-									reviewedKeys.has(reviewKey) ||
-									effectiveStatus === 'review_requested' ||
-									effectiveStatus === 'review_approved' ||
-									effectiveStatus === 'review_rejected'}
-								{#if alreadyRequested}
-									<p class="mt-2 text-xs text-amber-400">Review requested ✓</p>
-								{:else}
-									<div class="mt-2">
-										{#if reviewingKey === reviewKey}
-											<form
-												method="POST"
-												action="?/requestReview"
-												use:enhance={() =>
-													async ({ update }) => {
-														reviewingKey = null;
-														await update();
-													}}
-											>
-												<input type="hidden" name="submission_id" value={result.submissionId} />
-												<input type="hidden" name="team_id" value={data.team.id} />
-												<input type="hidden" name="field_name" value={reviewKey} />
-												<input type="hidden" name="track_id" value={slot.matchedTrackId ?? ''} />
-												<textarea
-													name="player_message"
-													placeholder="Optional: explain why you think this is correct"
-													rows="2"
-													class="mb-2 w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200 focus:outline-none"
-												></textarea>
-												<div class="flex gap-2">
-													<button
-														type="submit"
-														class="rounded-lg px-3 py-1.5 text-xs font-bold text-white transition-colors hover:opacity-90"
-														style="background-color: {teamHex};">Send request</button
+											{#if (baseScore === 0 || isPartial) && data.fieldModes[fr.field] === 'open_text'}
+												{@const effectiveStatus = liveStatus ?? result.status}
+												{@const alreadyRequested =
+													reviewedKeys.has(reviewKey) ||
+													effectiveStatus === 'review_requested' ||
+													effectiveStatus === 'review_approved' ||
+													effectiveStatus === 'review_rejected'}
+												{#if alreadyRequested}
+													<p class="mt-1.5 pl-6 text-[11px] text-mixup-amber">
+														Review aangevraagd ✓
+													</p>
+												{:else if reviewingKey === reviewKey}
+													<form
+														method="POST"
+														action="?/requestReview"
+														class="mt-2 pl-6"
+														use:enhance={() =>
+															async ({ update }) => {
+																reviewingKey = null;
+																await update();
+															}}
 													>
+														<input type="hidden" name="submission_id" value={result.submissionId} />
+														<input type="hidden" name="team_id" value={data.team.id} />
+														<input type="hidden" name="field_name" value={reviewKey} />
+														<input
+															type="hidden"
+															name="track_id"
+															value={slot.matchedTrackId ?? ''}
+														/>
+														<textarea
+															name="player_message"
+															placeholder="Optioneel: waarom denk je dat dit goed is?"
+															rows="2"
+															class="mb-2 w-full rounded-mixup-sm px-3 py-2 text-sm text-mixup-paper mixup-glass squircle focus:outline-none"
+														></textarea>
+														<div class="flex gap-2">
+															<button
+																type="submit"
+																class="rounded-full px-3 py-1.5 text-[11px] font-bold squircle"
+																style="background: {teamHex}; color: {teamOn};">Versturen</button
+															>
+															<button
+																type="button"
+																onclick={() => (reviewingKey = null)}
+																class="rounded-full border border-mixup-paper/20 px-3 py-1.5 text-[11px] text-mixup-muted squircle"
+																>Annuleren</button
+															>
+														</div>
+													</form>
+												{:else}
 													<button
 														type="button"
-														onclick={() => (reviewingKey = null)}
-														class="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200"
-														>Cancel</button
+														onclick={() => (reviewingKey = reviewKey)}
+														class="mt-1.5 ml-6 text-[11px] font-medium underline underline-offset-2"
+														style="color: {teamHex};">Handmatige review aanvragen</button
 													>
-												</div>
-											</form>
-										{:else}
-											<button
-												type="button"
-												onclick={() => (reviewingKey = reviewKey)}
-												class="text-xs font-medium underline underline-offset-2"
-												style="color: {teamHex};">Request manual review</button
-											>
-										{/if}
-									</div>
-								{/if}
-							{/if}
-						</div>
-					{/each}
-				</div>
-			{/each}
-		{:else if resultTrack}
-			<!-- Fallback: old flat result -->
-			<div class="mb-6 space-y-1 rounded-2xl bg-zinc-900 p-5">
-				{#each resultTrack.fields as fr, i}
-					{@const isCorrect = fr.score === fr.maxScore}
-					{@const isPartial = fr.score > 0 && fr.score < fr.maxScore}
-					{#if i > 0}<div class="border-t border-zinc-800"></div>{/if}
-					<div class="py-3">
-						<div class="flex items-center justify-between">
-							<div>
-								<div
-									class="mb-0.5 flex items-center gap-1.5 text-xs font-semibold tracking-wide text-zinc-500 uppercase"
-								>
-									{fieldLabel(fr.field)}
-									{#if fr.isBonus}
-										<span
-											class="rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-amber-300 normal-case"
-											>Bonus</span
-										>
-									{/if}
-								</div>
-								<div class="font-semibold">{fr.submitted || '—'}</div>
-								{#if !isCorrect}<div class="text-xs text-zinc-500">Correct: {fr.correct}</div>{/if}
+												{/if}
+											{/if}
+										</div>
+									{/each}
+								{/each}
 							</div>
-							<div class="ml-4 shrink-0 text-right">
-								<div
-									class="text-xl font-black {isCorrect
-										? 'text-green-400'
-										: isPartial
-											? 'text-yellow-400'
-											: 'text-red-400'}"
-								>
-									{isCorrect ? '✓' : isPartial ? '~' : '✗'}
-								</div>
-								<div class="text-sm text-zinc-400">
-									{#if fr.isBonus}
-										+{fr.score} bonus
-									{:else}
-										+{fr.score} / {fr.maxScore}
-									{/if}
-								</div>
-							</div>
-						</div>
+						{/if}
 					</div>
 				{/each}
-			</div>
-		{/if}
+			{:else}
+				<!-- Terugval: oud plat resultaat zonder tabs (van vóór de tab-architectuur). -->
+				{#each result.tracks ?? [] as track (track.trackId)}
+					<div class="flex flex-col gap-2 rounded-mixup-lg p-4 mixup-glass-strong squircle">
+						<div class="text-[11px] font-extrabold tracking-[0.12em] text-mixup-yellow uppercase">
+							Track {track.trackIndex} · +{track.total}
+						</div>
+						{#each track.fields as fr (fr.field)}
+							{@const isCorrect = fr.score === fr.maxScore}
+							{@const isPartial = fr.score > 0 && fr.score < fr.maxScore}
+							<div class="flex items-baseline gap-2.5 border-t border-mixup-paper/10 pt-2">
+								<span
+									class="w-3.5 shrink-0 text-sm font-extrabold"
+									style="color: {isCorrect ? '#2BD97A' : isPartial ? '#FFC24B' : '#FF2DAA'};"
+									>{isCorrect ? '✓' : isPartial ? '~' : '✗'}</span
+								>
+								<span
+									class="w-[62px] shrink-0 text-[10px] font-bold tracking-[0.12em] text-mixup-muted uppercase"
+									>{resultFieldLabel(fr.field)}</span
+								>
+								<span class="min-w-0 flex-1 text-sm font-medium text-mixup-paper"
+									>{fr.submitted || '—'}</span
+								>
+								<span class="shrink-0 text-[11px] font-medium text-mixup-muted"
+									>+{fr.score}/{fr.maxScore}</span
+								>
+							</div>
+						{/each}
+					</div>
+				{/each}
+			{/if}
 
-		{#if result.breakdown}
-			<BonusTracker breakdown={result.breakdown} teamColor={teamHex} />
-		{/if}
+			{#if result.breakdown}
+				<BonusTracker breakdown={result.breakdown} teamColor={teamHex} />
+			{/if}
+		</div>
 
 		<!--
-			Three quantities, side by side, instead of one merged "N out of M":
-			base points | bonus + extras | total. Total is the hero (it's the number
-			that lands on the leaderboard) and keeps the count-up animation; the other
-			two explain how it was reached. base + bonus === total always, by
-			construction — see baseTotal/extrasTotal above.
+			Drie cellen naast elkaar: basis | bonus + extra's | totaal. Totaal is de
+			held (dat is het getal dat op het leaderboard landt) en draagt de
+			count-up; base + bonus === totaal, per constructie.
 		-->
-		<div
-			class="mb-6 grid grid-cols-3 rounded-2xl border p-5 text-center"
-			style="border-color: {teamHex}40; background-color: {teamHex}1a;"
-		>
-			<div class="flex flex-col justify-center px-1">
-				<div class="text-[10px] font-bold tracking-wider text-zinc-400 uppercase">Base</div>
-				<div class="text-2xl font-black text-white tabular-nums">{baseTotal}</div>
-				{#if result.thresholdMax}
-					<div class="text-[10px] text-zinc-500">of {result.thresholdMax}</div>
-				{/if}
+		<div class="mt-3 flex gap-2.5">
+			<div class="flex-1 rounded-mixup-card p-2.5 text-center mixup-glass squircle">
+				<div class="font-display text-2xl font-black text-mixup-paper tabular-nums">
+					{baseTotal}
+				</div>
+				<div class="text-[9px] font-bold tracking-[0.1em] text-mixup-muted uppercase">
+					Basis{#if result.thresholdMax}<span class="text-mixup-dim">
+							/{result.thresholdMax}</span
+						>{/if}
+				</div>
 			</div>
-
-			<div class="flex flex-col justify-center border-x px-1" style="border-color: {teamHex}33;">
-				<div class="text-[10px] font-bold tracking-wider text-zinc-400 uppercase">Bonus</div>
-				<!-- Amber ties this to the ⭐ bonus-artist lines above. A no-bonus
-				     challenge shows a dimmed 0 rather than hiding the cell, so the three
-				     columns don't reflow between challenges. -->
+			<div class="flex-1 rounded-mixup-card p-2.5 text-center mixup-glass squircle">
 				<div
-					class="text-2xl font-black tabular-nums {extrasTotal > 0
-						? 'text-amber-300'
-						: 'text-zinc-600'}"
+					class="font-display text-2xl font-black tabular-nums {extrasTotal > 0
+						? 'text-mixup-cyan'
+						: 'text-mixup-dim'}"
 				>
 					{extrasTotal > 0 ? `+${extrasTotal}` : '0'}
 				</div>
+				<div class="text-[9px] font-bold tracking-[0.1em] text-mixup-muted uppercase">Bonus</div>
 			</div>
-
-			<div class="flex flex-col justify-center px-1">
-				<div class="text-[10px] font-bold tracking-wider text-zinc-400 uppercase">Total</div>
-				<div class="text-4xl font-black text-white tabular-nums transition-none">
-					{animatedScore}
+			<div
+				class="rounded-mixup-card p-2.5 text-center squircle"
+				style="flex: 1.2; background: rgba(255,230,0,0.08); border: 1px solid rgba(255,230,0,0.5); box-shadow: 0 0 20px rgba(255,230,0,0.15);"
+			>
+				<div
+					class="font-display text-2xl font-black tabular-nums"
+					style="background: linear-gradient(90deg,#FFE600,#FF7F11); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; color: transparent;"
+				>
+					+{animatedScore}
 				</div>
+				<div class="text-[9px] font-bold tracking-[0.1em] text-mixup-yellow uppercase">Totaal</div>
 			</div>
 		</div>
 
-		<div class="flex flex-col items-center gap-3">
+		<div class="mt-3 flex flex-col items-center gap-2.5">
 			<a
 				href="/team"
-				class="w-full rounded-xl py-3 text-center text-sm font-bold text-zinc-950"
-				style="background-color: {teamHex};"
+				class="flex h-[54px] w-full items-center justify-center rounded-mixup-modal text-base font-extrabold tracking-[0.06em] uppercase squircle"
+				style="background: linear-gradient(90deg,#FFE600,#FF7F11); color: #1A1400; box-shadow: 0 10px 30px rgba(255,127,17,0.35);"
 			>
-				Back to team console
+				Terug naar je team
 			</a>
-			<a href="/leaderboard" class="text-sm underline underline-offset-2" style="color: {teamHex};"
-				>View leaderboard →</a
+			<a
+				href="/leaderboard"
+				class="text-xs font-semibold tracking-[0.08em] uppercase underline underline-offset-4"
+				style="color: {teamHex};">Bekijk de stand →</a
 			>
 		</div>
-	</div>
+	</PlayerScreen>
 {:else if !data.attempt && data.challenge.status !== 'active'}
 	<!-- ── Challenge ended ────────────────────────────────────────────────────── -->
 	<div class="mx-auto min-h-screen max-w-lg p-4">

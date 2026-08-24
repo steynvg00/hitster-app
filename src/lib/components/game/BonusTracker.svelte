@@ -24,80 +24,60 @@
 	);
 </script>
 
+<!--
+	Bonus-pillen (redesign fase 3, designscherm 8). De designbron toont één rij
+	cyane pillen — "MOEILIJKHEID x1,5", "RONDE x2", "STREAK +20", "SNELHEID +15".
+	Alleen de vormgeving is nieuw: welke pil verschijnt en met welke waarde komt
+	onveranderd uit `breakdown`.
+-->
 {#if anyBonus}
-	<div class="my-3 flex flex-wrap gap-2">
+	<div class="flex flex-wrap gap-1.5">
 		{#if hasDifficulty}
-			<div
-				class="flex items-center gap-1.5 rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-xs font-semibold"
-			>
-				<span class="text-amber-400">★</span>
-				<span class="text-zinc-300">Difficulty bonus</span>
-				<span style="color: #4ade80">+{diffPct - 100}%</span>
-			</div>
+			<span class="mixup-pill">Moeilijkheid +{diffPct - 100}%</span>
 		{/if}
-
 		{#if hasRound}
-			<div
-				class="flex items-center gap-1.5 rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-xs font-semibold"
-			>
-				<span class="text-purple-400">×</span>
-				<span class="text-zinc-300">Round multiplier</span>
-				<span class="text-green-400">{breakdown.round_multiplier}×</span>
-			</div>
+			<span class="mixup-pill">Ronde x{breakdown.round_multiplier}</span>
 		{/if}
-
 		{#if hasComeback}
-			<div
-				class="flex items-center gap-1.5 rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-xs font-semibold"
-			>
-				<span>🔥</span>
-				<span class="text-zinc-300">Comeback</span>
-				<span class="text-green-400">×1.5</span>
-			</div>
+			<span class="mixup-pill">Comeback x1,5</span>
 		{/if}
-
 		{#if hasStreak}
-			<div
-				class="flex items-center gap-1.5 rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-xs font-semibold"
-			>
-				<span class="text-orange-400">🔥</span>
-				<span class="text-zinc-300">Streak bonus</span>
-				<span class="text-green-400">+{breakdown.streak_bonus}</span>
-			</div>
+			<span class="mixup-pill">🔥 Streak +{breakdown.streak_bonus}</span>
 		{/if}
-
-		{#if dd}
-			<div
-				class="flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold {dd.hit
-					? 'border-green-700/60 bg-green-950/40'
-					: 'border-red-800/60 bg-red-950/40'}"
-			>
-				<span>🎰</span>
-				<span class="text-zinc-300">
-					Double Down — predicted {dd.predicted_pct}%, scored {dd.score_pct}%
-				</span>
-				<span class={dd.hit ? 'text-green-400' : 'text-red-400'}>
-					{dd.hit ? 'hit' : 'miss'} ×{dd.multiplier}
-				</span>
-			</div>
-		{/if}
-
 		{#if hasSpeed}
-			<div
-				class="flex items-center gap-1.5 rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-xs font-semibold"
-			>
-				<span class="text-cyan-400">⚡</span>
-				<span class="text-zinc-300">Speed bonus</span>
-				<span class="text-green-400">+{breakdown.speed_bonus}</span>
-			</div>
+			<span class="mixup-pill">⚡ Snelheid +{breakdown.speed_bonus}</span>
+		{/if}
+		{#if dd}
+			<!-- Ook een VERLOREN Double Down krijgt een pil, anders dan elke andere
+			     badge hier: een team waarvan de punten omlaag gingen is precies het
+			     team dat uitleg verdient. Magenta i.p.v. cyaan bij een miss. -->
+			<span class="mixup-pill" class:mixup-pill--miss={!dd.hit}>
+				🎰 Double Down {dd.predicted_pct}% / {dd.score_pct}% — {dd.hit ? 'raak' : 'mis'} x{dd.multiplier}
+			</span>
 		{/if}
 	</div>
 {/if}
 
-{#if breakdown.base !== breakdown.final}
-	<div class="mb-1 flex items-center gap-2 text-xs text-zinc-500">
-		<span>{breakdown.base} base</span>
-		<span>→</span>
-		<span class="text-sm font-bold text-white">{breakdown.final} final</span>
-	</div>
-{/if}
+<style>
+	/* bonusPillStyle uit de designbron. */
+	.mixup-pill {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		font-family: var(--font-ui);
+		font-weight: 700;
+		font-size: 10px;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		border-radius: 999px;
+		padding: 6px 11px;
+		background: rgba(0, 229, 255, 0.07);
+		border: 1px solid rgba(0, 229, 255, 0.35);
+		color: #6fe8ff;
+	}
+	.mixup-pill--miss {
+		background: rgba(255, 45, 170, 0.08);
+		border-color: rgba(255, 45, 170, 0.4);
+		color: #ff8ed0;
+	}
+</style>
