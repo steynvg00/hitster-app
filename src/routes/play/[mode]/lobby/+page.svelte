@@ -1,4 +1,16 @@
 <script lang="ts">
+	/**
+	 * 4 · LOBBY — solo-variant (redesign fase 2).
+	 *
+	 * Deze route is de lobby van de SOLO-modus; de team-hub lobby met de
+	 * ledenlijst en de teamfoto-kaart zit in /team (die heeft de teams + de
+	 * realtime). Hier is alleen de eigen spelerkaart bekend, dus dit scherm
+	 * toont die in dezelfde vormtaal plus de wachtstatus.
+	 *
+	 * Data-flow ONGEWIJZIGD: data.player uit de bestaande load, en
+	 * /api/player/leave voor het verlaten van de sessie.
+	 */
+	import PlayerScreen from '$lib/components/game/PlayerScreen.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -6,60 +18,122 @@
 	let leaving = $state(false);
 
 	async function leaveGame() {
-		if (!confirm('Leave the game? Your session will be removed.')) return;
+		if (!confirm('Sessie verlaten? Je spelersessie wordt verwijderd.')) return;
 		leaving = true;
 		try {
 			await fetch('/api/player/leave', { method: 'POST' });
 		} finally {
-			// Navigate home regardless of fetch result
 			window.location.href = '/';
 		}
 	}
 </script>
 
 <svelte:head>
-	<title>Lobby — Hitster</title>
+	<title>Lobby — M!XUP</title>
 </svelte:head>
 
-<div class="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-6 py-12 text-center">
-	<!-- Player card -->
-	<div class="mb-8 flex flex-col items-center gap-3">
-		{#if data.player.photo_url}
-			<img
-				src={data.player.photo_url}
-				alt={data.player.display_name}
-				class="h-20 w-20 rounded-full object-cover ring-2 ring-amber-400/50"
-			/>
-		{:else}
-			<div
-				class="flex h-20 w-20 items-center justify-center rounded-full bg-zinc-800 text-3xl font-black text-zinc-500"
-			>
-				{data.player.display_name.charAt(0).toUpperCase()}
+<PlayerScreen class="items-center px-5 text-center">
+	<div class="flex min-h-0 flex-1 flex-col items-center justify-center gap-6">
+		<div class="flex flex-col items-center gap-3">
+			{#if data.player.photo_url}
+				<img src={data.player.photo_url} alt={data.player.display_name} class="player-av" />
+			{:else}
+				<div class="player-av player-av--empty">
+					{data.player.display_name.charAt(0).toUpperCase()}
+				</div>
+			{/if}
+			<div>
+				<div class="font-display text-[34px] leading-none font-black text-mixup-paper uppercase">
+					{data.player.display_name}
+				</div>
+				<div class="mt-1 text-[11px] font-bold tracking-[0.16em] text-mixup-muted">
+					{data.mode === 'teams' ? 'TEAMSPEL' : 'SOLO'}
+				</div>
 			</div>
-		{/if}
-		<div>
-			<div class="text-lg font-bold text-white">{data.player.display_name}</div>
-			<div class="text-xs text-zinc-500">
-				{data.mode === 'teams' ? 'Team game' : 'Solo player'}
-			</div>
+		</div>
+
+		<div
+			class="hub-card flex w-full flex-col items-center gap-2 rounded-mixup-lg px-5 py-6 squircle"
+		>
+			<span class="wait-dot"></span>
+			<span class="text-xs font-bold tracking-[0.1em] text-mixup-muted">
+				WACHTEN TOT DE HOST START…
+			</span>
+			<p class="max-w-xs text-xs font-medium text-mixup-soft">
+				Je bent binnen. Zodra de host de game start verschijnt je eerste challenge hier.
+			</p>
 		</div>
 	</div>
 
-	<!-- Stub content -->
-	<div class="mb-10 rounded-2xl border border-zinc-800 bg-zinc-900 px-8 py-10 text-center">
-		<div class="mb-3 text-4xl">🎵</div>
-		<h1 class="mb-2 text-xl font-black text-white">Coming soon</h1>
-		<p class="max-w-xs text-sm text-zinc-400">
-			Game set selection and the full lobby are coming in Session 8c. You're all set for when it's
-			ready!
-		</p>
-	</div>
-
 	<button
+		type="button"
 		onclick={leaveGame}
 		disabled={leaving}
-		class="rounded-lg border border-zinc-700 px-6 py-3 text-sm font-semibold text-zinc-400 transition-colors hover:border-red-700 hover:text-red-400 disabled:opacity-50"
+		class="leave-btn rounded-mixup-chip squircle"
 	>
-		{leaving ? 'Leaving…' : 'Leave game'}
+		{leaving ? 'BEZIG…' : 'SESSIE VERLATEN'}
 	</button>
-</div>
+</PlayerScreen>
+
+<style>
+	.player-av {
+		width: 96px;
+		height: 96px;
+		border-radius: 50%;
+		object-fit: cover;
+		border: 2px solid rgba(229, 242, 255, 0.7);
+	}
+
+	.player-av--empty {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: linear-gradient(135deg, #7c4dff, #ff2daa);
+		font-family: var(--font-ui);
+		font-weight: 800;
+		font-size: 34px;
+		color: #ffffff;
+	}
+
+	.hub-card {
+		background: linear-gradient(135deg, rgba(229, 242, 255, 0.1), rgba(229, 242, 255, 0.03));
+		border: 1px solid rgba(229, 242, 255, 0.22);
+		backdrop-filter: blur(14px);
+		-webkit-backdrop-filter: blur(14px);
+	}
+
+	.wait-dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: var(--color-mixup-cyan);
+		animation: hub-pulse 1.4s infinite;
+	}
+
+	@keyframes hub-pulse {
+		0%,
+		100% {
+			opacity: 0.25;
+		}
+		50% {
+			opacity: 1;
+		}
+	}
+
+	.leave-btn {
+		height: 44px;
+		padding: 0 18px;
+		font-family: var(--font-ui);
+		font-weight: 800;
+		font-size: 11px;
+		letter-spacing: 0.1em;
+		background: rgba(229, 242, 255, 0.06);
+		border: 1px solid rgba(229, 242, 255, 0.2);
+		color: var(--color-mixup-muted);
+		cursor: pointer;
+	}
+
+	.leave-btn:disabled {
+		opacity: 0.6;
+	}
+</style>
