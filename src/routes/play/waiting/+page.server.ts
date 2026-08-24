@@ -27,7 +27,9 @@ export const load: PageServerLoad = async ({ locals, cookies, url }) => {
 	// Compute rank info for the player's team (used to fire reveal animation)
 	const scopedColors = TEAM_COLOR_ORDER.slice(0, gs.team_count);
 	const [{ data: teams }, { data: setChallenges }] = await Promise.all([
-		admin.from('teams').select('id, color').in('color', scopedColors),
+		// display_name erbij (fase 5): het wachtscherm toont de onthulde plekken
+		// met naam en teamkleur. Zelfde query, één kolom meer — geen extra request.
+		admin.from('teams').select('id, color, display_name').in('color', scopedColors),
 		admin.from('set_challenges').select('challenge_id').eq('set_id', setId)
 	]);
 
@@ -47,9 +49,20 @@ export const load: PageServerLoad = async ({ locals, cookies, url }) => {
 	}
 
 	// Ascending (last place first) — same as recap_ranking order
-	const rankedTeamIds = (teams ?? [])
-		.sort((a, b) => (teamSetScores.get(a.id) ?? 0) - (teamSetScores.get(b.id) ?? 0))
-		.map((t) => t.id);
+	const ascendingTeams = (teams ?? []).sort(
+		(a, b) => (teamSetScores.get(a.id) ?? 0) - (teamSetScores.get(b.id) ?? 0)
+	);
+	const rankedTeamIds = ascendingTeams.map((t) => t.id);
+
+	// Fase 5 (scherm 10): de onthullijst. Aflopend — plek 1 bovenaan — zodat de
+	// weergave dezelfde volgorde heeft als het grote scherm. Welke rij AL onthuld
+	// is bepaalt de client uit recap_reveal_index; de host stuurt dat, niet dit.
+	const standings = [...ascendingTeams].reverse().map((t) => ({
+		id: t.id,
+		color: t.color,
+		display_name: t.display_name,
+		score: teamSetScores.get(t.id) ?? 0
+	}));
 
 	// Player's rank position index in rankedTeamIds (0 = last place)
 	const playerRankIndex = rankedTeamIds.indexOf(locals.teamId);
@@ -64,7 +77,11 @@ export const load: PageServerLoad = async ({ locals, cookies, url }) => {
 	// (stuk 3c — empty arrays for a non-battle set, so the surface renders no
 	// battle UI at all and the recap looks exactly as it did pre-3c).
 	const [{ data: teammates }, { data: challengeRows }, battleData] = await Promise.all([
-		admin.from('players').select('id, display_name, photo_url').eq('set_id', setId).eq('team_id', locals.teamId),
+		admin
+			.from('players')
+			.select('id, display_name, photo_url')
+			.eq('set_id', setId)
+			.eq('team_id', locals.teamId),
 		challengeIds.length
 			? admin.from('challenges').select('id, title, variant').in('id', challengeIds)
 			: Promise.resolve({ data: [] as { id: string; title: string; variant: string }[] }),
@@ -91,6 +108,7 @@ export const load: PageServerLoad = async ({ locals, cookies, url }) => {
 		playerRankIndex,
 		playerPosition,
 		playerSetScore,
+		standings,
 		teammates: teammates ?? [],
 		totalTeams,
 		carouselChallenges,
