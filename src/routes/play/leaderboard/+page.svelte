@@ -12,7 +12,14 @@
 	let teams = $state<TeamRow[]>([...data.teams]);
 	let scoresHidden = $state(data.scoresHidden);
 	let maxScore = $derived(Math.max(...teams.map((t) => t.score), 20));
-	let crownHolderTeamId = $state(data.crownHolderTeamId);
+	/**
+	 * Kroon-WEERGAVE volgt de score: zichtbaar bij elk team waarvan de score
+	 * gelijk is aan de hoogste score, en alleen als die boven 0 ligt. Bij 0-0
+	 * dus geen kroon; bij een gedeelde topscore dragen alle koplopers er een.
+	 * LET OP: maxScore hierboven heeft een ondergrens van 20 voor de balkbreedtes
+	 * en is daarom NIET bruikbaar als topscore.
+	 */
+	let topScore = $derived(Math.max(...teams.map((t) => t.score), 0));
 
 	// Track previous ranks to show position change arrows
 	let prevRanks = $state<Map<string, number>>(new Map(teams.map((t, i) => [t.id, i])));
@@ -68,10 +75,13 @@
 						filter: `id=eq.${data.activeSetId}`
 					},
 					(payload) => {
-						const gs = payload.new as { play_state?: string; scores_hidden?: boolean; crown_holder_team_id?: string | null };
+						const gs = payload.new as {
+							play_state?: string;
+							scores_hidden?: boolean;
+							crown_holder_team_id?: string | null;
+						};
 						if (gs.play_state === 'recap') goto(`/play/waiting?set_id=${data.activeSetId}`);
 						if (typeof gs.scores_hidden === 'boolean') scoresHidden = gs.scores_hidden;
-						if ('crown_holder_team_id' in gs) crownHolderTeamId = gs.crown_holder_team_id ?? null;
 					}
 				)
 				.subscribe();
@@ -148,7 +158,7 @@
 						<!-- Name -->
 						<div class="flex min-w-0 flex-1 items-center gap-1.5">
 							<div class="truncate font-bold text-white">{team.display_name}</div>
-							{#if crownHolderTeamId === team.id}
+							{#if topScore > 0 && team.score === topScore}
 								<Crown size={14} style="color: #ffe600; flex-shrink: 0;" />
 							{/if}
 						</div>
