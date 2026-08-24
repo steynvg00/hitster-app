@@ -284,6 +284,7 @@
 				teamId={data.team.id}
 				setId={data.playerSetId}
 				effects={data.activeEffects}
+				teams={data.setTeams}
 			/>
 		{/if}
 

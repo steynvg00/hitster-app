@@ -2,6 +2,9 @@
 	import { enhance } from '$app/forms';
 	import { isTargetedPowerup } from '$lib/powerups-meta';
 	import PowerupActivationModal from './PowerupActivationModal.svelte';
+	import CodeRain from '$lib/components/CodeRain.svelte';
+	import { powerupIcon, SLOT_REEL_ICON_IDS } from '$lib/mixup-assets';
+	import { powerupDesc, powerupName } from '$lib/powerups-copy';
 
 	type PowerupType = {
 		id: string;
@@ -10,6 +13,7 @@
 		description: string | null;
 		holdable: boolean;
 		immediate_use: boolean;
+		category?: string | null;
 	};
 
 	type TargetTeam = {
@@ -67,28 +71,28 @@
 	// build a concrete confirmation string from the actual team_effects payload
 	// rather than the generic catalog description.
 	function appliedEffectText(): string {
-		if (activation && !activation.success) return "Couldn't apply automatically — sorry!";
+		if (activation && !activation.success) return 'Kon niet automatisch worden toegepast — sorry!';
 		const payload = activation?.payload ?? {};
 		switch (powerupType.id) {
 			case 'bonus_points':
-				return `+${payload.value ?? 5} bonus points banked for your next challenge!`;
+				return `+${payload.value ?? 5} bonuspunten klaargezet voor jullie volgende challenge!`;
 			case 'lucky_dice':
 				// The rolled number is the whole point of this powerup — show it, and the
 				// range it came out of, straight from the payload the server wrote. The
 				// points are ALREADY on the board (activatePowerup writes teams.score
 				// directly), so this says so rather than promising a future bonus.
-				return `🎲 You rolled ${payload.value ?? '?'} (out of ${payload.dice_min ?? 1}–${payload.dice_max ?? 6}) — ${payload.value ?? 0} points added to your score right now${
-					typeof payload.new_score === 'number' ? ` (${payload.new_score} total)` : ''
+				return `Je gooide ${payload.value ?? '?'} (uit ${payload.dice_min ?? 1}–${payload.dice_max ?? 6}) — ${payload.value ?? 0} punten staan al op je score${
+					typeof payload.new_score === 'number' ? ` (${payload.new_score} totaal)` : ''
 				}!`;
 			case 'hard_gaan':
-				return `×${payload.multiplier ?? 1.5} on challenge points for the next ${payload.window_minutes ?? 15} minutes!`;
+				return `x${payload.multiplier ?? 1.5} op challengepunten voor de komende ${payload.window_minutes ?? 15} minuten!`;
 			case 'single_event_mult':
 				// The ROLLED multiplier is the reveal — same as lucky_dice's number.
 				// Never defaulted to a plausible-looking value: a payload without one
-				// means the roll did not land, and saying "×1.5" would invent it.
-				return `×${payload.multiplier ?? '?'} on your next challenge!`;
+				// means the roll did not land, and saying "x1.5" would invent it.
+				return `x${payload.multiplier ?? '?'} op jullie volgende challenge!`;
 			case 'penalty_shot':
-				return 'You scored low — penalty shot! 🥃 Bottoms up.';
+				return 'Te laag gescoord — strafshot. Naar binnen ermee.';
 			case 'power_spin':
 				// The rolled powerup's NAME and ICON are no longer said here — the slot
 				// machine settles on them (see spinOutcome / settleIcon below), which is
@@ -96,10 +100,10 @@
 				// one. This line is the caption underneath, so it must not repeat the
 				// name the title already shows.
 				return payload.rolled_type_id
-					? "Won on the Power Spin — it's yours!"
-					: 'The wheel came up empty — no powerups were available to win. Unlucky!';
+					? 'Gewonnen op de Power Spin — hij is van jullie!'
+					: 'Het wiel kwam leeg terug — er viel niets te winnen. Pech!';
 			default:
-				return powerupType.description ?? 'Effect applied!';
+				return powerupDesc(powerupType.id, powerupType.description) || 'Effect toegepast!';
 		}
 	}
 
@@ -118,25 +122,32 @@
 	const spinOutcome = $derived.by(() => {
 		if (powerupType.id !== 'power_spin') return null;
 		const p = activation?.payload ?? {};
-		if (!p.rolled_type_id) return { empty: true, name: '', icon: '🎡' };
+		if (!p.rolled_type_id) return { empty: true, name: '', id: 'power_spin' };
 		return {
 			empty: false,
-			name: typeof p.rolled_type_name === 'string' ? p.rolled_type_name : 'a powerup',
-			icon: typeof p.rolled_type_icon === 'string' ? p.rolled_type_icon : '✦'
+			// Redesign fase 4: de naam is de Nederlandse naam als we die kennen, met
+			// de naam uit de payload als terugval. Het icoon is het PNG-icoon van het
+			// gerolde TYPE-ID — hetzelfde veld dat de tak hierboven al las.
+			name: powerupName(
+				String(p.rolled_type_id),
+				typeof p.rolled_type_name === 'string' ? p.rolled_type_name : 'een powerup'
+			),
+			id: String(p.rolled_type_id)
 		};
 	});
 
-	// Slot-machine animation: cycle through random icons for 2 seconds then settle.
+	// Slot-machine animation: cycle through icons for ~1.8s then settle.
 	// penalty_shot is a spontaneous social popup, not a prize roll — skip the roll
 	// and render the settled state immediately. skipRollAnimation does the same for
 	// a powerup handed over as a Power Spin prize (its wheel already rolled).
-	const ICONS = ['🎲', '⚡', '🛡️', '🔥', '💡', '✨', '⏱️', '🪙', '🎯', '🌀'];
+	// De rol loopt nu langs de PNG-iconen uit de designbron in plaats van emoji.
+	const ICONS = SLOT_REEL_ICON_IDS.map((id) => powerupIcon(id));
 
 	// Read once, on purpose. The challenge page keys this modal on teamPowerupId, so
 	// a new queue entry REMOUNTS it rather than swapping props on a live instance —
 	// which makes the roll flags below fixed facts about this card, not signals.
 	// Destructured in one go so the whole block costs a single non-reactive read.
-	const { id: typeId, icon: ownIcon } = powerupType;
+	const { id: typeId } = powerupType;
 	const animate = typeId !== 'penalty_shot' && !skipRollAnimation;
 
 	// Power Spin is the one powerup whose roll is a MOMENT rather than a transition,
@@ -148,11 +159,11 @@
 
 	// What the machine comes to rest on. For a spin that is the PRIZE; for
 	// everything else it is the powerup's own icon, exactly as before.
-	const settleIcon = $derived(spinOutcome ? spinOutcome.icon : (powerupType.icon ?? '✦'));
+	const settleIcon = $derived(powerupIcon(spinOutcome ? spinOutcome.id : powerupType.id));
 
-	// At rest a spin shows its OWN icon (🎡) — the wheel, not yet turned. Never the
+	// At rest a spin shows its OWN icon (het wiel, nog niet gedraaid) — never the
 	// prize: nothing about the outcome may exist on screen before the pull.
-	let displayIcon = $state(autoRoll ? ICONS[0] : (ownIcon ?? '✦'));
+	let displayIcon = $state(autoRoll ? ICONS[0] : powerupIcon(typeId));
 	let settled = $state(!animate);
 	let rollStarted = $state(autoRoll);
 	let resolving = $state(false);
@@ -213,117 +224,64 @@
 		}}
 	/>
 {:else}
-	<!-- Backdrop -->
-	<div
-		class="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 p-4 backdrop-blur-sm"
-		role="dialog"
-		aria-modal="true"
-	>
-		<div class="w-full max-w-sm rounded-2xl border border-zinc-700 bg-zinc-900 p-6 shadow-2xl">
-			<!-- Header. A spin narrates the three states WITHOUT naming what was won,
-			     so the wheel below stays the only thing that can reveal it. -->
-			<p class="mb-5 text-center text-xs font-bold tracking-widest text-amber-400 uppercase">
+	<!--
+		Scherm 5 — SLOTMACHINE-REVEAL + POWER SPIN (tap-poort).
+
+		Redesign fase 4, PUUR PRESENTATIE. Onveranderd: welke keuzes een team
+		krijgt (isHoldableTargeted / holdable / immediate_use), de drie
+		<form action="?/resolveEarnedPowerup"> met hun `choice`-waardes, de
+		"Use now"-tak hierboven, en de tap-poort van Power Spin — het resultaat
+		staat nog steeds nergens in de DOM voordat er getikt is.
+
+		Nieuw is de vormgeving: volledig scherm met code-regen, de 170x170
+		slotkast met het PNG-icoon, en de revealPop bij het landen.
+	-->
+	<div class="reveal mixup-page" role="dialog" aria-modal="true" aria-label="Powerup verdiend">
+		<CodeRain />
+
+		<div class="reveal-body">
+			<!-- Kop. Een spin vertelt de drie staten ZONDER te noemen wat er gewonnen
+			     is, zodat het wiel het enige is dat kan onthullen. -->
+			<p class="eyebrow">
 				{#if isSpin && !rollStarted}
-					Powerup Earned!
+					Powerup verdiend!
 				{:else if isSpin && !settled}
-					Spinning the wheel…
+					Het wiel draait…
 				{:else if isSpin}
-					Power Spin — you won
+					Power Spin — je wint
 				{:else}
-					Powerup Earned!
+					Powerup verdiend!
 				{/if}
 			</p>
 
-			<!-- Slot machine / settled icon -->
-			<div class="mb-4 flex justify-center">
-				<div
-					class="flex h-20 w-20 items-center justify-center rounded-2xl border-2 transition-all duration-300
-						{settled
-						? 'border-amber-400 bg-amber-400/10 shadow-[0_0_24px_rgba(251,191,36,0.3)]'
-						: 'border-zinc-600 bg-zinc-800'}"
-				>
-					<!-- Spins only while the machine is actually running. A Power Spin
-					     sitting on its gate shows a still 🎡, not a wheel already turning. -->
-					<span class="text-4xl leading-none" class:animate-spin-slow={rollStarted && !settled}
-						>{displayIcon}</span
-					>
-				</div>
+			<!-- Slotkast -->
+			<div class="slot squircle" class:slot--settled={settled}>
+				<img
+					src={displayIcon}
+					alt=""
+					class="slot-img"
+					class:slot-img--rolling={rollStarted && !settled}
+					onerror={(e) => ((e.currentTarget as HTMLImageElement).style.visibility = 'hidden')}
+				/>
 			</div>
 
 			{#if settled}
-				<!-- Name. On a spin the prize is the headline, not "Power Spin" — the
-				     card is announcing what was won, and the header above already says
-				     where it came from. An empty wheel falls back to "Power Spin". -->
-				<p class="mb-1 text-center text-lg font-black text-white">
-					{spinOutcome && !spinOutcome.empty ? spinOutcome.name : powerupType.name}
+				<!-- Naam. Bij een spin is de prijs de kop, niet "Power Spin" — de
+				     eyebrow hierboven zegt al waar hij vandaan komt. Een leeg wiel valt
+				     terug op "Power Spin". -->
+				<p class="slot-name">
+					{spinOutcome && !spinOutcome.empty
+						? spinOutcome.name
+						: powerupName(powerupType.id, powerupType.name)}
 				</p>
 				{#if powerupType.description && !powerupType.immediate_use}
-					<p class="mb-6 text-center text-sm text-zinc-400">{powerupType.description}</p>
-				{:else}
-					<div class="mb-6"></div>
+					<p class="slot-desc">{powerupDesc(powerupType.id, powerupType.description)}</p>
 				{/if}
 
-				<!-- Action buttons -->
 				{#if isHoldableTargeted}
-					<!-- Holdable + targeted (give_a_shot): a third choice — fire now with a target. -->
-					<div class="flex flex-col gap-2">
-						<button
-							type="button"
-							onclick={() => (usingNow = true)}
-							class="w-full rounded-xl bg-amber-400 py-2.5 text-sm font-bold text-zinc-950 transition-colors hover:bg-amber-300"
-						>
-							Use now
-						</button>
-						<div class="flex gap-3">
-							<form
-								method="POST"
-								action="?/resolveEarnedPowerup"
-								use:enhance={() => {
-									resolving = true;
-									return async ({ update }) => {
-										await update();
-										onclose();
-									};
-								}}
-								class="flex-1"
-							>
-								<input type="hidden" name="team_powerup_id" value={teamPowerupId} />
-								<input type="hidden" name="choice" value="store" />
-								<button
-									type="submit"
-									disabled={resolving}
-									class="w-full rounded-xl border border-zinc-700 py-2.5 text-sm font-semibold text-zinc-300 transition-colors hover:border-zinc-500 hover:text-white disabled:opacity-50"
-								>
-									Store
-								</button>
-							</form>
-							<form
-								method="POST"
-								action="?/resolveEarnedPowerup"
-								use:enhance={() => {
-									resolving = true;
-									return async ({ update }) => {
-										await update();
-										onclose();
-									};
-								}}
-								class="flex-1"
-							>
-								<input type="hidden" name="team_powerup_id" value={teamPowerupId} />
-								<input type="hidden" name="choice" value="lose" />
-								<button
-									type="submit"
-									disabled={resolving}
-									class="w-full rounded-xl border border-zinc-700 py-2.5 text-sm font-semibold text-zinc-400 transition-colors hover:border-zinc-500 hover:text-white disabled:opacity-50"
-								>
-									Lose
-								</button>
-							</form>
-						</div>
-					</div>
-				{:else if powerupType.holdable && !powerupType.immediate_use}
-					<!-- Holdable: store or lose -->
-					<div class="flex gap-3">
+					<!-- Holdable + gericht (give_a_shot): drie keuzes, precies zoals de
+					     designbron ze naast elkaar zet. -->
+					<div class="choice-row">
 						<form
 							method="POST"
 							action="?/resolveEarnedPowerup"
@@ -341,9 +299,64 @@
 							<button
 								type="submit"
 								disabled={resolving}
-								class="w-full rounded-xl bg-amber-400 py-2.5 text-sm font-bold text-zinc-950 transition-colors hover:bg-amber-300 disabled:opacity-50"
+								class="mixup-btn w-full text-xs mixup-btn-secondary disabled:opacity-50"
 							>
-								Send to Storage
+								Bewaar
+							</button>
+						</form>
+						<button
+							type="button"
+							onclick={() => (usingNow = true)}
+							class="mixup-btn flex-[1.2] text-xs mixup-btn-primary"
+						>
+							Gebruik nu
+						</button>
+						<form
+							method="POST"
+							action="?/resolveEarnedPowerup"
+							use:enhance={() => {
+								resolving = true;
+								return async ({ update }) => {
+									await update();
+									onclose();
+								};
+							}}
+							class="flex-1"
+						>
+							<input type="hidden" name="team_powerup_id" value={teamPowerupId} />
+							<input type="hidden" name="choice" value="lose" />
+							<button
+								type="submit"
+								disabled={resolving}
+								class="mixup-btn w-full text-xs mixup-btn-ghost disabled:opacity-50"
+							>
+								Laat vallen
+							</button>
+						</form>
+					</div>
+				{:else if powerupType.holdable && !powerupType.immediate_use}
+					<!-- Holdable: bewaren of laten vallen -->
+					<div class="choice-row">
+						<form
+							method="POST"
+							action="?/resolveEarnedPowerup"
+							use:enhance={() => {
+								resolving = true;
+								return async ({ update }) => {
+									await update();
+									onclose();
+								};
+							}}
+							class="flex-[1.4]"
+						>
+							<input type="hidden" name="team_powerup_id" value={teamPowerupId} />
+							<input type="hidden" name="choice" value="store" />
+							<button
+								type="submit"
+								disabled={resolving}
+								class="mixup-btn w-full text-[13px] mixup-btn-primary disabled:opacity-50"
+							>
+								Bewaar
 							</button>
 						</form>
 						<form
@@ -363,62 +376,190 @@
 							<button
 								type="submit"
 								disabled={resolving}
-								class="w-full rounded-xl border border-zinc-700 py-2.5 text-sm font-semibold text-zinc-400 transition-colors hover:border-zinc-500 hover:text-white disabled:opacity-50"
+								class="mixup-btn w-full text-[13px] mixup-btn-ghost disabled:opacity-50"
 							>
-								Lose
+								Laat vallen
 							</button>
 						</form>
 					</div>
 				{:else}
-					<!-- Immediate-use powerup: already auto-activated, this is just a confirmation -->
-					<p class="mb-6 text-center text-sm font-semibold text-amber-300">{appliedEffectText()}</p>
-					<button
-						type="button"
-						onclick={onclose}
-						class="w-full rounded-xl bg-amber-400 py-2.5 text-sm font-bold text-zinc-950 transition-colors hover:bg-amber-300"
-					>
-						Nice!
+					<!-- Immediate-use: al toegepast, dit is de bevestiging -->
+					<p class="applied">{appliedEffectText()}</p>
+					<button type="button" onclick={onclose} class="mixup-btn w-full mixup-btn-primary">
+						Lekker!
 					</button>
 				{/if}
 			{:else if isSpin && !rollStarted}
-				<!-- STATE 1 — the gate. Power Spin has been won and nothing else has
-				     happened yet: no wheel turning, and NOTHING about the outcome in the
-				     DOM. spinOutcome is read nowhere in this branch, and the settled
-				     block above (which is where the prize's name and icon live) is not
-				     rendered at all, so there is nothing to read out of the source
-				     either. The pull below is what starts the one and only animation. -->
-				<p class="mb-1 text-center text-lg font-black text-white">{powerupType.name}</p>
-				<p class="mb-6 text-center text-sm text-zinc-400">
-					Pull the wheel to see which powerup you have won.
-				</p>
-				<button
-					type="button"
-					onclick={startSpin}
-					class="w-full rounded-xl bg-amber-400 py-2.5 text-sm font-bold text-zinc-950 transition-colors hover:bg-amber-300"
-				>
+				<!-- STATE 1 — de poort. Power Spin is gewonnen en verder is er niets
+				     gebeurd: geen draaiend wiel, en NIETS over de uitkomst in de DOM.
+				     spinOutcome wordt in deze tak nergens gelezen en het settled-blok
+				     hierboven (waar naam en icoon van de prijs staan) wordt niet
+				     gerenderd, dus er valt ook niets uit de broncode te halen. -->
+				<p class="slot-name">{powerupName(powerupType.id, powerupType.name)}</p>
+				<p class="slot-desc">Power Spin: het resultaat bestaat pas ná je tap — niet te spieken.</p>
+				<button type="button" onclick={startSpin} class="spin-btn mixup-btn mixup-btn-primary">
 					Spin
 				</button>
 			{:else}
-				<!-- STATE 2 — the wheel is turning. Same skeleton every other powerup
-				     uses while its slot machine runs. -->
-				<div class="flex justify-center">
-					<div class="h-8 w-32 animate-pulse rounded bg-zinc-800"></div>
-				</div>
+				<!-- STATE 2 — het wiel draait. Zelfde skelet als elke andere powerup. -->
+				<p class="slot-name slot-name--rolling">· · ·</p>
 			{/if}
 		</div>
 	</div>
 {/if}
 
 <style>
-	@keyframes spin-slow {
-		from {
-			transform: rotate(0deg);
+	.reveal {
+		position: fixed;
+		inset: 0;
+		z-index: 50;
+		overflow: hidden;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.reveal-body {
+		position: relative;
+		display: flex;
+		flex: 1 1 auto;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 16px;
+		padding: max(56px, calc(env(safe-area-inset-top, 0px) + 14px)) 24px
+			max(30px, calc(env(safe-area-inset-bottom, 0px) + 8px));
+		text-align: center;
+	}
+
+	.eyebrow {
+		font-family: var(--font-ui);
+		font-weight: 800;
+		font-size: 13px;
+		letter-spacing: 0.3em;
+		text-transform: uppercase;
+		color: var(--color-mixup-yellow);
+	}
+
+	/* Designbron: 170x170, radius 34, paneelverloop, gele rand + glow. */
+	.slot {
+		width: 170px;
+		height: 170px;
+		border-radius: 34px;
+		background: linear-gradient(160deg, #1a1440 0%, #0e0b28 100%);
+		border: 1px solid rgba(255, 230, 0, 0.5);
+		box-shadow: 0 0 50px rgba(255, 230, 0, 0.25);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.slot--settled {
+		animation: revealPop 0.6s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+	}
+
+	.slot-img {
+		width: 110px;
+		height: 110px;
+		object-fit: contain;
+	}
+
+	.slot-img--rolling {
+		animation: reel 0.4s linear infinite;
+	}
+
+	.slot-name {
+		font-family: var(--font-display);
+		font-weight: 900;
+		font-size: 40px;
+		line-height: 0.95;
+		text-transform: uppercase;
+		color: var(--color-mixup-paper);
+		text-shadow: 0 0 30px rgba(255, 230, 0, 0.5);
+		overflow-wrap: anywhere;
+	}
+
+	.slot-name--rolling {
+		animation: pulse 1.4s ease-in-out infinite;
+	}
+
+	.slot-desc {
+		font-family: var(--font-ui);
+		font-weight: 500;
+		font-size: 13px;
+		line-height: 1.5;
+		color: var(--color-mixup-muted);
+		max-width: 300px;
+	}
+
+	.applied {
+		font-family: var(--font-ui);
+		font-weight: 700;
+		font-size: 14px;
+		line-height: 1.5;
+		color: var(--color-mixup-yellow);
+		max-width: 300px;
+	}
+
+	.choice-row {
+		display: flex;
+		gap: 10px;
+		width: 100%;
+		max-width: 340px;
+	}
+
+	/* Designbron: 170x64, radius 32, 20px. */
+	.spin-btn {
+		width: 170px;
+		height: 64px;
+		font-size: 20px;
+		border-radius: 32px;
+	}
+
+	@keyframes revealPop {
+		0% {
+			transform: scale(0.2) rotate(-8deg);
+			opacity: 0;
 		}
-		to {
-			transform: rotate(360deg);
+		55% {
+			transform: scale(1.12) rotate(2deg);
+			opacity: 1;
+		}
+		100% {
+			transform: scale(1) rotate(0deg);
+			opacity: 1;
 		}
 	}
-	.animate-spin-slow {
-		animation: spin-slow 0.4s linear infinite;
+
+	@keyframes reel {
+		0% {
+			transform: translateY(-14px) scale(0.92);
+			opacity: 0.55;
+		}
+		50% {
+			transform: translateY(0) scale(1);
+			opacity: 1;
+		}
+		100% {
+			transform: translateY(14px) scale(0.92);
+			opacity: 0.55;
+		}
+	}
+
+	@keyframes pulse {
+		0%,
+		100% {
+			opacity: 0.25;
+		}
+		50% {
+			opacity: 1;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.slot--settled,
+		.slot-img--rolling,
+		.slot-name--rolling {
+			animation: none;
+		}
 	}
 </style>

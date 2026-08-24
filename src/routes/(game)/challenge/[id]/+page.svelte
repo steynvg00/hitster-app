@@ -32,6 +32,8 @@
 	import IncomingEffectsListener from '$lib/components/game/IncomingEffectsListener.svelte';
 	import PowerupRevealModal from '$lib/components/game/PowerupRevealModal.svelte';
 	import TapToBreakOverlay from '$lib/components/game/TapToBreakOverlay.svelte';
+	import FreezeOverlay from '$lib/components/game/FreezeOverlay.svelte';
+	import { powerupIcon } from '$lib/mixup-assets';
 	import AllSeeingEyeModal from '$lib/components/game/AllSeeingEyeModal.svelte';
 	import PlayerScreen from '$lib/components/game/PlayerScreen.svelte';
 	import TrackSegmentBar from '$lib/components/game/TrackSegmentBar.svelte';
@@ -1818,17 +1820,14 @@
 	-->
 	<PlayerScreen>
 		<!-- Freeze overlay (stuk 2): blocking frost layer, clears itself after 30s
-		     client-side — no server round-trip, it's a marker row only. -->
+		     client-side — no server round-trip, it's a marker row only. De
+		     vormgeving zit sinds fase 4 in FreezeOverlay; `freezeUntil` en
+		     `freezeRemainingMs` worden nog steeds hier bijgehouden. -->
 		{#if isFrozen}
-			<div
-				class="fixed inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-cyan-950/70 backdrop-blur-md"
-			>
-				<span class="text-6xl">🧊</span>
-				<p class="text-lg font-black text-white">Bevroren door {freezeSourceName}!</p>
-				<p class="font-data text-3xl font-black text-cyan-200 tabular-nums">
-					{Math.ceil(freezeRemainingMs / 1000)}s
-				</p>
-			</div>
+			<FreezeOverlay
+				sourceName={freezeSourceName}
+				secondsLeft={Math.ceil(freezeRemainingMs / 1000)}
+			/>
 		{/if}
 
 		<!-- Tap-to-break lock (stuk 3 FINAL): blocking overlay, persists across a
@@ -1847,9 +1846,13 @@
 		{#if drainToast}
 			<div class="fixed inset-x-0 top-4 z-50 flex justify-center px-4">
 				<div
-					class="flex items-center gap-2 rounded-mixup-sm border border-mixup-magenta/50 bg-mixup-magenta/15 px-4 py-2.5 text-sm font-semibold text-mixup-paper shadow-2xl backdrop-blur-sm squircle"
+					class="flex items-center gap-2.5 rounded-mixup-sm border border-mixup-magenta/45 bg-mixup-magenta/10 px-4 py-2.5 text-[13px] font-bold text-mixup-paper shadow-2xl backdrop-blur-[14px] squircle"
 				>
-					<span class="text-lg">⏳</span>
+					<img
+						src={powerupIcon('time_drain')}
+						alt=""
+						class="h-[26px] w-[26px] shrink-0 object-contain"
+					/>
 					<span>−15s — {drainToast.sourceName} pakte je tijd af!</span>
 				</div>
 			</div>
@@ -2021,6 +2024,7 @@
 				teamId={data.team.id}
 				setId={data.activeSetId}
 				effects={data.activeEffects}
+				teams={data.setTeams}
 			/>
 		{/if}
 
