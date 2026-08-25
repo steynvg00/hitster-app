@@ -69,6 +69,19 @@
 		return pos !== -1 && pos < revealIndex;
 	}
 
+	/**
+	 * TEAMFOTO LIVE (fase 7A). `data.rankedTeams` draagt photo_url al mee, maar
+	 * alleen zoals het bij page-load was — dit scherm staat een hele ceremonie
+	 * lang open. Een foto die tijdens de recap wordt gemaakt komt via de
+	 * teams-realtime binnen en landt in deze overlay; de podiumopbouw zelf
+	 * (ranking, scores, onthulvolgorde) blijft ongemoeid.
+	 */
+	let livePhotos = $state<Record<string, string | null>>({});
+
+	function photoOf(team: { id: string; photo_url: string | null }): string | null {
+		return team.id in livePhotos ? livePhotos[team.id]! : team.photo_url;
+	}
+
 	let animatingTeamId = $state<string | null>(null);
 	let animTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -103,6 +116,12 @@
 					}
 				}
 			)
+			// Zelfde kanaal, tabel `teams`: een nieuwe teamfoto is een UPDATE op die
+			// rij en hoeft dus geen eigen kanaal. Alleen photo_url wordt overgenomen.
+			.on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'teams' }, (payload) => {
+				const row = payload.new as { id: string; photo_url: string | null };
+				livePhotos = { ...livePhotos, [row.id]: row.photo_url };
+			})
 			.subscribe();
 
 		return () => {
@@ -333,8 +352,8 @@
 								class:box--revealed={revealed}
 								class:box--fresh={animatingTeamId === team.id}
 							>
-								{#if revealed && team.photo_url}
-									<img src={team.photo_url} alt="" aria-hidden="true" class="box__photo" />
+								{#if revealed && photoOf(team)}
+									<img src={photoOf(team)} alt="" aria-hidden="true" class="box__photo" />
 									<span class="box__scrim"></span>
 								{/if}
 								<span class="box__glyph">{revealed ? team.display_name : '?'}</span>
