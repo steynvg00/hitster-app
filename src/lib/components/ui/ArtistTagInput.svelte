@@ -100,8 +100,8 @@
 	pills come and go instead of the box growing from a search-bar sliver.
 -->
 <div
-	class="flex min-h-[3.125rem] flex-wrap items-center gap-1.5 rounded-xl border border-zinc-700 bg-zinc-900 px-2 py-2 transition-colors"
-	style={tags.length > 0 ? `border-color: ${accentHex};` : ''}
+	class="tag-box flex min-h-[3.125rem] flex-wrap items-center gap-1.5 rounded-xl border border-zinc-700 bg-zinc-900 px-2 py-2 transition-colors"
+	style="--accent: {accentHex};{tags.length > 0 ? ' border-color: var(--accent);' : ''}"
 >
 	{#if name}
 		<input type="hidden" {name} value={wireValue} data-tag-input="true" />
@@ -143,7 +143,7 @@
 				onkeydown={onKeydown}
 				{placeholder}
 				autocomplete="off"
-				class="w-full border-0 bg-transparent px-2 py-1 text-zinc-100 focus:outline-none"
+				class="tag-input w-full border-0 bg-transparent px-2 py-1 text-zinc-100"
 			/>
 			{#if suggestions.length > 0}
 				<div
@@ -164,3 +164,21 @@
 		</div>
 	{/if}
 </div>
+
+<style>
+	/* @tailwindcss/forms zet op :focus van het binnenste tekstveld een 1px
+	   blue-600 ring (box-shadow) — een blauwe rechthoek IN de afgeronde pil-box.
+	   Die gaat hier uit; de focusring zit op de box zelf, in de accentkleur, en
+	   volgt zo de rounded-xl van de box. :has(:focus-visible) houdt de ring
+	   zichtbaar voor toetsenbord- én touch-focus op het tekstveld. */
+	.tag-input:focus,
+	.tag-input:focus-visible {
+		outline: none;
+		box-shadow: none;
+		border-color: transparent;
+	}
+	.tag-box:has(.tag-input:focus-visible) {
+		border-color: var(--accent);
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 32%, transparent);
+	}
+</style>

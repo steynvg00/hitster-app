@@ -83,7 +83,7 @@
 				{min}
 				{max}
 				class="mixup-year flex-1 rounded-mixup-sm text-center tabular-nums squircle"
-				style="color: {teamHex};"
+				style="color: {teamHex}; --accent: {teamHex};"
 			/>
 			<button
 				type="button"
@@ -119,6 +119,22 @@
 		font-weight: 900;
 		font-size: 30px;
 		line-height: 1;
+		transition:
+			border-color 0.18s ease,
+			box-shadow 0.18s ease;
+	}
+	/* @tailwindcss/forms zet op :focus een 1px blue-600 ring (box-shadow) plus een
+	   blauwe border — de browser-blauwe rechthoek uit de toesteltest. Hier
+	   vervangen door een ring in de teamkleur op :focus-visible; box-shadow volgt
+	   de border-radius/squircle van het veld zelf. outline gaat pas uit als de
+	   ring er is, zodat toetsenbord-focus zichtbaar blijft. */
+	.mixup-year:focus {
+		box-shadow: none;
+		border-color: rgba(229, 242, 255, 0.22);
+	}
+	.mixup-year:focus-visible {
 		outline: none;
+		border-color: var(--accent);
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 32%, transparent);
 	}
 </style>
