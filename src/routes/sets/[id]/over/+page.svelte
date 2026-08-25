@@ -1,29 +1,32 @@
 <script lang="ts">
+	/**
+	 * 03b · TUSSENSCHERM — "Dit spel is voorbij" (redesign fase 6).
+	 *
+	 * Bron: design/M!XUP Ceremonie en Randen.dc.html, scherm "03b Spel voorbij".
+	 * Finish-vlag-kristal met gele glow, kop 40px, secundaire knop naar de
+	 * eindstand.
+	 *
+	 * PUUR PRESENTATIE — de load-functie is ongewijzigd. De tweede knop (live
+	 * stand) stond al op dit scherm en blijft, nu als ghost.
+	 */
+	import Interstitial from '$lib/components/game/Interstitial.svelte';
+	import { ICON_ASSETS } from '$lib/mixup-assets';
 	import type { PageData } from './$types';
+
 	let { data }: { data: PageData } = $props();
 </script>
 
-<div class="flex min-h-screen items-center justify-center bg-zinc-950 p-8 text-center">
-	<div class="max-w-sm">
-		<div class="mb-6 text-6xl">🏁</div>
-		<h1 class="mb-3 text-2xl font-black text-white">Game over</h1>
-		<p class="mb-8 text-lg text-zinc-400">
-			<span class="font-semibold text-white">{data.setName}</span> has ended. Check the leaderboard to
-			see the results!
-		</p>
-		<div class="flex flex-col gap-3">
-			<a
-				href="/sets/{data.setId}/podium"
-				class="inline-block rounded-xl bg-amber-400 px-6 py-3 text-sm font-bold text-zinc-950 transition-colors hover:bg-amber-300"
-			>
-				View Podium →
-			</a>
-			<a
-				href="/leaderboard"
-				class="inline-block rounded-xl bg-zinc-800 px-6 py-3 text-sm font-bold text-zinc-200 transition-colors hover:bg-zinc-700"
-			>
-				View leaderboard
-			</a>
-		</div>
-	</div>
-</div>
+<svelte:head>
+	<title>Spel voorbij — M!XUP</title>
+</svelte:head>
+
+<Interstitial
+	icon={ICON_ASSETS.finishFlag}
+	glow="rgba(255, 230, 0, 0.3)"
+	eyebrow={data.setName}
+	title="Dit spel is voorbij"
+	lede="De winnaar is al gekroond. Bekijk de eindstand of wacht op een nieuw spel."
+>
+	<a href="/sets/{data.setId}/podium" class="mixup-btn mixup-btn-secondary">Bekijk de eindstand</a>
+	<a href="/leaderboard" class="mixup-btn mixup-btn-ghost">Bekijk de live stand</a>
+</Interstitial>

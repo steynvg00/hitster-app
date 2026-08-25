@@ -1,7 +1,38 @@
 <script lang="ts">
+	/**
+	 * 06 · PODIUM — ONTHULLINGSPROCES (redesign fase 6).
+	 *
+	 * Bron: design/M!XUP Ceremonie en Randen.dc.html, scherm "06 · PODIUM —
+	 * ONTHULLINGSPROCES (16:9)". Referentiemaat 1280x720.
+	 *
+	 * PUUR PRESENTATIE. De host-bediening (?/reveal), de recap-cascade in
+	 * $lib/recap-flow en het game_sets-realtime-kanaal hieronder zijn
+	 * ongewijzigd; alleen de vormgeving is nieuw. Dit scherm LEEST
+	 * recap_reveal_index / recap_ranking / recap_state / battle_reveal_index en
+	 * stuurt niets aan.
+	 *
+	 * DE 7 STAPPEN VAN DE DESIGNBRON ZIJN DE BESTAANDE CASCADE. De designbron
+	 * klikt `podStep` 0..6 door; dat is exact `recap_reveal_index` bij 6 teams
+	 * (0 = stand-by, 1 = 6e onthuld, … 6 = winnaar onthuld). Er is dus geen
+	 * stappenteller bijgekomen — de fasen hieronder zijn afgeleid uit wat de
+	 * host al schrijft, en schalen mee met team_count 2..6:
+	 *
+	 *   lowsCenter  — de plekken buiten het podium komen een voor een groot in
+	 *                 beeld; het podium staat geblurd op de achtergrond
+	 *   lowsDocked  — ze zijn klaar en dokken als compacte rij onderaan, waarna
+	 *                 het podium 58px omhoog schuift en 3 -> 2 -> 1 volgt
+	 *
+	 * MAATVOERING: elke maat is een veelvoud van `--u`, een designpixel. Die
+	 * schaalt mee met de KLEINSTE van breedte/hoogte t.o.v. 1280x720, zodat het
+	 * scherm klopt op een 1920-beamer en in een laptopvenster niet uit beeld
+	 * loopt. Zelfde clamp-principe als het TV-leaderboard uit fase 5.
+	 */
 	import { onMount, untrack } from 'svelte';
 	import { supabaseBrowser } from '$lib/supabase-browser';
 	import BattleRankingCard from '$lib/components/game/BattleRankingCard.svelte';
+	import CodeRain from '$lib/components/CodeRain.svelte';
+	import { MIXUP_LOGO, RANK_ASSETS } from '$lib/mixup-assets';
+	import { teamHex, teamGlow } from '$lib/team-theme';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -38,36 +69,8 @@
 		return pos !== -1 && pos < revealIndex;
 	}
 
-	function rankPosition(teamId: string): number {
-		const pos = ranking.indexOf(teamId);
-		if (pos === -1) return 0;
-		return totalTeams - pos;
-	}
-
 	let animatingTeamId = $state<string | null>(null);
 	let animTimer: ReturnType<typeof setTimeout> | null = null;
-
-	const teamColors: Record<string, { bg: string; border: string; text: string }> = {
-		blue: { bg: '#1d4ed8', border: '#3b82f6', text: '#fff' },
-		yellow: { bg: '#ca8a04', border: '#eab308', text: '#000' },
-		green: { bg: '#15803d', border: '#22c55e', text: '#fff' },
-		red: { bg: '#b91c1c', border: '#ef4444', text: '#fff' },
-		indigo: { bg: '#4338ca', border: '#6366f1', text: '#fff' },
-		black: { bg: '#18181b', border: '#3f3f46', text: '#fff' }
-	};
-
-	// Festival palette glow per podium position
-	const festivalAccent: Record<number, { color: string; glow: string }> = {
-		1: { color: '#ff2daa', glow: 'rgba(255,45,170,0.65)' },
-		2: { color: '#00e5ff', glow: 'rgba(0,229,255,0.55)' },
-		3: { color: '#7c4dff', glow: 'rgba(124,77,255,0.55)' }
-	};
-
-	const ordinal = (n: number) => {
-		const s = ['th', 'st', 'nd', 'rd'];
-		const v = n % 100;
-		return n + (s[(v - 20) % 10] || s[v] || s[0]);
-	};
 
 	onMount(() => {
 		const channel = supabaseBrowser
@@ -108,20 +111,105 @@
 		};
 	});
 
+	/* ══════════════════════════════════════════════════════════════════
+	   PODIUMOPBOUW (designbron 06)
+	   data.rankedTeams is OPLOPEND — index 0 is de laatste plek.
+	══════════════════════════════════════════════════════════════════ */
+
+	/** Blok-, glyph- en zuilmaten per podiumplek, in designpixels. */
+	const PODIUM_SPEC = {
+		1: {
+			label: 'Top spot',
+			accent: '255,45,170',
+			boxW: 250,
+			boxH: 150,
+			glyph: 84,
+			pedH: 240,
+			pedW: 250,
+			num: 80,
+			delay: '0s'
+		},
+		2: {
+			label: 'Runner up',
+			accent: '0,229,255',
+			boxW: 230,
+			boxH: 110,
+			glyph: 64,
+			pedH: 160,
+			pedW: 230,
+			num: 64,
+			delay: '0.3s'
+		},
+		3: {
+			label: 'Derde plek',
+			accent: '124,77,255',
+			boxW: 230,
+			boxH: 100,
+			glyph: 58,
+			pedH: 110,
+			pedW: 230,
+			num: 52,
+			delay: '0.6s'
+		}
+	} as const;
+
+	/** De zuilen van links naar rechts: runner-up, winnaar, derde. */
+	const PODIUM_ORDER = [2, 1, 3] as const;
+
+	type RankedTeam = (typeof data.rankedTeams)[number];
+
+	function teamAtPlace(place: number): RankedTeam | null {
+		return data.rankedTeams[totalTeams - place] ?? null;
+	}
+
 	const podiumSlots = $derived(
-		totalTeams >= 2
-			? [
-					{ pos: 2, team: data.rankedTeams[totalTeams - 2], pedestalPx: 100 },
-					{ pos: 1, team: data.rankedTeams[totalTeams - 1], pedestalPx: 148 },
-					...(totalTeams >= 3
-						? [{ pos: 3, team: data.rankedTeams[totalTeams - 3], pedestalPx: 68 }]
-						: [])
-				]
+		PODIUM_ORDER.map((place) => ({
+			place,
+			spec: PODIUM_SPEC[place],
+			team: teamAtPlace(place)
+		})).filter((s) => s.team !== null)
+	);
+
+	/**
+	 * De plekken buiten het podium, beste eerst (4, 5, 6) — de volgorde waarin
+	 * de designbron ze toont. rankedTeams is oplopend, dus omgekeerd.
+	 */
+	const lowTeams = $derived(
+		totalTeams > 3
+			? data.rankedTeams
+					.slice(0, totalTeams - 3)
+					.map((team, i) => ({ team, place: totalTeams - i }))
+					.reverse()
 			: []
 	);
 
-	const lowerTeams = $derived(
-		totalTeams > 3 ? data.rankedTeams.slice(0, totalTeams - 3).filter((t) => isRevealed(t.id)) : []
+	// Fasen, afgeleid uit de bestaande onthulstaat — geen eigen teller.
+	const podiumStarted = $derived(podiumSlots.some((s) => s.team && isRevealed(s.team.id)));
+	const lowsRevealed = $derived(lowTeams.some((l) => isRevealed(l.team.id)));
+	const lowsCenter = $derived(lowsRevealed && !podiumStarted);
+	const lowsDocked = $derived(lowTeams.length > 0 && podiumStarted);
+
+	const winner = $derived(teamAtPlace(1));
+	const winnerRevealed = $derived(winner !== null && isRevealed(winner.id));
+
+	/**
+	 * Scoreweergave. `setScore` staat al in `data.rankedTeams` — het is dezelfde
+	 * som die de plek-afleiding voedt, dus geen extra query en geen extra bron.
+	 * Zelfde nl-NL-notatie als het TV-leaderboard, zodat 1840 overal "1.840" is.
+	 */
+	const nl = new Intl.NumberFormat('nl-NL');
+
+	const title = $derived(
+		winnerRevealed && winner ? `${winner.display_name} pakt de kroon!` : 'Wie pakt de kroon?'
+	);
+	const subtitle = $derived(
+		inBattlePhase
+			? 'De battles gaan voor het podium'
+			: winnerRevealed
+				? 'Eindstand compleet — gefeliciteerd'
+				: phase === 'pending'
+					? 'De host onthult zo de eindstand'
+					: 'De onthulling is bezig…'
 	);
 </script>
 
@@ -129,334 +217,689 @@
 	<title>{data.setName} — Podium</title>
 </svelte:head>
 
-<!-- Night-sky background with festival gradient overlays -->
-<div class="fixed inset-0" style="background: #0b0b1f;">
-	<div
-		class="absolute inset-0"
-		style="background:
-			radial-gradient(ellipse at 85% 5%, rgba(255,45,170,0.13) 0%, transparent 50%),
-			radial-gradient(ellipse at 10% 92%, rgba(0,229,255,0.10) 0%, transparent 50%),
-			radial-gradient(ellipse at 50% 50%, rgba(124,77,255,0.04) 0%, transparent 70%);"
-	></div>
-</div>
+<div class="podium">
+	<!-- De code-regen schildert zelf de podium-ondergrond, zodat de lagen daarop
+	     screenen in plaats van op de body-achtergrond. -->
+	<CodeRain class="podium-rain" />
 
-<div
-	class="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-6 py-10"
->
-	<!-- Header -->
-	<div class="mb-8 text-center md:mb-12">
-		<div
-			class="wordmark text-[2.8rem] leading-none font-black tracking-tighter uppercase md:text-[4.5rem]"
-		>
-			MixUp!
-		</div>
-		<h1
-			class="mt-1 leading-none font-black tracking-[0.12em] text-white uppercase"
-			style="font-size: clamp(2rem, 6vw, 4.5rem);"
-		>
-			Podium
-		</h1>
-		<p class="mt-2 text-xs tracking-[0.25em] text-white/30 uppercase md:text-sm">{data.setName}</p>
-	</div>
+	<div class="podium__inner">
+		<header class="podium__head">
+			<img src={MIXUP_LOGO} alt="M!XUP" class="podium__logo" />
+			<p class="podium__set">{data.setName}</p>
+			<h1 class="podium__title" class:podium__title--won={winnerRevealed}>{title}</h1>
+			<p class="podium__sub">{subtitle}</p>
+		</header>
 
-	<!-- Battle reveal (stuk 3c) — takes the screen before the pedestals appear.
-	     No own-team highlight: this is the shared TV. -->
-	{#if inBattlePhase}
-		<div class="w-full max-w-6xl">
-			<p
-				class="mb-6 text-center font-black tracking-[0.2em] text-white/50 uppercase"
-				style="font-size: clamp(1.2rem, 3vw, 2rem);"
-			>
-				⚔️ Battle results
-			</p>
+		{#if inBattlePhase}
+			<!-- Battle-fase (stuk 3c): de head-to-heads gaan vóór het podium.
+			     Geen eigen-team-markering: dit is het gedeelde scherm. -->
+			<section class="battles">
+				<p class="battles__eyebrow">Head-to-head</p>
+				<h2 class="battles__title">De battles</h2>
 
-			{#if revealedBattles.length === 0}
-				<div class="text-center">
-					<div class="mb-8 flex justify-center gap-4">
-						<span class="pulse-dot" style="background: #ff2daa; animation-delay: 0s;"></span>
-						<span class="pulse-dot" style="background: #00e5ff; animation-delay: 0.35s;"></span>
-						<span class="pulse-dot" style="background: #7c4dff; animation-delay: 0.7s;"></span>
+				{#if revealedBattles.length === 0}
+					<div class="battles__wait">
+						<span class="dot" style="--dot-c: #ff2daa; animation-delay: 0s;"></span>
+						<span class="dot" style="--dot-c: #00e5ff; animation-delay: 0.35s;"></span>
+						<span class="dot" style="--dot-c: #7c4dff; animation-delay: 0.7s;"></span>
 					</div>
-					<p class="text-sm tracking-wider text-white/20">The host is about to reveal the battles</p>
-				</div>
-			{:else}
-				<div class="flex flex-wrap items-start justify-center gap-4">
-					{#each revealedBattles as battle (battle.challenge_id)}
-						<div class="w-full max-w-md min-w-[300px] flex-1">
+				{:else}
+					<div class="battles__grid">
+						{#each revealedBattles as battle (battle.challenge_id)}
 							<BattleRankingCard
 								title={battle.title}
 								ranking={battle.ranking}
 								teams={data.battleTeams}
 							/>
+						{/each}
+					</div>
+				{/if}
+			</section>
+		{:else}
+			<div class="podium__spacer"></div>
+
+			<!-- De plekken buiten het podium: eerst groot in het midden, daarna
+			     gedokt als compacte rij onderaan. -->
+			{#if lowTeams.length > 0}
+				<div
+					class="lows"
+					class:lows--hidden={!lowsRevealed}
+					class:lows--center={lowsCenter}
+					class:lows--docked={lowsDocked}
+				>
+					{#each lowTeams as low (low.team.id)}
+						{@const revealed = isRevealed(low.team.id)}
+						{@const hex = teamHex(low.team.color)}
+						<div
+							class="low squircle"
+							class:low--revealed={revealed}
+							class:low--fresh={animatingTeamId === low.team.id}
+							style="--team: {hex}; --team-glow: {teamGlow(low.team.color)};"
+						>
+							<span class="low__rank">{low.place}</span>
+							<span class="low__dot"></span>
+							<span class="low__name">
+								{revealed ? low.team.display_name : '— nog verborgen —'}
+							</span>
+							<!-- Altijd in de DOM, pas zichtbaar bij de onthulling: zo houdt de
+							     naamkolom dezelfde breedte en springt de rij niet op het moment
+							     dat de host onthult. -->
+							<span class="low__score" class:low__score--on={revealed}>
+								{nl.format(low.team.setScore)}
+							</span>
 						</div>
 					{/each}
 				</div>
 			{/if}
-		</div>
-		<!-- Pending state -->
-	{:else if phase === 'pending'}
-		<div class="text-center">
-			<div class="mb-8 flex justify-center gap-4">
-				<span class="pulse-dot" style="background: #ff2daa; animation-delay: 0s;"></span>
-				<span class="pulse-dot" style="background: #00e5ff; animation-delay: 0.35s;"></span>
-				<span class="pulse-dot" style="background: #7c4dff; animation-delay: 0.7s;"></span>
-			</div>
-			<p
-				class="font-black tracking-[0.2em] text-white/50 uppercase"
-				style="font-size: clamp(1.4rem, 4vw, 2.5rem);"
-			>
-				Stand by…
-			</p>
-			<p class="mt-3 text-sm tracking-wider text-white/20">The host is preparing the reveal</p>
-		</div>
-	{:else}
-		<!-- Lower-ranked teams (4th+) — subdued pill strip -->
-		{#if lowerTeams.length > 0}
-			<div class="mb-8 flex w-full max-w-4xl flex-wrap justify-center gap-2">
-				{#each lowerTeams as team}
-					{@const pos = rankPosition(team.id)}
-					{@const tc = teamColors[team.color] ?? { bg: '#27272a', border: '#3f3f46', text: '#fff' }}
-					<div
-						class="flex items-center gap-2 rounded-full border px-4 py-1.5"
-						style="background: {tc.bg}28; border-color: {tc.border}44; color: {tc.text};"
-					>
-						<span class="text-sm font-black opacity-50">{ordinal(pos)}</span>
-						<span class="text-sm font-bold">{team.display_name}</span>
-						<span class="text-sm font-black tabular-nums opacity-70"
-							>{team.setScore}<span class="text-xs opacity-60">pts</span></span
-						>
-					</div>
-				{/each}
-			</div>
-		{/if}
 
-		<!-- Olympic podium: 2nd | 1st | 3rd -->
-		{#if podiumSlots.length > 0}
-			<div class="flex w-full max-w-5xl items-end justify-center gap-3 md:gap-6">
-				{#each podiumSlots as slot}
-					{@const revealed = isRevealed(slot.team.id)}
-					{@const tc = teamColors[slot.team.color] ?? {
-						bg: '#27272a',
-						border: '#3f3f46',
-						text: '#fff'
-					}}
-					{@const teamPlayers = data.playersByTeam[slot.team.id] ?? []}
-					{@const isAnimating = animatingTeamId === slot.team.id}
-					{@const fa = festivalAccent[slot.pos] ?? {
-						color: '#ffffff',
-						glow: 'rgba(255,255,255,0.3)'
-					}}
-					{@const isFirst = slot.pos === 1}
-
-					<div class="flex flex-col items-center {isFirst ? 'w-2/5' : 'w-1/4'}">
-						<!-- Team card or placeholder -->
-						{#if revealed}
-							<div
-								class="w-full overflow-hidden rounded-2xl {isAnimating ? 'podium-reveal' : ''}"
-								style="
-									background-color: {tc.bg};
-									border: 3px solid {fa.color};
-									box-shadow: 0 0 {isAnimating ? '64px' : '28px'} {isAnimating ? '18px' : '6px'} {fa.glow},
-									            inset 0 1px 0 rgba(255,255,255,0.08);
-									transition: box-shadow 1.2s ease;
-								"
-							>
-								<div class="p-4 text-center md:p-6" style="color: {tc.text};">
-									<!-- Position ordinal with festival accent glow -->
-									<div
-										class="leading-none font-black tabular-nums"
-										style="
-											font-size: {isFirst ? 'clamp(3.5rem, 9vw, 7rem)' : 'clamp(2.5rem, 6.5vw, 5rem)'};
-											color: {fa.color};
-											text-shadow: 0 0 32px {fa.glow}, 0 2px 10px rgba(0,0,0,0.9);
-										"
-									>
-										{ordinal(slot.pos)}
-									</div>
-									<!-- Team name -->
-									<div
-										class="mt-1 font-black tracking-wide uppercase"
-										style="
-											font-size: {isFirst ? 'clamp(1.4rem, 4vw, 2.8rem)' : 'clamp(1rem, 3vw, 2rem)'};
-											text-shadow: 0 1px 6px rgba(0,0,0,0.7);
-										"
-									>
-										{slot.team.display_name}
-									</div>
-									<!-- Score -->
-									<div
-										class="mt-1 font-black tabular-nums"
-										style="
-											font-size: {isFirst ? 'clamp(1.8rem, 5vw, 3.5rem)' : 'clamp(1.3rem, 3.5vw, 2.5rem)'};
-											opacity: 0.88;
-											text-shadow: 0 1px 4px rgba(0,0,0,0.7);
-										"
-									>
-										{slot.team.setScore}
-									</div>
-									<div class="mt-0.5 text-xs tracking-[0.2em] uppercase opacity-45">points</div>
-
-									<!-- Player avatars -->
-									{#if teamPlayers.length > 0}
-										<div class="mt-3 flex flex-wrap justify-center gap-2 md:mt-4">
-											{#each teamPlayers as p}
-												<div class="text-center">
-													{#if p.photo_url}
-														<img
-															src={p.photo_url}
-															alt={p.display_name}
-															class="mx-auto rounded-full object-cover"
-															style="
-																width: {isFirst ? '38px' : '28px'};
-																height: {isFirst ? '38px' : '28px'};
-																border: 2px solid {tc.text}38;
-															"
-														/>
-													{:else}
-														<div
-															class="mx-auto flex items-center justify-center rounded-full font-black"
-															style="
-																width: {isFirst ? '38px' : '28px'};
-																height: {isFirst ? '38px' : '28px'};
-																background: rgba(0,0,0,0.25);
-																color: {tc.text};
-																font-size: {isFirst ? '1rem' : '0.8rem'};
-															"
-														>
-															{p.display_name.charAt(0)}
-														</div>
-													{/if}
-													<div class="mt-0.5 text-xs opacity-65">{p.display_name}</div>
-												</div>
-											{/each}
-										</div>
-									{/if}
-								</div>
-							</div>
-						{:else}
-							<!-- Unrevealed placeholder -->
-							<div
-								class="w-full rounded-2xl border-2 border-dashed"
-								style="
-									border-color: {fa.color}30;
-									background: rgba(255,255,255,0.02);
-								"
-							>
-								<div
-									class="flex flex-col items-center justify-center"
-									style="padding: {isFirst ? '2.5rem 1rem' : '1.8rem 1rem'};"
-								>
-									<div
-										class="animate-pulse leading-none font-black"
-										style="
-											font-size: {isFirst ? '5rem' : '3.5rem'};
-											color: {fa.color}35;
-										"
-									>
-										?
-									</div>
-									<div class="mt-2 text-xs tracking-[0.2em] uppercase" style="color: {fa.color}40;">
-										{slot.pos === 1 ? 'Top spot' : slot.pos === 2 ? 'Runner up' : '3rd place'}
-									</div>
-								</div>
-							</div>
-						{/if}
-
-						<!-- Festival-accent pedestal block -->
+			<!-- Het podium zelf: 2 | 1 | 3 -->
+			{#if podiumSlots.length > 0}
+				<div class="stage" class:stage--blurred={lowsCenter} class:stage--lifted={lowsDocked}>
+					{#each podiumSlots as slot (slot.place)}
+						{@const team = slot.team!}
+						{@const spec = slot.spec}
+						{@const revealed = isRevealed(team.id)}
+						{@const hex = teamHex(team.color)}
 						<div
-							class="mt-0.5 flex w-full items-center justify-center rounded-t-lg"
-							style="
-								height: {slot.pedestalPx}px;
-								background: linear-gradient(to bottom, {fa.color}18 0%, {fa.color}06 100%);
-								border-top: 3px solid {fa.color}60;
-								box-shadow: 0 -6px 24px {fa.glow}50;
-							"
+							class="col"
+							style="--accent: {spec.accent};
+							       --team: {hex};
+							       --team-glow: {teamGlow(team.color)};
+							       --box-w: {spec.boxW};
+							       --box-h: {spec.boxH};
+							       --glyph: {spec.glyph};
+							       --ped-w: {spec.pedW};
+							       --ped-h: {spec.pedH};
+							       --ped-num: {spec.num};
+							       --pulse-delay: {spec.delay};"
 						>
-							<span
-								class="font-black tabular-nums"
-								style="
-									font-size: {isFirst ? '2.8rem' : '2rem'};
-									color: {fa.color};
-									text-shadow: 0 0 24px {fa.glow};
-								"
+							{#if slot.place === 1}
+								<!-- Kroonanker: breedte 0 zodat de kroon het podium niet verschuift. -->
+								<div class="crown-anchor">
+									<img
+										src={RANK_ASSETS.crown}
+										alt=""
+										aria-hidden="true"
+										class="crown"
+										class:crown--on={winnerRevealed}
+									/>
+								</div>
+							{/if}
+
+							<p class="col__label">{spec.label}</p>
+
+							<div
+								class="box squircle"
+								class:box--revealed={revealed}
+								class:box--fresh={animatingTeamId === team.id}
 							>
-								{slot.pos}
-							</span>
+								{#if revealed && team.photo_url}
+									<img src={team.photo_url} alt="" aria-hidden="true" class="box__photo" />
+									<span class="box__scrim"></span>
+								{/if}
+								<span class="box__glyph">{revealed ? team.display_name : '?'}</span>
+							</div>
+
+							<div class="ped squircle">
+								<span class="ped__num">{slot.place}</span>
+								<!-- De zuil heeft een VASTE hoogte (--ped-h), dus de score erbij
+								     verandert niets aan de podiumopbouw. Zichtbaar vanaf de
+								     onthulling, net als de teamnaam in het blok erboven. -->
+								<span class="ped__score" class:ped__score--on={revealed}>
+									{nl.format(team.setScore)}<span class="ped__unit">ptn</span>
+								</span>
+							</div>
 						</div>
-					</div>
-				{/each}
-			</div>
+					{/each}
+				</div>
+			{/if}
 		{/if}
-
-		<!-- Complete state celebration -->
-		{#if phase === 'complete'}
-			<div class="mt-10 text-center">
-				<p
-					class="font-black tracking-[0.2em] uppercase"
-					style="
-						font-size: clamp(1.4rem, 4vw, 2.2rem);
-						color: #ffe600;
-						text-shadow: 0 0 28px rgba(255,230,0,0.55), 0 2px 8px rgba(0,0,0,0.8);
-					"
-				>
-					🏆 Game Complete
-				</p>
-			</div>
-		{/if}
-	{/if}
-
-	<!-- Live indicator -->
-	<div class="mt-10 flex items-center gap-2 text-xs text-white/15">
-		<span class="inline-block h-2 w-2 animate-pulse rounded-full" style="background: #ff2daa;"
-		></span>
-		Live
 	</div>
 </div>
 
 <style>
-	.wordmark {
-		color: #ff2daa;
+	/* ══════════════════════════════════════════════════════════════
+	   SCHAAL — referentie 1280x720
+	   --u is EEN designpixel. Hij volgt de kleinste van breedte/hoogte,
+	   zodat een 16:9-beamer exact klopt en een breed-maar-laag venster
+	   het podium niet onder de rand duwt.
+	══════════════════════════════════════════════════════════════ */
+	.podium {
+		--u: clamp(0.42px, min(0.0781vw, 0.1389vh), 1.6px);
+		position: relative;
+		height: 100svh;
+		overflow: hidden;
+		background: radial-gradient(110% 90% at 50% 10%, #221546 0%, #0b0b1f 60%);
+		color: var(--color-mixup-paper);
+		font-family: var(--font-ui);
+	}
+
+	/* De regen-wrapper is niet transparant: hij draagt de podium-gradient zelf,
+	   anders screenen de lagen op de (andere) body-achtergrond. */
+	.podium :global(.podium-rain) {
+		--cr-backdrop: radial-gradient(110% 90% at 50% 10%, #221546 0%, #0b0b1f 60%);
+	}
+
+	.podium__inner {
+		position: relative;
+		z-index: 1;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		height: 100%;
+		box-sizing: border-box;
+		padding: calc(24 * var(--u)) calc(24 * var(--u)) 0;
+	}
+
+	/* ── Kop ────────────────────────────────────────────────────── */
+	.podium__head {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		text-align: center;
+		flex: 0 0 auto;
+	}
+
+	.podium__logo {
+		width: calc(170 * var(--u));
+		object-fit: contain;
+	}
+
+	.podium__set {
+		margin: 0;
+		font-family: var(--font-data);
+		font-size: calc(13 * var(--u));
+		letter-spacing: var(--tracking-mixup-wide);
+		text-transform: uppercase;
+		color: var(--color-mixup-dim);
+	}
+
+	.podium__title {
+		margin: calc(4 * var(--u)) 0 0;
+		font-family: var(--font-display);
+		font-weight: 900;
+		font-size: calc(40 * var(--u));
+		line-height: 1;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		color: var(--color-mixup-paper);
+		text-shadow: 0 0 calc(30 * var(--u)) rgba(124, 77, 255, 0.9);
+		transition: text-shadow 0.6s ease;
+	}
+
+	/* De winnaartitel wisselt van violette naar gouden gloed. */
+	.podium__title--won {
 		text-shadow:
-			0 0 48px rgba(255, 45, 170, 0.6),
-			0 2px 14px rgba(0, 0, 0, 0.9);
+			0 0 calc(34 * var(--u)) rgba(255, 215, 94, 0.85),
+			0 0 calc(12 * var(--u)) rgba(255, 230, 0, 0.5);
 	}
 
-	.pulse-dot {
-		display: inline-block;
-		width: 18px;
-		height: 18px;
+	.podium__sub {
+		margin: calc(6 * var(--u)) 0 0;
+		font-family: var(--font-ui);
+		font-weight: 800;
+		font-size: calc(14 * var(--u));
+		letter-spacing: var(--tracking-mixup-eyebrow);
+		text-transform: uppercase;
+		color: var(--color-mixup-muted);
+	}
+
+	.podium__spacer {
+		flex: 1 1 auto;
+	}
+
+	/* ── Battle-fase ────────────────────────────────────────────── */
+	.battles {
+		flex: 1 1 auto;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		width: 100%;
+		padding-top: calc(18 * var(--u));
+	}
+
+	.battles__eyebrow {
+		margin: 0;
+		font-family: var(--font-ui);
+		font-weight: 800;
+		font-size: calc(12 * var(--u));
+		letter-spacing: 0.3em;
+		text-transform: uppercase;
+		color: #ff6fc4;
+	}
+
+	.battles__title {
+		margin: calc(4 * var(--u)) 0 calc(16 * var(--u));
+		font-family: var(--font-display);
+		font-weight: 900;
+		font-size: calc(42 * var(--u));
+		line-height: 0.95;
+		text-transform: uppercase;
+		color: var(--color-mixup-paper);
+		text-shadow: 0 0 calc(26 * var(--u)) rgba(255, 45, 170, 0.7);
+	}
+
+	.battles__grid {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: flex-start;
+		justify-content: center;
+		gap: calc(16 * var(--u));
+		width: 100%;
+		min-height: 0;
+		overflow-y: auto;
+		padding-bottom: calc(24 * var(--u));
+	}
+
+	/* De battle-kaart erft de podiumschaal, zodat hij meegroeit met de beamer. */
+	.battles__grid :global(.bc) {
+		--bc-u: calc(1.35 * var(--u));
+		width: calc(360 * var(--u));
+		flex: 0 0 auto;
+	}
+
+	.battles__wait {
+		display: flex;
+		gap: calc(16 * var(--u));
+		padding: calc(40 * var(--u)) 0;
+	}
+
+	.dot {
+		width: calc(18 * var(--u));
+		height: calc(18 * var(--u));
 		border-radius: 50%;
-		animation: pulse-glow 1.6s ease-in-out infinite;
+		background: var(--dot-c);
+		animation: pod-pulse 1.6s ease-in-out infinite;
 	}
 
-	@keyframes pulse-glow {
-		0%,
-		100% {
-			transform: scale(1);
-			opacity: 0.4;
-		}
-		50% {
-			transform: scale(1.6);
-			opacity: 1;
-		}
+	/* ── Plekken buiten het podium ──────────────────────────────── */
+	.lows {
+		position: absolute;
+		left: 50%;
+		z-index: 6;
+		display: flex;
+		gap: calc(10 * var(--u));
+		transition:
+			top 0.6s cubic-bezier(0.2, 0.8, 0.2, 1),
+			transform 0.6s cubic-bezier(0.2, 0.8, 0.2, 1),
+			opacity 0.4s ease;
+		/* Standaard: gedokt onderaan als rij. */
+		top: 98.5%;
+		transform: translate(-50%, -100%);
+		flex-direction: row;
 	}
 
-	@keyframes podium-reveal {
+	.lows--center {
+		top: 50%;
+		transform: translate(-50%, -50%) scale(1.1);
+		flex-direction: column;
+	}
+
+	.lows--hidden {
+		top: 50%;
+		transform: translate(-50%, -50%);
+		flex-direction: column;
+		opacity: 0;
+		pointer-events: none;
+	}
+
+	.low {
+		display: flex;
+		align-items: center;
+		gap: calc(10 * var(--u));
+		box-sizing: border-box;
+		width: calc(280 * var(--u));
+		height: calc(52 * var(--u));
+		padding: 0 calc(14 * var(--u));
+		border-radius: calc(14 * var(--u));
+		background: rgba(229, 242, 255, 0.04);
+		border: 1px dashed rgba(229, 242, 255, 0.2);
+		backdrop-filter: blur(calc(6 * var(--u)));
+		-webkit-backdrop-filter: blur(calc(6 * var(--u)));
+		transition:
+			width 0.5s ease,
+			height 0.5s ease;
+	}
+
+	.lows--docked .low {
+		width: calc(200 * var(--u));
+		height: calc(36 * var(--u));
+	}
+
+	.low--revealed {
+		background: linear-gradient(
+			135deg,
+			color-mix(in srgb, var(--team) 27%, transparent) 0%,
+			color-mix(in srgb, var(--team) 8%, transparent) 100%
+		);
+		border: 1px solid color-mix(in srgb, var(--team) 53%, transparent);
+		animation: pod-reveal 0.5s ease both;
+	}
+
+	.low--fresh {
+		box-shadow: 0 0 calc(28 * var(--u)) color-mix(in srgb, var(--team-glow) 45%, transparent);
+	}
+
+	.low__rank {
+		width: calc(20 * var(--u));
+		flex: 0 0 auto;
+		font-family: var(--font-display);
+		font-weight: 900;
+		font-size: calc(26 * var(--u));
+		line-height: 1;
+		color: var(--color-mixup-soft);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.lows--docked .low__rank {
+		font-size: calc(18 * var(--u));
+	}
+
+	.low__dot {
+		flex: 0 0 auto;
+		width: calc(12 * var(--u));
+		height: calc(12 * var(--u));
+		border-radius: 50%;
+		border: 1px dashed rgba(229, 242, 255, 0.35);
+	}
+
+	.low--revealed .low__dot {
+		background: var(--team);
+		border: 1px solid rgba(229, 242, 255, 0.5);
+		box-shadow: 0 0 calc(8 * var(--u)) var(--team-glow);
+	}
+
+	.low__name {
+		flex: 1 1 auto;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-family: var(--font-ui);
+		font-weight: 800;
+		font-size: calc(15 * var(--u));
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--color-mixup-dim);
+	}
+
+	.lows--docked .low__name {
+		font-size: calc(12 * var(--u));
+	}
+
+	.low--revealed .low__name {
+		color: var(--color-mixup-paper);
+	}
+
+	/* Score per rij, zelfde gele display-cijfers als op de zuil en het
+	   TV-leaderboard. Staat altijd in de DOM zodat de naamkolom niet van
+	   breedte verspringt bij de onthulling. */
+	.low__score {
+		flex: 0 0 auto;
+		font-family: var(--font-display);
+		font-weight: 900;
+		font-size: calc(20 * var(--u));
+		line-height: 1;
+		color: var(--color-mixup-yellow);
+		text-shadow: 0 0 calc(14 * var(--u)) rgba(255, 230, 0, 0.35);
+		font-variant-numeric: tabular-nums;
+		visibility: hidden;
+		opacity: 0;
+		transition: opacity 0.4s ease 0.1s;
+	}
+
+	.lows--docked .low__score {
+		font-size: calc(15 * var(--u));
+	}
+
+	.low__score--on {
+		visibility: visible;
+		opacity: 1;
+	}
+
+	/* ── Het podium ─────────────────────────────────────────────── */
+	.stage {
+		display: flex;
+		align-items: flex-end;
+		gap: calc(28 * var(--u));
+		flex: 0 0 auto;
+		transition:
+			filter 0.5s ease,
+			transform 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+	}
+
+	.stage--blurred {
+		filter: blur(calc(10 * var(--u)));
+	}
+
+	.stage--lifted {
+		transform: translateY(calc(-58 * var(--u)));
+	}
+
+	.col {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: calc(8 * var(--u));
+	}
+
+	.col__label {
+		margin: 0;
+		font-family: var(--font-ui);
+		font-weight: 800;
+		font-size: calc(14 * var(--u));
+		letter-spacing: var(--tracking-mixup-eyebrow);
+		text-transform: uppercase;
+		color: var(--color-mixup-muted);
+	}
+
+	/* Breedte 0 + overflow zichtbaar: de kroon hangt boven de Top Spot zonder
+	   de kolombreedte te beinvloeden, zodat het podium niet verschuift. */
+	.crown-anchor {
+		position: relative;
+		width: 0;
+		height: calc(141 * var(--u));
+		overflow: visible;
+		pointer-events: none;
+	}
+
+	.crown {
+		position: absolute;
+		left: 50%;
+		bottom: calc(-43 * var(--u));
+		height: calc(166 * var(--u));
+		max-width: none;
+		object-fit: contain;
+		filter: drop-shadow(0 0 calc(22 * var(--u)) rgba(255, 215, 94, 0.65));
+		opacity: 0;
+		transform: translateX(-50%) scale(0.2);
+		transition:
+			opacity 0.5s ease,
+			transform 0.6s cubic-bezier(0.2, 0.9, 0.3, 1.3);
+	}
+
+	.crown--on {
+		opacity: 1;
+		transform: translateX(-50%) scale(1);
+	}
+
+	/* Teamblok — dashed en pulserend tot de host het onthult. */
+	.box {
+		position: relative;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		box-sizing: border-box;
+		overflow: hidden;
+		width: calc(var(--box-w) * var(--u));
+		height: calc(var(--box-h) * var(--u));
+		border-radius: calc(22 * var(--u));
+		border: calc(2 * var(--u)) dashed rgba(var(--accent), 0.45);
+	}
+
+	.box--revealed {
+		border: calc(2 * var(--u)) solid var(--team);
+		background: linear-gradient(
+			180deg,
+			color-mix(in srgb, var(--team) 25%, transparent) 0%,
+			color-mix(in srgb, var(--team) 8%, transparent) 100%
+		);
+		box-shadow: 0 0 calc(44 * var(--u)) color-mix(in srgb, var(--team-glow) 40%, transparent);
+		animation: pod-reveal 0.7s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+	}
+
+	/* Net onthuld: de gloed staat 2 seconden hoger (realtime-gestuurd). */
+	.box--fresh {
+		box-shadow: 0 0 calc(80 * var(--u)) color-mix(in srgb, var(--team-glow) 70%, transparent);
+	}
+
+	.box__photo {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+	}
+
+	/* Houdt de teamnaam leesbaar bovenop een teamfoto. */
+	.box__scrim {
+		position: absolute;
+		inset: 0;
+		background: linear-gradient(180deg, rgba(11, 11, 31, 0.2) 0%, rgba(11, 11, 31, 0.75) 100%);
+	}
+
+	.box__glyph {
+		position: relative;
+		padding: 0 calc(10 * var(--u));
+		text-align: center;
+		font-family: var(--font-display);
+		font-weight: 900;
+		font-size: calc(var(--glyph) * var(--u));
+		line-height: 1;
+		color: rgba(var(--accent), 0.55);
+		animation: pod-pulse 1.6s var(--pulse-delay) infinite;
+	}
+
+	.box--revealed .box__glyph {
+		font-size: calc(var(--glyph) * 0.52 * var(--u));
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		color: var(--color-mixup-paper);
+		text-shadow: 0 0 calc(24 * var(--u)) var(--team-glow);
+		animation: none;
+	}
+
+	/* Zuil — teamkleur zodra onthuld, anders de plek-accentkleur. */
+	.ped {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: flex-start;
+		gap: calc(2 * var(--u));
+		box-sizing: border-box;
+		width: calc(var(--ped-w) * var(--u));
+		height: calc(var(--ped-h) * var(--u));
+		padding-top: calc(12 * var(--u));
+		border-radius: calc(18 * var(--u)) calc(18 * var(--u)) 0 0;
+		background: linear-gradient(
+			180deg,
+			rgba(var(--accent), 0.14) 0%,
+			rgba(var(--accent), 0.03) 100%
+		);
+		border: 1px solid rgba(var(--accent), 0.3);
+		border-bottom: none;
+	}
+
+	.ped__num {
+		font-family: var(--font-display);
+		font-weight: 900;
+		font-size: calc(var(--ped-num) * var(--u));
+		line-height: 1;
+		color: rgba(var(--accent), 0.35);
+	}
+
+	/* De score op de zuil. Gele cijfers in de display-stijl van het
+	   TV-leaderboard, zodat een score er overal in het redesign hetzelfde
+	   uitziet. Onzichtbaar tot de host de plek onthult — de ruimte is dan al
+	   gereserveerd, dus er verschuift niets op het onthulmoment. */
+	.ped__score {
+		display: flex;
+		align-items: baseline;
+		gap: calc(4 * var(--u));
+		font-family: var(--font-display);
+		font-weight: 900;
+		font-size: calc(var(--ped-num) * 0.4 * var(--u));
+		line-height: 1;
+		color: var(--color-mixup-yellow);
+		text-shadow: 0 0 calc(16 * var(--u)) rgba(255, 230, 0, 0.4);
+		font-variant-numeric: tabular-nums;
+		visibility: hidden;
+		opacity: 0;
+		transform: scale(0.8);
+		transition:
+			opacity 0.45s ease 0.15s,
+			transform 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.3) 0.15s;
+	}
+
+	/* Iets na de revealPop van het teamblok, zodat de score de plek volgt
+	   in plaats van hem aan te kondigen. */
+	.ped__score--on {
+		visibility: visible;
+		opacity: 1;
+		transform: scale(1);
+	}
+
+	.ped__unit {
+		font-family: var(--font-ui);
+		font-weight: 800;
+		font-size: calc(var(--ped-num) * 0.17 * var(--u));
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: var(--color-mixup-muted);
+		text-shadow: none;
+	}
+
+	/* ── Animaties (designbron: revealPop / pulse) ──────────────── */
+	@keyframes pod-reveal {
 		0% {
-			transform: scale(0.55) translateY(40px);
+			transform: scale(0.2) rotate(-8deg);
 			opacity: 0;
 		}
-		65% {
-			transform: scale(1.07) translateY(-6px);
+		55% {
+			transform: scale(1.12) rotate(2deg);
 			opacity: 1;
 		}
 		100% {
-			transform: scale(1) translateY(0);
+			transform: scale(1) rotate(0deg);
 			opacity: 1;
 		}
 	}
 
-	.podium-reveal {
-		animation: podium-reveal 0.85s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+	@keyframes pod-pulse {
+		0%,
+		100% {
+			opacity: 0.25;
+		}
+		50% {
+			opacity: 1;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.box--revealed,
+		.low--revealed,
+		.box__glyph,
+		.dot {
+			animation: none;
+		}
+		.lows,
+		.stage,
+		.crown,
+		.low,
+		.ped__score,
+		.low__score {
+			transition: none;
+		}
 	}
 </style>

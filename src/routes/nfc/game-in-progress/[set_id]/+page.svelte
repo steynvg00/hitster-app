@@ -1,23 +1,34 @@
 <script lang="ts">
+	/**
+	 * 03a · TUSSENSCHERM — "Het spel is al bezig", NFC-variant (redesign fase 6).
+	 *
+	 * Zelfde scherm als /sets/[id]/in-progress, bereikt via /nfc/randomize/[set_id].
+	 * Die keten is een RESTANT van de NFC-randomizer die bij de join-consolidatie
+	 * verdween: niets in de codebase linkt er nog heen en /nfc/[tag] kent geen
+	 * `randomizer`-purpose meer. Hij wordt hier meegenomen zodat er geen scherm
+	 * in de oude stijl achterblijft; wegruimen is een aparte opruimbeslissing,
+	 * geen herkleedwerk.
+	 *
+	 * PUUR PRESENTATIE — de load-functie is ongewijzigd.
+	 */
+	import Interstitial from '$lib/components/game/Interstitial.svelte';
+	import { ICON_ASSETS } from '$lib/mixup-assets';
 	import type { PageData } from './$types';
+
 	let { data }: { data: PageData } = $props();
 </script>
 
-<div class="min-h-screen flex items-center justify-center p-8 text-center">
-	<div class="max-w-sm">
-		<div class="mb-6 text-6xl">🎮</div>
-		<h1 class="mb-3 text-2xl font-black text-white">Game already in progress</h1>
-		<p class="mb-2 text-zinc-400 text-lg">
-			<span class="font-semibold text-white">{data.setName}</span> has already started.
-		</p>
-		<p class="mb-8 text-zinc-500 text-sm">
-			Ask the host if you can still join.
-		</p>
-		<a
-			href="/"
-			class="rounded-xl bg-zinc-800 px-6 py-3 text-sm font-bold text-zinc-200 hover:bg-zinc-700 transition-colors"
-		>
-			Back to home
-		</a>
-	</div>
-</div>
+<svelte:head>
+	<title>Spel al bezig — M!XUP</title>
+</svelte:head>
+
+<Interstitial
+	icon={ICON_ASSETS.headphones}
+	glow="rgba(0, 229, 255, 0.35)"
+	eyebrow={data.setName}
+	title="Het spel is al bezig"
+	lede="Deze ronde loopt al. Vraag de host of je nog kunt instappen."
+>
+	<a href="/leaderboard" class="mixup-btn mixup-btn-primary">Bekijk de live stand</a>
+	<a href="/" class="mixup-btn mixup-btn-ghost">Terug naar start</a>
+</Interstitial>
