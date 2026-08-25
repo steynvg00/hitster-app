@@ -709,6 +709,7 @@
 		left: 50%;
 		bottom: calc(-43 * var(--u));
 		height: calc(166 * var(--u));
+		max-width: none;
 		object-fit: contain;
 		filter: drop-shadow(0 0 calc(22 * var(--u)) rgba(255, 215, 94, 0.65));
 		opacity: 0;
