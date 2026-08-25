@@ -1,6 +1,8 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
+	import { enhance } from '$app/forms';
 	import { supabaseBrowser } from '$lib/supabase-browser';
+	import { cropToSquareJpeg } from '$lib/image-crop';
 	import PlayerScreen from '$lib/components/game/PlayerScreen.svelte';
 	import { ICON_ASSETS, RANK_ASSETS } from '$lib/mixup-assets';
 	import { teamBanner, teamGlow, teamHex, teamOnColor } from '$lib/team-theme';
@@ -43,6 +45,48 @@
 	};
 	let lobbyTeams = $state(data.lobbyTeams.map((t) => ({ ...t, players: [...t.players] })));
 
+	/* ══ TEAMFOTO (fase 7A) ═══════════════════════════════════════════════
+	   Camera -> vierkante crop aan de client -> ?/uploadTeamPhoto -> bucket
+	   `team-photos` -> teams.photo_url. Teamgenoten en het podium krijgen de
+	   nieuwe URL binnen via de bestaande teams-realtime hieronder.
+	   `photoPreview` is de objectURL van de gecropte foto: die staat er al
+	   tijdens het uploaden, zodat de bol niet leeg blijft wachten. */
+	let teamPhotoUrl = $state<string | null>(untrack(() => data.team.photo_url ?? null));
+	let photoPreview = $state<string | null>(null);
+	let photoUploading = $state(false);
+	let photoError = $state<string | null>(null);
+	let photoForm = $state<HTMLFormElement | null>(null);
+	/** Het gecropte bestand dat use:enhance in de FormData zet. */
+	let pendingPhoto: File | null = null;
+
+	/** Wat de foto-slot en de eigen bol tonen: preview wint tot de upload rond is. */
+	const ownPhotoSrc = $derived(photoPreview ?? teamPhotoUrl);
+
+	/** Bronvoor de ronde bol per team; het eigen team ziet zijn preview meteen. */
+	function bubblePhoto(t: { id: string; photo_url: string | null }): string | null {
+		return t.id === data.team.id ? (ownPhotoSrc ?? t.photo_url) : t.photo_url;
+	}
+
+	function clearPreview() {
+		if (photoPreview) URL.revokeObjectURL(photoPreview);
+		photoPreview = null;
+	}
+
+	async function handleTeamPhoto(e: Event) {
+		const input = e.target as HTMLInputElement;
+		const file = input.files?.[0] ?? null;
+		// Leegmaken zodat dezelfde foto twee keer kiezen opnieuw een change geeft.
+		input.value = '';
+		if (!file) return;
+
+		photoError = null;
+		photoUploading = true;
+		pendingPhoto = await cropToSquareJpeg(file);
+		clearPreview();
+		photoPreview = URL.createObjectURL(pendingPhoto);
+		photoForm?.requestSubmit();
+	}
+
 	let showTutorials = $state(false);
 
 	const hex = $derived(teamHex(data.team.color));
@@ -79,7 +123,14 @@
 					filter: `id=eq.${data.team.id}`
 				},
 				async (payload) => {
-					liveScore = (payload.new as { score: number }).score;
+					const row = payload.new as { score: number; photo_url: string | null };
+					liveScore = row.score;
+					// Teamfoto (fase 7A): een upload door een teamgenoot is gewoon een
+					// UPDATE op deze rij, dus hij lift mee op dit bestaande kanaal.
+					if (row.photo_url !== teamPhotoUrl) {
+						teamPhotoUrl = row.photo_url;
+						clearPreview();
+					}
 					const { data: allTeams } = await supabaseBrowser
 						.from('teams')
 						.select('id, score')
@@ -92,6 +143,16 @@
 					}
 				}
 			)
+			// Zelfde kanaal, zelfde tabel, geen filter: de lobby toont ALLE teams,
+			// dus de bol van een ander team moet ook live een foto krijgen. Alleen
+			// photo_url wordt hier overgenomen; score/positie blijven van de
+			// gefilterde binding hierboven.
+			.on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'teams' }, (payload) => {
+				const row = payload.new as { id: string; photo_url: string | null };
+				lobbyTeams = lobbyTeams.map((t) =>
+					t.id === row.id ? { ...t, photo_url: row.photo_url } : t
+				);
+			})
 			.subscribe();
 
 		// Game set state realtime (transitions joining → playing → recap)
@@ -157,6 +218,7 @@
 		return () => {
 			supabaseBrowser.removeChannel(teamChannel);
 			if (setChannel) supabaseBrowser.removeChannel(setChannel);
+			clearPreview();
 		};
 	});
 </script>
@@ -192,15 +254,22 @@
 
 			{#each lobbyTeams as t (t.id)}
 				{@const tHex = teamHex(t.color)}
+				{@const bubbleSrc = bubblePhoto(t)}
 				<div class="hub-card flex items-center gap-2.5 rounded-mixup-card squircle">
-					<!-- Volle kleurbol = placeholder voor de teamfoto (fase 7) -->
+					<!-- Ronde teamavatar (fase 7A): de bol IS de teamkleur-rand; de
+					     vierkante bron wordt er met object-fit:cover rond in gecropt.
+					     Zonder foto blijft het camera-icoon staan als placeholder. -->
 					<span
 						class="lobby-bubble"
 						style="background: linear-gradient(135deg, {tHex}55, {tHex}1A);
 						       border-color: {t.color === 'black' ? 'rgba(255,255,255,0.7)' : tHex + 'AA'};
 						       box-shadow: 0 0 12px {teamGlow(t.color)};"
 					>
-						<img src={ICON_ASSETS.camera} alt="" class="h-[18px] w-[18px] object-contain" />
+						{#if bubbleSrc}
+							<img src={bubbleSrc} alt="Teamfoto {t.display_name}" class="lobby-bubble__img" />
+						{:else}
+							<img src={ICON_ASSETS.camera} alt="" class="h-[18px] w-[18px] object-contain" />
+						{/if}
 					</span>
 					<span class="flex-1 text-xs font-extrabold tracking-[0.08em] text-mixup-paper uppercase">
 						{t.display_name}
@@ -227,25 +296,82 @@
 			</span>
 		</div>
 
-		<!-- Teamfoto-kaart: laatste blok, camera-only. De UPLOAD zelf is fase 7. -->
+		<!-- Teamfoto-kaart: laatste blok, camera-only. De upload gaat naar
+		     ?/uploadTeamPhoto; het team komt daar uit de cookie, niet uit dit
+		     formulier — er staat dus bewust geen team-veld in. -->
 		<div class="px-5 pt-3">
-			<div class="hub-card flex items-center gap-3 rounded-mixup-lg squircle">
-				<div class="photo-slot rounded-mixup-sm squircle">
-					<img src={ICON_ASSETS.camera} alt="" class="h-[38px] w-[38px] object-contain" />
+			<form
+				method="POST"
+				action="?/uploadTeamPhoto"
+				enctype="multipart/form-data"
+				bind:this={photoForm}
+				use:enhance={({ formData, cancel }) => {
+					if (!pendingPhoto) {
+						cancel();
+						photoUploading = false;
+						return;
+					}
+					formData.set('photo', pendingPhoto, pendingPhoto.name);
+					return async ({ result }) => {
+						photoUploading = false;
+						pendingPhoto = null;
+						if (result.type === 'success') {
+							const url = (result.data as { photoUrl?: string } | undefined)?.photoUrl;
+							if (url) {
+								teamPhotoUrl = url;
+								clearPreview();
+							}
+						} else {
+							photoError =
+								result.type === 'failure'
+									? ((result.data as { photoError?: string } | undefined)?.photoError ??
+										'Upload mislukt')
+									: 'Upload mislukt';
+							clearPreview();
+						}
+					};
+				}}
+			>
+				<div class="hub-card flex items-center gap-3 rounded-mixup-lg squircle">
+					<div class="photo-slot rounded-mixup-sm squircle" class:photo-slot--filled={ownPhotoSrc}>
+						{#if ownPhotoSrc}
+							<img src={ownPhotoSrc} alt="Teamfoto" class="h-full w-full object-cover" />
+						{:else}
+							<img src={ICON_ASSETS.camera} alt="" class="h-[38px] w-[38px] object-contain" />
+						{/if}
+					</div>
+					<div class="flex flex-1 flex-col gap-0.5">
+						<span class="text-[10px] font-extrabold tracking-[0.16em] text-mixup-muted">
+							TEAMFOTO
+						</span>
+						<span class="text-xs font-medium" class:text-mixup-soft={!photoError}>
+							{#if photoError}
+								<span class="text-mixup-magenta">{photoError}</span>
+							{:else if photoUploading}
+								Foto uploaden…
+							{:else if teamPhotoUrl}
+								Foto staat live bij je team
+							{:else}
+								Nog geen foto · alleen via de camera
+							{/if}
+						</span>
+					</div>
+					<label
+						class="photo-btn rounded-mixup-chip squircle"
+						class:photo-btn--busy={photoUploading}
+					>
+						{photoUploading ? 'BEZIG…' : teamPhotoUrl ? 'NIEUWE FOTO' : 'MAAK FOTO'}
+						<input
+							type="file"
+							accept="image/*"
+							capture="user"
+							class="sr-only"
+							disabled={photoUploading}
+							onchange={handleTeamPhoto}
+						/>
+					</label>
 				</div>
-				<div class="flex flex-1 flex-col gap-0.5">
-					<span class="text-[10px] font-extrabold tracking-[0.16em] text-mixup-muted">
-						TEAMFOTO
-					</span>
-					<span class="text-xs font-medium text-mixup-soft">
-						Nog geen foto · alleen via de camera
-					</span>
-				</div>
-				<label class="photo-btn rounded-mixup-chip squircle">
-					MAAK FOTO
-					<input type="file" accept="image/*" capture="environment" class="sr-only" />
-				</label>
-			</div>
+			</form>
 		</div>
 	</PlayerScreen>
 
@@ -480,6 +606,16 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
+		/* Fase 7A: clipt de vierkante teamfoto rond binnen de teamkleur-rand.
+		   De glow is een box-shadow buiten de doos en blijft dus staan. */
+		overflow: hidden;
+	}
+
+	.lobby-bubble__img {
+		width: 100%;
+		height: 100%;
+		border-radius: 50%;
+		object-fit: cover;
 	}
 
 	.lobby-av {
@@ -528,6 +664,12 @@
 		border: 2px dashed rgba(229, 242, 255, 0.3);
 	}
 
+	/* Met foto is het geen lege plek meer: streepjesrand wordt een dichte rand. */
+	.photo-slot--filled {
+		border-style: solid;
+		border-color: rgba(229, 242, 255, 0.45);
+	}
+
 	.photo-btn {
 		height: 44px;
 		padding: 0 16px;
@@ -542,6 +684,11 @@
 		background: linear-gradient(90deg, #ffe600, #ff7f11);
 		color: #1a1400;
 		border: 1px solid transparent;
+	}
+
+	.photo-btn--busy {
+		opacity: 0.6;
+		cursor: progress;
 	}
 
 	.hub-link {

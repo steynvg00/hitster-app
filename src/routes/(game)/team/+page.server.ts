@@ -13,6 +13,14 @@ import { TEAM_COLOR_ORDER, getTeamsInSet } from '$lib/server/randomize';
 import { parseBattleConfig } from '$lib/battle-ranking';
 import { resurrectionRetrySeconds } from '$lib/powerups-meta';
 
+/**
+ * Teamfoto (fase 7A). Zelfde bucket die /admin/teams al gebruikt; die actie
+ * blijft ongewijzigd bestaan naast deze.
+ */
+const TEAM_PHOTO_BUCKET = 'team-photos';
+/** Ruim boven een client-gecropte JPEG (~100–300 kB); vangt alleen ongecropte bronnen af. */
+const MAX_TEAM_PHOTO_BYTES = 5 * 1024 * 1024;
+
 export const load: PageServerLoad = async ({ locals, cookies }) => {
 	if (!locals.teamId) redirect(302, '/join');
 
@@ -123,6 +131,9 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		id: string;
 		color: string;
 		display_name: string;
+		// Teamfoto (fase 7A): voedt de ronde avatar in de lobby-bubble. Zelfde
+		// query, een kolom meer — geen extra request.
+		photo_url: string | null;
 		players: Array<{ id: string; display_name: string; photo_url: string | null }>;
 	}> = [];
 
@@ -175,7 +186,10 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 				if (gs.play_state === 'joining') {
 					const scopedColors = TEAM_COLOR_ORDER.slice(0, gs.team_count ?? 6);
 					const [{ data: teams }, { data: players }] = await Promise.all([
-						admin.from('teams').select('id, color, display_name').in('color', scopedColors),
+						admin
+							.from('teams')
+							.select('id, color, display_name, photo_url')
+							.in('color', scopedColors),
 						admin.from('players').select('id, display_name, photo_url, team_id').eq('set_id', gs.id)
 					]);
 
@@ -415,5 +429,77 @@ export const actions: Actions = {
 			// resurrection: the client sends the team to the re-opened challenge.
 			resurrection: result.resurrection
 		};
+	},
+
+	/**
+	 * TEAMFOTO UPLOADEN (fase 7A).
+	 *
+	 * Kopie van ?/uploadPhoto op /admin/teams, met één wezenlijk verschil: het
+	 * team komt uit `locals.teamId` (de HMAC-getekende `hitster_team`-cookie),
+	 * NOOIT uit het formulier. Een speler kan dus alleen de foto van zijn eigen
+	 * team zetten, ook al kan hij het request naar believen naspelen.
+	 *
+	 * CACHE-BUSTING: het pad is `${teamId}-${timestamp}.jpg`, niet
+	 * `${teamId}.jpg` + upsert. Een nieuwe foto krijgt daardoor een NIEUWE
+	 * publieke URL, zodat teamgenoten en het podium hem via de teams-realtime
+	 * meteen zien in plaats van de gecachete oude. De oude objecten van dit team
+	 * worden na de rij-update opgeruimd, dus de bucket groeit niet mee.
+	 */
+	uploadTeamPhoto: async ({ request, locals }) => {
+		const teamId = locals.teamId;
+		if (!teamId) return fail(401, { photoError: 'Geen team-sessie — scan je teamkaart opnieuw.' });
+
+		const fd = await request.formData();
+		const file = fd.get('photo');
+
+		if (!(file instanceof File) || file.size === 0) {
+			return fail(400, { photoError: 'Geen foto ontvangen.' });
+		}
+		// Lege type-string komt voor bij sommige mobiele browsers; die laten we door.
+		if (file.type && !file.type.startsWith('image/')) {
+			return fail(400, { photoError: 'Alleen afbeeldingen.' });
+		}
+		if (file.size > MAX_TEAM_PHOTO_BYTES) {
+			return fail(400, { photoError: 'Foto is te groot (max 5 MB).' });
+		}
+
+		const admin = createAdminClient();
+		const path = `${teamId}-${Date.now()}.jpg`;
+
+		const { error: uploadErr } = await admin.storage
+			.from(TEAM_PHOTO_BUCKET)
+			.upload(path, await file.arrayBuffer(), {
+				contentType: file.type || 'image/jpeg',
+				upsert: false
+			});
+		if (uploadErr) return fail(500, { photoError: `Upload mislukt: ${uploadErr.message}` });
+
+		const {
+			data: { publicUrl }
+		} = admin.storage.from(TEAM_PHOTO_BUCKET).getPublicUrl(path);
+
+		const { error: updateErr } = await admin
+			.from('teams')
+			.update({ photo_url: publicUrl } as never)
+			.eq('id', teamId);
+
+		if (updateErr) {
+			// Rollback zoals het spelerspad dat doet: geen wees-object achterlaten.
+			await admin.storage.from(TEAM_PHOTO_BUCKET).remove([path]);
+			return fail(500, { photoError: `Opslaan mislukt: ${updateErr.message}` });
+		}
+
+		// Oude foto's van DIT team opruimen (ook de `${teamId}.ext` van het
+		// admin-pad, die nu nergens meer naar verwijst). Faalt dit, dan is dat
+		// geen reden de upload af te keuren — de nieuwe foto staat er al.
+		const { data: existing } = await admin.storage
+			.from(TEAM_PHOTO_BUCKET)
+			.list('', { limit: 100, search: teamId });
+		const stale = (existing ?? [])
+			.map((o) => o.name)
+			.filter((n) => n !== path && (n.startsWith(`${teamId}-`) || n.startsWith(`${teamId}.`)));
+		if (stale.length > 0) await admin.storage.from(TEAM_PHOTO_BUCKET).remove(stale);
+
+		return { photoUploaded: true, photoUrl: publicUrl };
 	}
 };
