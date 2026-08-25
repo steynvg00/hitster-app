@@ -109,14 +109,6 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		earnedScore: submittedMap.get(c.id) ?? null
 	}));
 
-	// Recent activity for this team
-	const { data: recentActivity } = await admin
-		.from('activity_log')
-		.select('id, event_type, payload, created_at')
-		.eq('team_id', locals.teamId)
-		.order('created_at', { ascending: false })
-		.limit(8);
-
 	// If player is in a set, load full set state
 	let activeSet: {
 		id: string;
@@ -385,7 +377,6 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		totalTeams,
 		topScore,
 		challenges: challengeList,
-		recentActivity: recentActivity ?? [],
 		activeSet,
 		lobbyTeams,
 		setTutorials,

@@ -93,17 +93,6 @@
 	const onColor = $derived(teamOnColor(data.team.color));
 	const banner = $derived(teamBanner(data.team.color));
 
-	function formatActivity(event_type: string, payload: unknown): string {
-		if (event_type === 'team_entry') return 'Via entry-kaart gejoind';
-		if (event_type === 'challenge_submit') {
-			const p = payload as { challenge_title?: string; score?: number } | null;
-			return p?.challenge_title
-				? `"${p.challenge_title}" ingeleverd · ${p.score ?? 0} pt`
-				: 'Challenge ingeleverd';
-		}
-		return event_type.replace(/_/g, ' ');
-	}
-
 	const isLocked = (challengeId: string) => {
 		const ch = data.challenges.find((c) => c.id === challengeId);
 		const required = ch?.nfc_lock_override ?? data.activeSet?.nfc_lock_enabled ?? false;
@@ -507,24 +496,6 @@
 					</div>
 				{/each}
 			{/if}
-
-			{#if data.recentActivity.length > 0}
-				<div class="pt-2 text-[10px] font-extrabold tracking-[0.18em] text-mixup-muted">RECENT</div>
-				{#each data.recentActivity as entry (entry.id)}
-					<div class="act-row rounded-mixup-sm squircle">
-						<span class="act-dot" style="background: {hex};"></span>
-						<span class="flex-1 text-xs text-mixup-soft">
-							{formatActivity(entry.event_type, entry.payload)}
-						</span>
-						<span class="text-[10px] text-mixup-dim tabular-nums">
-							{new Date(entry.created_at).toLocaleTimeString('nl-NL', {
-								hour: '2-digit',
-								minute: '2-digit'
-							})}
-						</span>
-					</div>
-				{/each}
-			{/if}
 		</div>
 	</PlayerScreen>
 {/if}
@@ -752,21 +723,5 @@
 		background: rgba(43, 217, 122, 0.1);
 		border-color: rgba(43, 217, 122, 0.5);
 		color: var(--color-mixup-green);
-	}
-
-	.act-row {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 8px 12px;
-		background: rgba(229, 242, 255, 0.04);
-		border: 1px solid rgba(229, 242, 255, 0.12);
-	}
-
-	.act-dot {
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		flex: 0 0 auto;
 	}
 </style>
