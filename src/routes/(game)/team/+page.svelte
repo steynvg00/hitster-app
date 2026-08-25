@@ -364,7 +364,7 @@
 						<input
 							type="file"
 							accept="image/*"
-							capture="environment"
+							capture="user"
 							class="sr-only"
 							disabled={photoUploading}
 							onchange={handleTeamPhoto}
