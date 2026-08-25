@@ -57,54 +57,78 @@
 	<title>Je team — M!XUP</title>
 </svelte:head>
 
-<PlayerScreen {backdrop} class="items-center px-7 text-center">
-	<div class="h-[190px] flex-none"></div>
+<!--
+	.randomizer: vaste viewporthoogte (100dvh) zodat dit scherm nooit scrolt.
+	De 190px-spacer boven de cirkel mag krimpen (shrink) — op een iPhone SE
+	(375x667) is dat de enige ruimte die weg kan zonder de knop uit beeld te
+	duwen.
+-->
+<div class="randomizer">
+	<PlayerScreen {backdrop} class="items-center px-7 text-center">
+		<div class="h-[190px] shrink"></div>
 
-	<div class="relative flex h-[190px] w-[190px] flex-none items-center justify-center">
-		{#if phase === 'rolling'}
-			<img
-				src={ICON_ASSETS.dice}
-				alt=""
-				class="dice h-40 w-40 object-contain"
-				style="filter: drop-shadow(0 14px 34px rgba(255,45,170,0.5));"
-			/>
-		{:else}
-			<video bind:this={splashEl} src={SPLASH_VIDEO} autoplay muted loop playsinline class="splash"
-			></video>
-			<div class="reveal-circle" style="--tc: {hex};"></div>
-		{/if}
-	</div>
-
-	<div class="relative z-10 flex w-full flex-1 flex-col items-center gap-4 pt-16">
-		{#if phase === 'rolling'}
-			<div
-				class="font-display text-[38px] font-black text-mixup-paper uppercase"
-				style="text-shadow: 0 0 26px rgba(124,77,255,0.85);"
-			>
-				We zoeken je team…
-			</div>
-			<div class="text-[13px] font-medium text-mixup-muted">Het lot beslist. Even geduld.</div>
-		{:else}
-			<div class="text-[13px] font-extrabold tracking-[0.3em] text-mixup-paper">
-				JIJ SPEELT VOOR
-			</div>
-			<div
-				class="font-display text-[58px] leading-[0.9] font-black text-mixup-paper uppercase"
-				style="text-shadow: 0 0 40px {hex};"
-			>
-				{data.label}
-			</div>
-		{/if}
-
-		<div class="flex h-14 flex-none items-center justify-center">
-			{#if phase === 'done'}
-				<a href="/team" class="go-btn squircle">NAAR JE TEAM →</a>
+		<div class="relative flex h-[190px] w-[190px] flex-none items-center justify-center">
+			{#if phase === 'rolling'}
+				<img
+					src={ICON_ASSETS.dice}
+					alt=""
+					class="dice h-40 w-40 object-contain"
+					style="filter: drop-shadow(0 14px 34px rgba(255,45,170,0.5));"
+				/>
+			{:else}
+				<video
+					bind:this={splashEl}
+					src={SPLASH_VIDEO}
+					autoplay
+					muted
+					loop
+					playsinline
+					class="splash"
+				></video>
+				<div class="reveal-circle" style="--tc: {hex};"></div>
 			{/if}
 		</div>
-	</div>
-</PlayerScreen>
+
+		<div class="relative z-10 flex w-full flex-1 flex-col items-center gap-4 pt-16">
+			{#if phase === 'rolling'}
+				<div
+					class="font-display text-[38px] font-black text-mixup-paper uppercase"
+					style="text-shadow: 0 0 26px rgba(124,77,255,0.85);"
+				>
+					We zoeken je team…
+				</div>
+				<div class="text-[13px] font-medium text-mixup-muted">Het lot beslist. Even geduld.</div>
+			{:else}
+				<div class="text-[13px] font-extrabold tracking-[0.3em] text-mixup-paper">
+					JIJ SPEELT VOOR
+				</div>
+				<div
+					class="font-display text-[58px] leading-[0.9] font-black text-mixup-paper uppercase"
+					style="text-shadow: 0 0 40px {hex};"
+				>
+					{data.label}
+				</div>
+			{/if}
+
+			<div class="flex h-14 flex-none items-center justify-center">
+				{#if phase === 'done'}
+					<a href="/team" class="go-btn squircle">NAAR JE TEAM →</a>
+				{/if}
+			</div>
+		</div>
+	</PlayerScreen>
+</div>
 
 <style>
+	/* Viewport-vast: dvh volgt de iOS-adresbalk (svh/vh niet), dus geen
+	   scrollruimte als de balk inklapt of uitklapt. Alleen hier, via de
+	   .randomizer-wrapper — PlayerScreen zelf blijft min-height:100svh. */
+	.randomizer :global(.player-screen) {
+		height: 100dvh;
+		min-height: 100dvh;
+		max-height: 100dvh;
+	}
+
 	.dice {
 		animation: dice-roll 0.7s cubic-bezier(0.45, 0, 0.55, 1) infinite;
 	}
