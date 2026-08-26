@@ -1,14 +1,12 @@
 <script lang="ts">
-	type BattleConfig = { enabled: boolean; max_points: number };
+	type BattleConfig = { enabled: boolean };
 
 	let { battleConfig }: { battleConfig: BattleConfig } = $props();
 
 	// Local editable copy — same debounced auto-persist pattern as FieldsEditor.
-	// The ladder itself is no longer edited here: it's derived at resolution
-	// time from this single max value + the set's real team_count (linear
-	// max→0 in equal steps), so the editor only needs one number.
+	// Er valt hier maar één ding te zetten: aan of uit. Een battle deelt geen
+	// punten uit, dus er is ook geen maximum meer om in te stellen.
 	let enabled = $state(battleConfig.enabled);
-	let maxPoints = $state(battleConfig.max_points);
 	let saveTimer: ReturnType<typeof setTimeout>;
 	let saving = $state(false);
 	let lastSaveOk = $state<boolean | null>(null);
@@ -22,7 +20,6 @@
 		saving = true;
 		const fd = new FormData();
 		fd.append('enabled', enabled ? 'true' : 'false');
-		fd.append('max_points', String(maxPoints));
 		const res = await fetch('?/saveBattle', { method: 'POST', body: fd });
 		saving = false;
 		lastSaveOk = res.ok;
@@ -30,12 +27,6 @@
 
 	function toggleEnabled() {
 		enabled = !enabled;
-		schedSave();
-	}
-
-	function setMaxPoints(val: number) {
-		if (!Number.isFinite(val) || val < 0) return;
-		maxPoints = Math.round(val);
 		schedSave();
 	}
 </script>
@@ -58,22 +49,8 @@
 		</span>
 	</div>
 	<p class="mb-2 text-[11px] text-zinc-600">
-		All teams play normally — full score, multipliers, and powerups apply as usual. Once every
-		team finishes, they're additionally ranked by base+bonus points (no multipliers) and each gets
-		a share of the max, split linearly down to 0 by rank across the set's team count, added on top
-		of their normal challenge score.
+		All teams play this challenge normally — full score, multipliers, and powerups apply as usual.
+		Once every team finishes, the recap shows a ranking of what each team scored on this challenge;
+		highest wins the battle. No bonus points are awarded — the battle is display only.
 	</p>
-	{#if enabled}
-		<div class="flex items-center gap-2">
-			<label class="text-xs text-zinc-400" for="battle-max-points">Max points (rank 1)</label>
-			<input
-				id="battle-max-points"
-				type="number"
-				value={maxPoints}
-				min="0"
-				class="input-field w-24"
-				onchange={(e) => setMaxPoints(parseInt((e.target as HTMLInputElement).value, 10))}
-			/>
-		</div>
-	{/if}
 </div>

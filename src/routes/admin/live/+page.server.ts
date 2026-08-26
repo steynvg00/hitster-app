@@ -12,9 +12,7 @@ import { resolveBattle } from '$lib/server/battle';
 type BattleRankEntry = {
 	team_id: string;
 	rank: number;
-	raw_score: number;
-	awarded: number;
-	elapsed_seconds: number | null;
+	score: number;
 };
 type BattleStatus = {
 	resolved: boolean;
@@ -57,7 +55,9 @@ export const load: PageServerLoad = async ({ url }) => {
 					...set,
 					play_state: (set.play_state ?? 'joining') as 'joining' | 'playing' | 'recap',
 					scores_hidden: (set as unknown as { scores_hidden?: boolean }).scores_hidden ?? false,
-					crown_holder_team_id: (set as unknown as { crown_holder_team_id?: string | null }).crown_holder_team_id ?? null,
+					crown_holder_team_id:
+						(set as unknown as { crown_holder_team_id?: string | null }).crown_holder_team_id ??
+						null,
 					player_count: count!
 				});
 			}
@@ -129,7 +129,10 @@ export const load: PageServerLoad = async ({ url }) => {
 				? db
 						.from('activity_log')
 						.select('*')
-						.in('team_id', teams.map((t) => t.id))
+						.in(
+							'team_id',
+							teams.map((t) => t.id)
+						)
 						.order('created_at', { ascending: false })
 						.limit(30)
 				: { data: [] as never[] },
@@ -137,7 +140,10 @@ export const load: PageServerLoad = async ({ url }) => {
 				? db
 						.from('team_powerups')
 						.select('id, team_id, status, powerup_types(id, name, icon)')
-						.in('team_id', teams.map((t) => t.id))
+						.in(
+							'team_id',
+							teams.map((t) => t.id)
+						)
 						.eq('set_id', selectedSetId)
 						// 'active' isn't in this branch's team_powerups status CHECK yet
 						// (P3b activation, migration 0047, not merged here) — the hand-
@@ -216,10 +222,17 @@ export const actions: Actions = {
 		const setId = data.get('set_id') as string;
 		if (!setId) return fail(400, { error: 'Missing set_id' });
 
-		const { data: gs } = await db.from('game_sets').select('scores_hidden').eq('id', setId).maybeSingle();
+		const { data: gs } = await db
+			.from('game_sets')
+			.select('scores_hidden')
+			.eq('id', setId)
+			.maybeSingle();
 		if (!gs) return fail(404, { error: 'Set not found' });
 
-		await db.from('game_sets').update({ scores_hidden: !(gs as unknown as { scores_hidden?: boolean }).scores_hidden }).eq('id', setId);
+		await db
+			.from('game_sets')
+			.update({ scores_hidden: !(gs as unknown as { scores_hidden?: boolean }).scores_hidden })
+			.eq('id', setId);
 		return { success: true };
 	},
 

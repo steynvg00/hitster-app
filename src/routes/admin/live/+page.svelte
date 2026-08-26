@@ -201,9 +201,10 @@
 		}
 		if (a.event_type === 'crown_stolen' && payload) {
 			const fromId = payload.from_team_id as string | null;
-			// Battle mode's batch crown recompute (recomputeCrownAfterBattle) flags its
-			// event via:'battle' — distinct label since it's a bookkeeping recompute
-			// after simultaneous ladder adds, not a single team overtaking mid-play.
+			// LEGACY: toen een battle nog een ladderbonus uitdeelde, verplaatste een
+			// batch-hercalculatie daarna de kroon en vlagde die via:'battle'. Battles
+			// raken de score niet meer, dus dit ontstaat niet meer — het label blijft
+			// staan zodat oude regels in de log leesbaar blijven.
 			if (payload.via === 'battle') {
 				return `👑 crown via battle — ${teamLabel(a.team_id)} now leads`;
 			}
@@ -236,10 +237,13 @@
 		if (a.event_type === 'tap_to_break' && payload) {
 			return `🔒 ${teamLabel(a.team_id)} locked ${teamLabel(payload.target_team_id as string | null) ?? '?'}`;
 		}
+		// LEGACY: battles kenden ooit een ladderbonus toe en logden die per team.
+		// Dat gebeurt niet meer — een battle raakt de score niet. Het label blijft
+		// staan zodat oude regels in de log leesbaar blijven.
 		if (a.event_type === 'battle_award' && payload) {
 			const rank = Number(payload.rank ?? 0);
 			const awarded = Number(payload.awarded ?? 0);
-			return `⚔️ ${teamLabel(a.team_id)} ranked ${ordinal(rank)} (+${awarded})`;
+			return `⚔️ ${teamLabel(a.team_id)} ranked ${ordinal(rank)} (+${awarded}, oude bonus)`;
 		}
 		if (a.event_type === 'challenge_closed') return 'Challenge closed';
 		if (a.event_type === 'attempt_reset') return 'Attempt reset';
@@ -924,9 +928,9 @@
 									>
 										{#each Object.entries(parsed.breakdown) as [key, value]}
 											<span
-											>{BREAKDOWN_LABELS[key as keyof ScoreBreakdown] ?? key}
-											{breakdownValue(key, value)}</span
-										>
+												>{BREAKDOWN_LABELS[key as keyof ScoreBreakdown] ?? key}
+												{breakdownValue(key, value)}</span
+											>
 										{/each}
 									</div>
 								{/if}

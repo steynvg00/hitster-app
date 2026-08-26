@@ -79,7 +79,10 @@ export async function awardCrownPayout(admin: AdminClient, setId: string): Promi
 	if (!team) return;
 
 	await Promise.all([
-		admin.from('teams').update({ score: team.score + 2 }).eq('id', teamId),
+		admin
+			.from('teams')
+			.update({ score: team.score + 2 })
+			.eq('id', teamId),
 		admin
 			.from('game_sets')
 			.update({ crown_payout_applied: true } as never)
@@ -88,74 +91,6 @@ export async function awardCrownPayout(admin: AdminClient, setId: string): Promi
 			team_id: teamId,
 			event_type: 'crown_payout',
 			payload: { team_id: teamId, points: 2 }
-		} as never)
-	]);
-}
-
-/**
- * Batch crown recompute after a Battle Mode resolution added ladder bonuses to
- * several teams at once. The pairwise maybeTransferCrown mis-fires here — called
- * per team over simultaneous adds it would let the crown "bounce" and pay
- * multiple +1 steals in one round. Instead: the caller applies ALL ladder adds
- * first, then this determines the single top-total team and transfers once.
- *
- * Semantics match maybeTransferCrown (strict overtake, ties keep the holder):
- * transfer only when some team's post-add total STRICTLY exceeds the current
- * holder's. On transfer the new leader gets the +1 steal bonus (user's decision)
- * — which only widens their already-decided lead, so it can't reorder the
- * ranking or trigger a second bounce. Logged as crown_stolen with via:'battle'
- * so /admin/live can label a battle-driven crown move distinctly.
- *
- * `teamIds` must be in getTeamsInSet (TEAM_COLOR_ORDER) order — on a tie for the
- * top total, the first such team wins deterministically.
- */
-export async function recomputeCrownAfterBattle(
-	admin: AdminClient,
-	setId: string,
-	teamIds: string[]
-): Promise<void> {
-	if (teamIds.length === 0) return;
-
-	const { data: gs } = await admin
-		.from('game_sets')
-		.select('crown_holder_team_id')
-		.eq('id', setId)
-		.maybeSingle();
-	if (!gs) return;
-	const currentHolder = gs.crown_holder_team_id;
-
-	const { data: teams } = await admin.from('teams').select('id, score').in('id', teamIds);
-	if (!teams?.length) return;
-	const scoreById = new Map(teams.map((t) => [t.id, t.score]));
-
-	const maxScore = Math.max(...teams.map((t) => t.score));
-	const holderScore = currentHolder ? (scoreById.get(currentHolder) ?? -Infinity) : -Infinity;
-
-	// Holder still (co-)leads → no transfer (ties keep the holder, strict overtake).
-	if (holderScore >= maxScore) return;
-
-	// New leader = first team in TEAM_COLOR_ORDER holding the top total (deterministic).
-	const newLeaderId = teamIds.find((id) => (scoreById.get(id) ?? -Infinity) === maxScore);
-	if (!newLeaderId || newLeaderId === currentHolder) return;
-
-	await Promise.all([
-		admin
-			.from('game_sets')
-			.update({ crown_holder_team_id: newLeaderId } as never)
-			.eq('id', setId),
-		admin
-			.from('teams')
-			.update({ score: maxScore + 1 })
-			.eq('id', newLeaderId),
-		admin.from('activity_log').insert({
-			team_id: newLeaderId,
-			event_type: 'crown_stolen',
-			payload: {
-				from_team_id: currentHolder,
-				to_team_id: newLeaderId,
-				score: maxScore,
-				via: 'battle'
-			}
 		} as never)
 	]);
 }

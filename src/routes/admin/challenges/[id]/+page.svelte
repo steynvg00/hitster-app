@@ -218,9 +218,9 @@
 			</div>
 		</form>
 
-		<!-- Battle mode is a single derived-ladder value now, so it lives here
-		     rather than as its own section; it has its own debounced save
-		     (?/saveBattle), separate from the updateMeta form above. -->
+		<!-- Battle mode is één schakelaar, dus die staat hier in plaats van in een
+		     eigen sectie; hij heeft zijn eigen debounced save (?/saveBattle),
+		     los van het updateMeta-formulier hierboven. -->
 		<div class="mt-4 border-t border-zinc-800 pt-4">
 			<BattleEditor battleConfig={data.battleConfig} />
 		</div>

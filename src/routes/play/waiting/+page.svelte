@@ -197,12 +197,12 @@
 		</div>
 
 		{#if inBattlePhase}
-			<!-- Battle-fase (stuk 3c): de head-to-heads gaan vóór het podium. -->
+			<!-- Battle-fase: de ranglijsten per battle gaan vóór het podium. -->
 			<h1 class="wait__title">Battles worden beslist</h1>
 			<p class="wait__lede">
 				{revealedBattles.length === 0
 					? 'De host onthult zo de battles'
-					: 'Bonuspunten uit de onderlinge duels'}
+					: 'Wie scoorde het hoogst op deze challenge?'}
 			</p>
 		{:else if revealCardDismissed}
 			<!-- Post-reveal (ceremoniebron 02): jullie plek staat vast. -->
