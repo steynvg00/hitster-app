@@ -407,7 +407,13 @@
 		align-items: center;
 		height: 100%;
 		box-sizing: border-box;
-		padding: calc(24 * var(--u)) calc(24 * var(--u)) 0;
+		/* De .podium-achtergrond loopt door tot achter de island en de
+		   browserbalk (viewport-fit=cover); de inhoud blijft er met de
+		   safe-area-insets vandaan. In portret zonder insets is dit exact de
+		   oude 24u-padding. */
+		padding: calc(24 * var(--u) + env(safe-area-inset-top, 0px))
+			calc(24 * var(--u) + env(safe-area-inset-right, 0px)) env(safe-area-inset-bottom, 0px)
+			calc(24 * var(--u) + env(safe-area-inset-left, 0px));
 	}
 
 	/* ── Kop ────────────────────────────────────────────────────── */
