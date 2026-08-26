@@ -203,15 +203,32 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 
 				if (setChallenges && setChallenges.length > 0) {
 					const challengeIds = setChallenges.map((sc) => sc.challenge_id);
-					setTotalCount = challengeIds.length;
 
 					// title + timer_seconds are for the Resurrection picker below (which
 					// names the challenge and states its retry clock); variant drives the
-					// tutorial lookup as before.
+					// tutorial lookup as before. `status` voedt de teller hieronder.
 					const { data: setChallengeRows } = await admin
 						.from('challenges')
-						.select('id, variant, title, timer_seconds')
+						.select('id, variant, title, timer_seconds, status')
 						.in('id', challengeIds);
+
+					// ── De "x/y KLAAR"-teller ──────────────────────────────────────────
+					// y is DATA, geen vast getal: alleen de challenges die daadwerkelijk
+					// speelbaar zijn tellen mee. Een set met een challenge op `draft`
+					// telde die wél in de noemer maar toonde hem niet in de lijst
+					// eronder — die lijst gaat via de anon-client en RLS filtert daar op
+					// `is_active` ("public read active challenges", 0001_initial.sql) —
+					// waardoor een team nooit op y/y kon uitkomen, ook niet als het
+					// alles speelde.
+					//
+					// De admin houdt beide kolommen gelijk (`is_active: status ===
+					// 'active'`, admin/challenges/[id]/+page.server.ts), dus deze telling
+					// en die lijst zien dezelfde verzameling. Zet de host de Mashup later
+					// op active, dan telt de noemer vanzelf mee — zonder codewijziging.
+					const playableIds = new Set(
+						(setChallengeRows ?? []).filter((c) => c.status === 'active').map((c) => c.id)
+					);
+					setTotalCount = playableIds.size;
 
 					const variants = [...new Set((setChallengeRows ?? []).map((c) => c.variant))];
 
@@ -234,7 +251,13 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 						.eq('team_id', locals.teamId)
 						.eq('is_final', true)
 						.in('challenge_id', challengeIds);
-					setCompletedCount = (teamSubs ?? []).length;
+					// Teller-helft: alleen inzendingen op een speelbare challenge, anders
+					// kan een challenge die ná het spelen op draft gaat 6/5 opleveren.
+					// De rijen zelf blijven ongefilterd — de Resurrection-picker hieronder
+					// mag wél naar alles wat dit team echt heeft afgerond.
+					setCompletedCount = (teamSubs ?? []).filter((s) =>
+						playableIds.has(s.challenge_id)
+					).length;
 
 					// ── Resurrection picker data ───────────────────────────────────────
 					// Exactly the challenges this powerup can act on: the team's own, with
