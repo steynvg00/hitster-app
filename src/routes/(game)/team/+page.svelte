@@ -6,7 +6,7 @@
 	import PlayerScreen from '$lib/components/game/PlayerScreen.svelte';
 	import { ICON_ASSETS, RANK_ASSETS } from '$lib/mixup-assets';
 	import { teamBanner, teamGlow, teamHex, teamOnColor } from '$lib/team-theme';
-	import { getTypeLogo } from '$lib/variants';
+	import { getChallengeLogo } from '$lib/variants';
 	import { wearsCrown } from '$lib/standings';
 	import TutorialOverlay from '$lib/components/game/TutorialOverlay.svelte';
 	import HeldPowerups from '$lib/components/game/HeldPowerups.svelte';
@@ -462,7 +462,7 @@
 			{:else}
 				{#each data.challenges as ch (ch.id)}
 					{@const locked = isLocked(ch.id)}
-					{@const logo = getTypeLogo(ch.variant)}
+					{@const logo = getChallengeLogo(ch.variant, ch.title)}
 					<div
 						class="hub-card flex items-center gap-2.5 rounded-mixup-card squircle"
 						style="opacity: {locked ? 0.55 : 1};"
