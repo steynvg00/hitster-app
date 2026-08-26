@@ -589,11 +589,30 @@
 		object-fit: cover;
 	}
 
+	/* Rond, ongeacht de bronverhouding. De spelersfoto is een rauwe
+	   telefoonfoto (4:3 of 3:4, vaak met EXIF-rotatie) — anders dan de
+	   teamfoto wordt die NIET vierkant gecropt voor upload. Daarom staat de
+	   vorm hier volledig vast in plaats van alleen via width+height:
+	   - aspect-ratio: 1 houdt de doos vierkant ook als een van beide maten
+	     alsnog wordt overruled (Tailwind preflight zet img{max-width:100%;
+	     height:auto} — die max-width bijt zodra de avatarrij smaller wordt
+	     dan 30px, en dan wordt een border-radius:50% een ovaal);
+	   - min-/max-width en -height pinnen de 30px tegen flexberekeningen;
+	   - flex-basis 30px i.p.v. auto zodat de intrinsieke beeldmaat nooit
+	     meedoet in de rij.
+	   Vergelijk .onb-photo op de onboardingpagina: die is wel goed omdat de
+	   foto daar in een vaste vierkante WRAPPER zit met h-full w-full. */
 	.lobby-av {
 		width: 30px;
 		height: 30px;
+		min-width: 30px;
+		max-width: 30px;
+		min-height: 30px;
+		max-height: 30px;
+		aspect-ratio: 1 / 1;
 		border-radius: 50%;
 		object-fit: cover;
+		object-position: center;
 		border: 2px solid rgba(229, 242, 255, 0.6);
 		display: inline-flex;
 		align-items: center;
@@ -602,7 +621,7 @@
 		font-weight: 800;
 		font-size: 10px;
 		margin-left: -6px;
-		flex: 0 0 auto;
+		flex: 0 0 30px;
 	}
 
 	.wait-dot {
