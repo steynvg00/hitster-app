@@ -546,8 +546,13 @@
 		margin-left: auto;
 		flex: 0 0 auto;
 		object-fit: contain;
-		filter: drop-shadow(0 6px 20px rgba(0, 0, 0, 0.5))
-			drop-shadow(0 0 24px rgba(255, 215, 94, 0.45));
+		/* Alleen de gouden gloed. De zwarte drop-shadow die hier stond
+		   (0 6px 20px rgba(0,0,0,0.5)) is ontworpen voor de kroon op een DONKERE
+		   ondergrond (podium); op het felle teamkleur-vlak van deze banner werd
+		   het een vage donkere veeg onder de kroon die pas bij de onderrand van
+		   de banner uitdooft — de "onafgewerkte rand". Gemeten: tot 12/255
+		   donkerder vlak onder de kroonvoet. */
+		filter: drop-shadow(0 0 24px rgba(255, 215, 94, 0.45));
 	}
 
 	.hub-scroll {
