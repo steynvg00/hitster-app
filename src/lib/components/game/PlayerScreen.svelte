@@ -28,6 +28,22 @@
 		 * waardoor de voet uit beeld loopt.
 		 */
 		fitViewport?: boolean;
+		/**
+		 * Het scherm groeit mee met zijn inhoud en de PAGINA scrolt als geheel —
+		 * het tegenovergestelde van `fitViewport`.
+		 *
+		 * Nodig zodra een scherm `position: sticky` gebruikt: de schil heeft van
+		 * huis uit `overflow: hidden`, en dat maakt hem het scrollvoorouder van
+		 * alles erin. Sticky elementen plakken dan aan een doos die zelf niet
+		 * scrolt en bewegen dus nooit. Deze stand zet daar `overflow-x: clip` voor
+		 * in de plaats: clip klemt de breedte af zonder scrollvoorouder te worden,
+		 * dus sticky blijft werken.
+		 *
+		 * De kristal-hoeken worden hier `fixed`: bij een pagina die twee schermen
+		 * hoog is moet die rand een rand van het VENSTER blijven, niet uitgerekt
+		 * worden over de hele hoogte.
+		 */
+		pageScroll?: boolean;
 		class?: string;
 		children?: Snippet;
 	};
@@ -38,12 +54,17 @@
 		corners = 0.35,
 		backdrop = null,
 		fitViewport = false,
+		pageScroll = false,
 		class: className = '',
 		children
 	}: Props = $props();
 </script>
 
-<div class="player-screen mixup-page" class:player-screen--fit={fitViewport}>
+<div
+	class="player-screen mixup-page"
+	class:player-screen--fit={fitViewport}
+	class:player-screen--page-scroll={pageScroll}
+>
 	{#if rain}
 		<CodeRain {layers} />
 	{/if}
@@ -54,7 +75,9 @@
 		src={OVERLAY_ASSETS.frameCorners}
 		alt=""
 		aria-hidden="true"
-		class="pointer-events-none absolute inset-0 h-full w-full object-cover"
+		class="pointer-events-none {pageScroll
+			? 'fixed'
+			: 'absolute'} inset-0 h-full w-full object-cover"
 		style="opacity: {corners};"
 	/>
 	<div class="player-screen__body {className}">
@@ -92,6 +115,14 @@
 	.player-screen--fit {
 		height: 100svh;
 		max-height: 100svh;
+	}
+
+	/* Zie de prop-documentatie: clip in plaats van hidden, zodat sticky werkt.
+	   `overflow-y: visible` naast `overflow-x: clip` is de enige combinatie die
+	   de ene as laat klemmen en de andere echt vrij laat. */
+	.player-screen--page-scroll {
+		overflow-x: clip;
+		overflow-y: visible;
 	}
 
 	.player-screen__body {

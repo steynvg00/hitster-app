@@ -1153,6 +1153,35 @@
 		}
 	});
 
+	/* ── Toetsenbord-inzet voor de sticky powerup-balk ────────────────────────
+	   De balk is een harde eis: altijd zichtbaar en klikbaar. `position: sticky;
+	   bottom: 0` levert dat overal — behalve op iOS met een open toetsenbord.
+	   Daar krimpt het layout-viewport niet mee, dus alles wat aan de onderkant
+	   hangt verdwijnt achter het toetsenbord.
+
+	   visualViewport weet wél hoeveel er bedekt is. Die hoogte gaat als
+	   `--kb-inset` naar de balk, die er dan precies bovenop komt te staan.
+	   Browsers zonder visualViewport houden 0 en gedragen zich als voorheen. */
+	onMount(() => {
+		const vv = window.visualViewport;
+		if (!vv) return;
+		const root = document.documentElement;
+		const update = () => {
+			const covered = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+			// Onder de ~80px is het geen toetsenbord maar de in-/uitklappende
+			// adresbalk; die mag de balk niet laten wiebelen tijdens het scrollen.
+			root.style.setProperty('--kb-inset', covered > 80 ? `${Math.round(covered)}px` : '0px');
+		};
+		update();
+		vv.addEventListener('resize', update);
+		vv.addEventListener('scroll', update);
+		return () => {
+			vv.removeEventListener('resize', update);
+			vv.removeEventListener('scroll', update);
+			root.style.removeProperty('--kb-inset');
+		};
+	});
+
 	// ── Tutorial overlay ──────────────────────────────────────────────────────
 	let showTutorial = $state(false);
 	const tutorialEntry = $derived(
@@ -1826,11 +1855,13 @@
 		horen er via het standaard `form="challenge-answer-form"`-attribuut nog
 		steeds bij. Voor de browser is dat exact dezelfde submit.
 	-->
-	<!-- fitViewport: 7B is het enige scherm met een eigen scrollgebied (de
-	     antwoordkaart) én een vaste voet. Zonder vaste viewporthoogte groeit de
-	     kolom met de inhoud mee, scrollt de pagina in plaats van de kaart, en
-	     lopen de powerup-rij en de knoppenbalk uit beeld. -->
-	<PlayerScreen fitViewport>
+	<!-- pageScroll: de antwoordkaart scrolt NIET meer intern. Zij groeit tot haar
+	     natuurlijke hoogte en de PAGINA scrolt als geheel, zodat "de knop
+	     bereiken" hetzelfde is als "alle velden gezien hebben" — een jaarslider
+	     onder de vouw werd anders gemist en dat kostte punten. Wat bereikbaar
+	     moet blijven, blijft dat via sticky: de kop met de klok en de audiokaart
+	     bovenaan, de powerup-balk onderaan. -->
+	<PlayerScreen pageScroll class="answer-screen">
 		<!-- Freeze overlay (stuk 2): blocking frost layer, clears itself after 30s
 		     client-side — no server round-trip, it's a marker row only. De
 		     vormgeving zit sinds fase 4 in FreezeOverlay; `freezeUntil` en
@@ -1870,92 +1901,99 @@
 			</div>
 		{/if}
 
-		<!-- Teampil + klok -->
-		<div class="flex items-center justify-between px-5">
-			<span class="flex items-center gap-[7px] rounded-full px-3 py-1.5 mixup-glass squircle">
-				<span
-					class="h-2.5 w-2.5 rounded-full"
-					style="background: {teamHex}; box-shadow: 0 0 10px {teamHex};"
-				></span>
-				<span class="text-[11px] font-extrabold tracking-[0.1em] text-mixup-paper uppercase"
-					>{data.team.display_name}</span
-				>
-			</span>
-			<div class="flex items-center gap-2">
-				{#if tutorialEntry.length > 0}
-					<button
-						type="button"
-						onclick={() => (showTutorial = true)}
-						aria-label="Uitleg"
-						class="flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold squircle"
-						style="background: {teamHex}22; color: {teamHex}; border: 1px solid {teamHex}44;"
-						>ⓘ</button
+		<!--
+			STICKY BOVENZONE — kop (teampil + klok) · segmentbalk · audiokaart.
+
+			Waarom deze drie: het zijn de instrumenten van het scherm. De klok mag
+			nooit wegscrollen (een team dat de tijd niet ziet verliest punten door
+			layout — precies het probleem dat we oplossen), de segmentbalk wisselt
+			van track, en de audiokaart moet bereikbaar blijven om opnieuw te
+			luisteren zonder eerst terug te scrollen.
+
+			De TITEL zit er bewust niet in en staat nu ónder deze zone: die is
+			identiteit, geen instrument, en kost op 34px meer verticale ruimte dan
+			hij in het krapste geval waard is. Dat is de enige afwijking van de
+			volgorde uit de designbron.
+		-->
+		<div class="stick-top">
+			<!-- Teampil + klok -->
+			<div class="flex items-center justify-between px-5">
+				<span class="flex items-center gap-[7px] rounded-full px-3 py-1.5 mixup-glass squircle">
+					<span
+						class="h-2.5 w-2.5 rounded-full"
+						style="background: {teamHex}; box-shadow: 0 0 10px {teamHex};"
+					></span>
+					<span class="text-[11px] font-extrabold tracking-[0.1em] text-mixup-paper uppercase"
+						>{data.team.display_name}</span
 					>
-				{/if}
-				{#if data.challenge.hint_text && data.hintUsed}
-					<button
-						type="button"
-						onclick={() => (showHintModal = true)}
-						aria-label="Hint"
-						class="flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold squircle"
-						style="background: {teamHex}22; color: {teamHex}; border: 1px solid {teamHex}44;"
-						>💡</button
-					>
-				{/if}
-				<!-- Persistent re-open, the same shape the Hint button uses: once the Eye
+				</span>
+				<div class="flex items-center gap-2">
+					{#if tutorialEntry.length > 0}
+						<button
+							type="button"
+							onclick={() => (showTutorial = true)}
+							aria-label="Uitleg"
+							class="flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold squircle"
+							style="background: {teamHex}22; color: {teamHex}; border: 1px solid {teamHex}44;"
+							>ⓘ</button
+						>
+					{/if}
+					{#if data.challenge.hint_text && data.hintUsed}
+						<button
+							type="button"
+							onclick={() => (showHintModal = true)}
+							aria-label="Hint"
+							class="flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold squircle"
+							style="background: {teamHex}22; color: {teamHex}; border: 1px solid {teamHex}44;"
+							>💡</button
+						>
+					{/if}
+					<!-- Persistent re-open, the same shape the Hint button uses: once the Eye
 				     has been opened on this challenge the snapshot stays available for the
 				     rest of it, rather than being a one-shot the player can lose. -->
-				{#if eyeTeams.length}
-					<button
-						type="button"
-						onclick={() => (showEyeModal = true)}
-						aria-label="All-seeing eye"
-						class="flex h-8 w-8 items-center justify-center rounded-full border border-mixup-violet/50 bg-mixup-violet/15 text-xs font-bold text-mixup-violet squircle"
-						>👁️</button
-					>
-				{/if}
-				{#if timerMs !== null}
-					<span
-						class="text-[28px] leading-none font-bold tabular-nums"
-						style="color: {timerColor}; text-shadow: 0 0 16px {timerGlow};">{fmtMs(timerMs)}</span
-					>
-				{/if}
+					{#if eyeTeams.length}
+						<button
+							type="button"
+							onclick={() => (showEyeModal = true)}
+							aria-label="All-seeing eye"
+							class="flex h-8 w-8 items-center justify-center rounded-full border border-mixup-violet/50 bg-mixup-violet/15 text-xs font-bold text-mixup-violet squircle"
+							>👁️</button
+						>
+					{/if}
+					{#if timerMs !== null}
+						<span
+							class="text-[28px] leading-none font-bold tabular-nums"
+							style="color: {timerColor}; text-shadow: 0 0 16px {timerGlow};">{fmtMs(timerMs)}</span
+						>
+					{/if}
+				</div>
 			</div>
-		</div>
 
-		<!-- Titel — alleen de challenge-naam, zie `challengeTitle`. -->
-		<h1
-			class="px-5 pt-2.5 font-display text-[34px] leading-[0.95] font-black text-mixup-paper uppercase"
-			style="text-shadow: 0 0 26px rgba(124,77,255,0.85);"
-		>
-			{challengeTitle}
-		</h1>
-
-		<!-- Segmentbalk: horizontaal scrollend, min-width 96px per tab, werkt bij
+			<!-- Segmentbalk: horizontaal scrollend, min-width 96px per tab, werkt bij
 		     élk aantal tracks. Voedt exact dezelfde goToTab()/toggleDoubt() als
 		     de oude tabstrip. -->
-		{#if isMultiTab}
-			<div class="px-5 pt-3 pb-2.5">
-				<TrackSegmentBar
-					count={data.tabs.length}
-					activeIndex={activeTabIndex}
-					fillStatus={tabFillStatus}
-					doubt={doubtTabs}
-					hex={teamHex}
-					onColor={teamOn}
-					onselect={goToTab}
-					ontoggledoubt={toggleDoubt}
-				/>
-			</div>
-		{/if}
+			{#if isMultiTab}
+				<div class="px-5 pt-3 pb-2.5">
+					<TrackSegmentBar
+						count={data.tabs.length}
+						activeIndex={activeTabIndex}
+						fillStatus={tabFillStatus}
+						doubt={doubtTabs}
+						hex={teamHex}
+						onColor={teamOn}
+						onselect={goToTab}
+						ontoggledoubt={toggleDoubt}
+					/>
+				</div>
+			{/if}
 
-		<!-- Audiokaart -->
-		<div
-			class="mx-5 mb-2.5 rounded-mixup-lg px-3.5 py-3 mixup-glass-strong squircle"
-			style="background: linear-gradient(135deg, rgba(229,242,255,0.10), rgba(229,242,255,0.03));"
-		>
-			{#if activeTab && activeTab.clips.length > 1}
-				<!--
+			<!-- Audiokaart -->
+			<div
+				class="mx-5 mb-2.5 rounded-mixup-lg px-3.5 py-3 mixup-glass-strong squircle"
+				style="background: linear-gradient(135deg, rgba(229,242,255,0.10), rgba(229,242,255,0.03));"
+			>
+				{#if activeTab && activeTab.clips.length > 1}
+					<!--
 					Numbered clip strip at top. Was fragments-only; C2 un-gates it for any
 					tab with >1 clip (standard/anthem/label tabs can now hold 2-3 ordered
 					clips — a break/mid/climax — via StandardEditor). The `.length > 1`
@@ -1963,73 +2001,86 @@
 					single-clip tab (normal, mashup, effects), so no separate variant
 					check is needed to protect that regression.
 				-->
-				<div class="mb-3 flex flex-wrap gap-1.5">
-					{#each activeTab.clips as clipItem, ci}
-						<button
-							type="button"
-							onclick={() => {
-								activeClipIndex = ci;
-								isPlaying = false;
-							}}
-							class="rounded-mixup-chip px-3 py-1.5 text-xs font-bold transition-colors squircle"
-							style={activeClipIndex === ci
-								? `background: ${teamHex}; color: ${teamOn}; border: 1px solid ${teamHex};`
-								: 'background: rgba(229,242,255,0.05); color: #9FB1D9; border: 1px solid rgba(229,242,255,0.16);'}
-						>
-							{isFragments ? `Fragment ${clipItem.fragmentNumber ?? ci + 1}` : `Deel ${ci + 1}`}
-						</button>
-					{/each}
-				</div>
-			{/if}
+					<div class="mb-3 flex flex-wrap gap-1.5">
+						{#each activeTab.clips as clipItem, ci}
+							<button
+								type="button"
+								onclick={() => {
+									activeClipIndex = ci;
+									isPlaying = false;
+								}}
+								class="rounded-mixup-chip px-3 py-1.5 text-xs font-bold transition-colors squircle"
+								style={activeClipIndex === ci
+									? `background: ${teamHex}; color: ${teamOn}; border: 1px solid ${teamHex};`
+									: 'background: rgba(229,242,255,0.05); color: #9FB1D9; border: 1px solid rgba(229,242,255,0.16);'}
+							>
+								{isFragments ? `Fragment ${clipItem.fragmentNumber ?? ci + 1}` : `Deel ${ci + 1}`}
+							</button>
+						{/each}
+					</div>
+				{/if}
 
-			<div class="flex items-center gap-3">
-				<!-- Play-knop in de teamkleur — 56px, witte ring, gloed in dezelfde kleur. -->
-				<button
-					type="button"
-					onclick={togglePlay}
-					class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full transition-transform active:scale-95"
-					style="background: {teamHex}; border: 2px solid rgba(229,242,255,0.5); box-shadow: 0 0 22px {teamHex}88; color: {teamOn};"
-					aria-label={isPlaying ? 'Pauze' : 'Afspelen'}
-				>
-					{#if isPlaying}
-						<svg class="h-5 w-5" fill="currentColor" viewBox="0 0 20 20"
-							><rect x="5" y="4" width="3" height="12" rx="1" /><rect
-								x="12"
-								y="4"
-								width="3"
-								height="12"
-								rx="1"
-							/></svg
-						>
-					{:else}
-						<svg class="ml-0.5 h-5 w-5" fill="currentColor" viewBox="0 0 20 20"
-							><path
-								d="M6.3 2.841A1.5 1.5 0 004 4.11v11.78a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"
-							/></svg
-						>
-					{/if}
-				</button>
-				<div class="min-w-0 flex-1 space-y-1">
-					{#key `${activeTabIndex}-${activeClipIndex}`}
-						<Waveform
-							bind:this={waveformRef}
-							src={activeTab?.clips[activeClipIndex]?.clipUrl ?? activeTab?.primaryClipUrl ?? ''}
-							height={34}
-							progressColor={teamHex}
-							effects={activeTab?.clips[activeClipIndex]?.effects ??
-								activeTab?.primaryClipEffects ??
-								undefined}
-							onPlayStateChange={(p) => (isPlaying = p)}
-							onTimeUpdate={(t, d) => {
-								currentTime = t;
-								duration = d;
-							}}
-						/>
-					{/key}
+				<div class="flex items-center gap-3">
+					<!-- Play-knop in de teamkleur — 56px, witte ring, gloed in dezelfde kleur. -->
+					<button
+						type="button"
+						onclick={togglePlay}
+						class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full transition-transform active:scale-95"
+						style="background: {teamHex}; border: 2px solid rgba(229,242,255,0.5); box-shadow: 0 0 22px {teamHex}88; color: {teamOn};"
+						aria-label={isPlaying ? 'Pauze' : 'Afspelen'}
+					>
+						{#if isPlaying}
+							<svg class="h-5 w-5" fill="currentColor" viewBox="0 0 20 20"
+								><rect x="5" y="4" width="3" height="12" rx="1" /><rect
+									x="12"
+									y="4"
+									width="3"
+									height="12"
+									rx="1"
+								/></svg
+							>
+						{:else}
+							<svg class="ml-0.5 h-5 w-5" fill="currentColor" viewBox="0 0 20 20"
+								><path
+									d="M6.3 2.841A1.5 1.5 0 004 4.11v11.78a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"
+								/></svg
+							>
+						{/if}
+					</button>
+					<div class="min-w-0 flex-1 space-y-1">
+						{#key `${activeTabIndex}-${activeClipIndex}`}
+							<Waveform
+								bind:this={waveformRef}
+								src={activeTab?.clips[activeClipIndex]?.clipUrl ?? activeTab?.primaryClipUrl ?? ''}
+								height={34}
+								progressColor={teamHex}
+								effects={activeTab?.clips[activeClipIndex]?.effects ??
+									activeTab?.primaryClipEffects ??
+									undefined}
+								onPlayStateChange={(p) => (isPlaying = p)}
+								onTimeUpdate={(t, d) => {
+									currentTime = t;
+									duration = d;
+								}}
+							/>
+						{/key}
+					</div>
+					<span class="shrink-0 font-data text-[11px] font-medium text-mixup-muted"
+						>{timeLabel}</span
+					>
 				</div>
-				<span class="shrink-0 font-data text-[11px] font-medium text-mixup-muted">{timeLabel}</span>
 			</div>
+			<!-- /stick-top -->
 		</div>
+
+		<!-- Titel — alleen de challenge-naam, zie `challengeTitle`. Staat sinds de
+		     paginascroll ónder de sticky bovenzone en scrolt dus gewoon weg. -->
+		<h1
+			class="px-5 pt-2.5 pb-1 font-display text-[34px] leading-[0.95] font-black text-mixup-paper uppercase"
+			style="text-shadow: 0 0 26px rgba(124,77,255,0.85);"
+		>
+			{challengeTitle}
+		</h1>
 
 		{#if data.activeSetId}
 			<IncomingEffectsListener
@@ -2080,7 +2131,7 @@
 					submitting = false;
 				};
 			}}
-			class="mx-4 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto rounded-mixup-hero p-4 mixup-glass-strong squircle {isFrozen
+			class="mx-4 flex flex-col gap-3 rounded-mixup-hero p-4 mixup-glass-strong squircle {isFrozen
 				? 'pointer-events-none opacity-40'
 				: ''}"
 			style="background: linear-gradient(135deg, rgba(229,242,255,0.10), rgba(229,242,255,0.03));"
@@ -2363,9 +2414,17 @@
 			{/key}
 		</form>
 
-		<!-- Powerup-rij — buiten de antwoord-<form>, zie de noot bovenaan. -->
+		<!--
+			Powerup-rij — buiten de antwoord-<form>, zie de noot bovenaan.
+
+			STICKY ONDERAAN (harde eis): de balk moet altijd zichtbaar en klikbaar
+			blijven terwijl de pagina scrolt. `bottom: var(--kb-inset)` houdt hem op
+			iOS bóven het toetsenbord in plaats van erachter — zie het
+			visualViewport-effect in het script. Onderaan de pagina zakt hij vanzelf
+			terug op zijn eigen plek, net boven de knoppenrij.
+		-->
 		{#if data.activeSetId && data.heldPowerups}
-			<div class="flex items-center gap-2 px-5 pt-2.5">
+			<div class="pu-bar flex items-center gap-2 px-5">
 				<span
 					class="shrink-0 text-[9px] font-extrabold tracking-[0.18em] text-mixup-yellow uppercase"
 					>Powerups</span
@@ -2404,7 +2463,7 @@
 			calls formEl.requestSubmit() with no submitter, which submits the form
 			itself from whatever tab the team is parked on.
 		-->
-		<div class="flex gap-2.5 px-4 pt-3">
+		<div class="flex gap-2.5 px-4 pt-3 pb-2">
 			{#if isMultiTab}
 				{#if activeTabIndex > 0}
 					<button
@@ -2450,3 +2509,44 @@
 		</div>
 	</PlayerScreen>
 {/if}
+
+<style>
+	/* ══ Scherm 7B · paginascroll met vaste instrumenten ═══════════════════════
+	   De antwoordkaart scrolt niet meer intern; de pagina scrolt als geheel, dus
+	   de knoppenrij onderaan de flow is pas bereikbaar als élk antwoordveld
+	   gepasseerd is. Wat daarbij niet weg mag scrollen, staat hieronder. */
+
+	/* Kop (teampil + klok) · segmentbalk · audiokaart.
+	   `top: 0` plakt aan de bovenkant van het VENSTER, dus de eigen padding-top
+	   van PlayerScreen telt daar niet meer mee: de safe-area-marge zit hier in de
+	   zone zelf, anders schuift de klok onder de notch. De achtergrond is
+	   ondoorzichtig (geen glas): er scrolt tekst onderdoor. */
+	.stick-top {
+		position: sticky;
+		top: 0;
+		z-index: 30;
+		padding-top: env(safe-area-inset-top, 0px);
+		padding-bottom: 8px;
+		background: linear-gradient(180deg, #0b0b1f 78%, rgba(11, 11, 31, 0.94) 100%);
+		box-shadow: 0 10px 22px rgba(11, 11, 31, 0.55);
+	}
+
+	/* Powerup-balk. Hoger z-index dan de bovenzone: ze raken elkaar ruimtelijk
+	   nooit (boven vs. onder), en zo kan de bovenzone nooit over iets heen
+	   schilderen dat vanuit deze balk opengaat. `bottom: var(--kb-inset)` tilt
+	   hem op iOS boven het toetsenbord — zie het visualViewport-effect. Aan het
+	   eind van de pagina zakt hij vanzelf terug op zijn eigen plek, net boven de
+	   knoppenrij. */
+	.pu-bar {
+		position: sticky;
+		bottom: var(--kb-inset, 0px);
+		z-index: 40;
+		padding-top: 8px;
+		/* Sticky-offsets tellen vanaf de VENSTERrand, niet vanaf de padding van de
+		   schil. De home-indicator-marge moet daarom hier zitten: achtergrond tot
+		   de rand, inhoud erboven. */
+		padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
+		background: linear-gradient(0deg, #0b0b1f 78%, rgba(11, 11, 31, 0.94) 100%);
+		box-shadow: 0 -10px 22px rgba(11, 11, 31, 0.55);
+	}
+</style>
