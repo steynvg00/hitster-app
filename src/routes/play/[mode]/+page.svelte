@@ -47,111 +47,130 @@
 	<title>{isTeams ? 'Doe mee' : 'Solo spelen'} — M!XUP</title>
 </svelte:head>
 
-<PlayerScreen rain corners={0.4} class="px-5">
-	{#if data.gamesetLogo}
-		<!-- State (a): gameset-logo bovenaan -->
-		<img
-			src={data.gamesetLogo}
-			alt="Gameset"
-			class="mt-3 w-[200px] self-center object-contain"
-			style="mix-blend-mode: screen;"
-		/>
-	{/if}
-
-	<div class="flex min-h-0 flex-1 items-center justify-center" class:pt-5={!data.gamesetLogo}>
-		<img
-			src={MIXUP_LOGO}
-			alt="M!XUP"
-			class="max-h-full w-full object-contain"
-			style="filter: drop-shadow(0 0 40px rgba(124, 77, 255, 0.65));"
-		/>
-	</div>
-
-	{#if form?.error}
-		<div
-			class="mb-3 rounded-mixup-sm border border-[rgba(255,59,74,0.5)] bg-[rgba(255,59,74,0.12)] px-4 py-3 text-sm text-[#FF6FC4] squircle"
-		>
-			{form.error}
-		</div>
-	{/if}
-
-	<form
-		method="POST"
-		enctype="multipart/form-data"
-		use:enhance={({ formData }) => {
-			if (photoFile) formData.set('photo', photoFile, photoFile.name);
-			submitting = true;
-			return async ({ update }) => {
-				submitting = false;
-				await update();
-			};
-		}}
-	>
-		{#if data.next}
-			<input type="hidden" name="next" value={data.next} />
+<!--
+	zelfde aanpak als de team-reveal-fix: vaste 100dvh om de PlayerScreen heen,
+	zodat dit scherm nooit scrolt terwijl er niets te scrollen valt. dvh volgt
+	de iOS-adresbalk; svh/vh niet.
+-->
+<div class="onb-viewport">
+	<PlayerScreen rain corners={0.4} class="px-5">
+		{#if data.gamesetLogo}
+			<!-- State (a): gameset-logo bovenaan -->
+			<img
+				src={data.gamesetLogo}
+				alt="Gameset"
+				class="mt-3 w-[200px] self-center object-contain"
+				style="mix-blend-mode: screen;"
+			/>
 		{/if}
 
-		<!-- Glaskaart met fotocirkel + naamveld -->
-		<div class="onb-card mb-[18px] rounded-mixup-hero squircle">
-			<button
-				type="button"
-				class="onb-photo"
-				class:onb-photo--filled={hasPhoto}
-				onclick={() => (photoOpen = !photoOpen)}
-				aria-label="Profielfoto toevoegen"
-			>
-				{#if photoPreviewUrl}
-					<img src={photoPreviewUrl} alt="" class="h-full w-full rounded-full object-cover" />
-				{:else}
-					+
-				{/if}
-			</button>
-
-			<div class="text-[11px] font-bold tracking-[0.12em] text-mixup-muted">{photoHint}</div>
-
-			{#if photoOpen}
-				<div class="onb-sources flex w-full gap-2">
-					<label class="onb-source rounded-mixup-chip squircle">
-						📷 CAMERA
-						<input
-							type="file"
-							accept="image/*"
-							capture="user"
-							class="sr-only"
-							onchange={handleFileChange}
-						/>
-					</label>
-					<label class="onb-source rounded-mixup-chip squircle">
-						🖼 GALERIJ
-						<input type="file" accept="image/*" class="sr-only" onchange={handleFileChange} />
-					</label>
-				</div>
-			{/if}
-
-			<input
-				name="name"
-				type="text"
-				value={form?.name ?? ''}
-				required
-				minlength="2"
-				maxlength="30"
-				placeholder="Typ je naam…"
-				autocomplete="given-name"
-				class="onb-name rounded-mixup-sm squircle"
+		<div
+			class="flex min-h-0 flex-1 shrink items-center justify-center"
+			class:pt-5={!data.gamesetLogo}
+		>
+			<img
+				src={MIXUP_LOGO}
+				alt="M!XUP"
+				class="max-h-full w-full object-contain"
+				style="filter: drop-shadow(0 0 40px rgba(124, 77, 255, 0.65));"
 			/>
 		</div>
 
-		<button type="submit" disabled={submitting} class="onb-submit squircle">
-			{submitting ? 'BEZIG…' : 'VERDER'}
-		</button>
-	</form>
+		{#if form?.error}
+			<div
+				class="mb-3 rounded-mixup-sm border border-[rgba(255,59,74,0.5)] bg-[rgba(255,59,74,0.12)] px-4 py-3 text-sm text-[#FF6FC4] squircle"
+			>
+				{form.error}
+			</div>
+		{/if}
 
-	<div class="mt-3 text-center text-xs font-medium text-mixup-dim">
-		Geen account nodig · je sessie blijft 12 uur geldig
-	</div>
-</PlayerScreen>
+		<form
+			method="POST"
+			enctype="multipart/form-data"
+			use:enhance={({ formData }) => {
+				if (photoFile) formData.set('photo', photoFile, photoFile.name);
+				submitting = true;
+				return async ({ update }) => {
+					submitting = false;
+					await update();
+				};
+			}}
+		>
+			{#if data.next}
+				<input type="hidden" name="next" value={data.next} />
+			{/if}
+
+			<!-- Glaskaart met fotocirkel + naamveld -->
+			<div class="onb-card mb-[18px] rounded-mixup-hero squircle">
+				<button
+					type="button"
+					class="onb-photo"
+					class:onb-photo--filled={hasPhoto}
+					onclick={() => (photoOpen = !photoOpen)}
+					aria-label="Profielfoto toevoegen"
+				>
+					{#if photoPreviewUrl}
+						<img src={photoPreviewUrl} alt="" class="h-full w-full rounded-full object-cover" />
+					{:else}
+						+
+					{/if}
+				</button>
+
+				<div class="text-[11px] font-bold tracking-[0.12em] text-mixup-muted">{photoHint}</div>
+
+				{#if photoOpen}
+					<div class="onb-sources flex w-full gap-2">
+						<label class="onb-source rounded-mixup-chip squircle">
+							📷 CAMERA
+							<input
+								type="file"
+								accept="image/*"
+								capture="user"
+								class="sr-only"
+								onchange={handleFileChange}
+							/>
+						</label>
+						<label class="onb-source rounded-mixup-chip squircle">
+							🖼 GALERIJ
+							<input type="file" accept="image/*" class="sr-only" onchange={handleFileChange} />
+						</label>
+					</div>
+				{/if}
+
+				<input
+					name="name"
+					type="text"
+					value={form?.name ?? ''}
+					required
+					minlength="2"
+					maxlength="30"
+					placeholder="Typ je naam…"
+					autocomplete="given-name"
+					class="onb-name rounded-mixup-sm squircle"
+				/>
+			</div>
+
+			<button type="submit" disabled={submitting} class="onb-submit squircle">
+				{submitting ? 'BEZIG…' : 'VERDER'}
+			</button>
+		</form>
+
+		<div class="mt-3 text-center text-xs font-medium text-mixup-dim">
+			Geen account nodig · je sessie blijft 12 uur geldig
+		</div>
+	</PlayerScreen>
+</div>
 
 <style>
+	/* Viewport-vast, net als .randomizer op de reveal-pagina: dvh volgt de
+	   iOS-adresbalk, dus geen restscroll als die in- of uitklapt.
+	   PlayerScreen zelf houdt zijn min-height: 100svh. */
+	.onb-viewport :global(.player-screen) {
+		height: 100dvh;
+		min-height: 100dvh;
+		max-height: 100dvh;
+	}
+
 	.onb-card {
 		background: linear-gradient(135deg, rgba(229, 242, 255, 0.1), rgba(229, 242, 255, 0.03));
 		border: 1px solid rgba(229, 242, 255, 0.22);

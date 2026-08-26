@@ -148,7 +148,11 @@ body {
 		system-ui,
 		-apple-system,
 		sans-serif;
-	min-height: 100vh;
+	/* dvh, NIET vh: op iOS is 100vh de GROTE viewport (adresbalk ingeklapt).
+	   Met de balk in beeld is de body dan precies een balkhoogte hoger dan het
+	   zichtbare venster, en scrolt elke pagina terwijl er niets te scrollen
+	   valt. dvh volgt de balk, dus die restscroll verdwijnt. */
+	min-height: 100dvh;
 }
 
 /* Tailwind forms plugin resets — override for dark selects */
