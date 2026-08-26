@@ -3,6 +3,7 @@
 	import { onMount, untrack } from 'svelte';
 	import { Crown } from 'lucide-svelte';
 	import { supabaseBrowser } from '$lib/supabase-browser';
+	import { livePlaceLabel } from '$lib/standings';
 	import Modal from '$lib/components/ui/Modal.svelte';
 	import type { PageData } from './$types';
 	import type { ActivityLogRow } from '$lib/types/database';
@@ -822,7 +823,9 @@
 				<div class="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
 					{#each sortedByScore as team, i (team.id)}
 						<div class="flex items-center gap-3 border-b border-zinc-800 px-4 py-3 last:border-0">
-							<span class="w-5 text-center text-sm font-black text-zinc-500">#{i + 1}</span>
+							<span class="w-5 text-center text-sm font-black text-zinc-500">
+								{livePlaceLabel(team.score, i + 1, '#')}
+							</span>
 							<div
 								class="h-2.5 w-2.5 shrink-0 rounded-full"
 								style="background-color: {teamColorHex[team.color] ?? '#666'}"

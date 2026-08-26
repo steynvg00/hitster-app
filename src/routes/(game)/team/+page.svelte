@@ -7,7 +7,7 @@
 	import { ICON_ASSETS, RANK_ASSETS } from '$lib/mixup-assets';
 	import { teamBanner, teamGlow, teamHex, teamOnColor } from '$lib/team-theme';
 	import { getChallengeLogo } from '$lib/variants';
-	import { wearsCrown } from '$lib/standings';
+	import { wearsCrown, livePlaceLabel } from '$lib/standings';
 	import TutorialOverlay from '$lib/components/game/TutorialOverlay.svelte';
 	import HeldPowerups from '$lib/components/game/HeldPowerups.svelte';
 	import ActiveEffectsBanner from '$lib/components/game/ActiveEffectsBanner.svelte';
@@ -390,7 +390,7 @@
 			</div>
 			<div class="hub-card flex-1 rounded-mixup-card py-3 text-center squircle">
 				<div class="font-display text-[32px] leading-none font-black text-mixup-cyan tabular-nums">
-					#{livePosition}
+					{livePlaceLabel(liveScore, livePosition, '#')}
 				</div>
 				<div class="mt-1 text-[10px] font-bold tracking-[0.1em] text-mixup-muted">
 					VAN {data.totalTeams}

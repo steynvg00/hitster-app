@@ -162,3 +162,46 @@ export function rankDelta(place: number, score: number, scores: readonly number[
 	const target = place <= 3 ? `PLEK ${referencePlace}` : 'HET PODIUM';
 	return gap > 0 ? `${gap} ACHTER ${target}` : `GELIJK MET ${target}`;
 }
+
+/* ══════════════════════════════════════════════════════════════════
+   LIVE POSITIE — "–" ZOLANG EEN TEAM NOG GEEN PUNTEN HEEFT
+══════════════════════════════════════════════════════════════════ */
+
+/** Wat een live-scherm toont in plaats van een plek die nog niet bestaat. */
+export const NO_PLACE = '–';
+
+/**
+ * Heeft dit team een plek in de LOPENDE stand?
+ *
+ * Bij de start staat elk team op 0 en zou de sorteervolgorde iedereen een
+ * cijfer geven ("#6 VAN 6") terwijl er nog niets gerangschikt is. Dat leest als
+ * "jullie staan laatst" in plaats van "er is nog geen stand".
+ *
+ * De test loopt over EXACT de waarde die naast de positie staat: `teams.score`.
+ * Dat is de lopende stand — submit schrijft hem bij elke inzending bij
+ * (src/lib/server/submit.ts). De set-gescopete afgeleide (sum van
+ * submissions.score) bestaat wél, maar voedt alleen de RECAP-schermen (podium,
+ * /play/thanks); daar geldt deze regel niet, want daar is het spel afgelopen en
+ * bestaat de ranking wel degelijk.
+ *
+ * Randgevallen:
+ *   - alle teams op 0            → iedereen "–";
+ *   - sommige op 0, andere niet  → de nul-teams "–", de scorende teams houden
+ *     hun ECHTE plek (#1, #2 …). Geen gedeelde laatste plek: voor die teams is
+ *     er nog geen rangschikking om te delen;
+ *   - terugval naar exact 0 (penalty-powerup) → weer "–";
+ *   - NEGATIEVE score → wél een cijfer. Zo'n team staat aantoonbaar laatst;
+ *     dat verbergen zou misleidender zijn dan het te tonen.
+ */
+export function hasLivePlace(score: number): boolean {
+	return score !== 0;
+}
+
+/**
+ * De plek zoals een live-scherm hem toont: het cijfer, of "–" als er voor dit
+ * team nog geen stand is. `prefix` is puur cosmetisch ("#" op de team-console
+ * en het hostpaneel, niets op de leaderboards) en verdwijnt bij "–".
+ */
+export function livePlaceLabel(score: number, place: number, prefix = ''): string {
+	return hasLivePlace(score) ? `${prefix}${place}` : NO_PLACE;
+}
