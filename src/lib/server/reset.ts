@@ -4,6 +4,60 @@ import { TEAM_COLOR_ORDER } from '$lib/server/randomize';
 
 type AdminClient = SupabaseClient<Database>;
 
+/** Zelfde bucket als ?/uploadTeamPhoto in (game)/team/+page.server.ts. */
+const TEAM_PHOTO_BUCKET = 'team-photos';
+
+/**
+ * Teamfoto's van de meegegeven teams weggooien: photo_url op null EN de
+ * storage-objecten uit `team-photos` verwijderen.
+ *
+ * Het opruimpatroon is hetzelfde als in ?/uploadTeamPhoto — list met
+ * `search: teamId`, dan filteren op `${teamId}-` (spelerspad) of `${teamId}.`
+ * (adminpad), want `search` matcht ook teams waarvan het id een prefix deelt.
+ *
+ * Een reset mag NIET klappen op storage: als het verwijderen mislukt is de
+ * DB-kolom al leeg en is het object hooguit een wees. Die fout gaat als
+ * melding terug (en komt in de errors-lijst van de reset), niet als exception.
+ */
+async function clearTeamPhotos(
+	db: AdminClient,
+	teamIds: string[],
+	caller: string
+): Promise<string[]> {
+	const errors: string[] = [];
+	if (teamIds.length === 0) return errors;
+
+	const { error: dbErr } = await db
+		.from('teams')
+		.update({ photo_url: null } as never)
+		.in('id', teamIds);
+	if (dbErr) errors.push(`[${caller}] teams photo_url clear: ${dbErr.message}`);
+
+	for (const teamId of teamIds) {
+		try {
+			const { data: existing, error: listErr } = await db.storage
+				.from(TEAM_PHOTO_BUCKET)
+				.list('', { limit: 100, search: teamId });
+			if (listErr) {
+				errors.push(`[${caller}] team-photos list ${teamId}: ${listErr.message}`);
+				continue;
+			}
+			const own = (existing ?? [])
+				.map((o) => o.name)
+				.filter((n) => n.startsWith(`${teamId}-`) || n.startsWith(`${teamId}.`));
+			if (own.length === 0) continue;
+
+			const { error: rmErr } = await db.storage.from(TEAM_PHOTO_BUCKET).remove(own);
+			if (rmErr) errors.push(`[${caller}] team-photos remove ${teamId}: ${rmErr.message}`);
+		} catch (e) {
+			// Storage helemaal onbereikbaar mag de reset niet tegenhouden.
+			errors.push(`[${caller}] team-photos ${teamId}: ${(e as Error).message}`);
+		}
+	}
+
+	return errors;
+}
+
 export type LastResultEntry = {
 	rank: number;
 	team_id: string;
@@ -178,6 +232,11 @@ export async function resetGameState(
 
 	// Crown + powerup hygiene (teams powerup fields already zeroed above → [])
 	errors.push(...(await clearCrownAndPowerups(db, setId, [], caller)));
+
+	// Teamfoto's: kolom leeg EN de objecten uit de bucket. `teams` heeft geen
+	// set_id, dus dit volgt exact dezelfde afbakening als de rest van deze
+	// reset — teamIds uit TEAM_COLOR_ORDER.slice(0, gs.team_count) hierboven.
+	errors.push(...(await clearTeamPhotos(db, teamIds, caller)));
 
 	await run(
 		'players detach',
