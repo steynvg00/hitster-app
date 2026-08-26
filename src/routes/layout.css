@@ -141,14 +141,36 @@
 	color: var(--color-mixup-muted);
 }
 
+/* ══════════════════════════════════════════════════════════════════
+   VOLLEDIG SCHERM (viewport-fit=cover)
+   Met viewport-fit=cover in app.html loopt de pagina ONDER de dynamic
+   island en de browserbalk door. Daarvoor moet de app-achtergrond op
+   html EN body staan: zet je hem alleen op een binnencontainer, dan
+   schildert iOS die stroken met de body-kleur en blijft er zwart staan.
+   De inhoud zelf wordt met env(safe-area-inset-*) weggehouden bij de
+   island en de balk — zie .mixup-page en PlayerScreen.
+══════════════════════════════════════════════════════════════════ */
+html {
+	background-color: var(--color-mixup-ink);
+	/* Vult de overscroll-zone (boven/onder) met de plum-top van de gradient
+	   in plaats van met browserzwart. */
+	background-image: var(--gradient-mixup-page);
+	background-repeat: no-repeat;
+	background-attachment: fixed;
+}
+
 body {
-	background-color: #0a0a0f;
-	color: #f1f5f9;
+	background-color: transparent;
+	color: var(--color-mixup-paper);
 	font-family:
 		system-ui,
 		-apple-system,
 		sans-serif;
-	min-height: 100vh;
+	/* dvh, NIET vh: op iOS is 100vh de GROTE viewport (adresbalk ingeklapt).
+	   Met de balk in beeld is de body dan precies een balkhoogte hoger dan het
+	   zichtbare venster, en scrolt elke pagina terwijl er niets te scrollen
+	   valt. dvh volgt de balk, dus die restscroll verdwijnt. */
+	min-height: 100dvh;
 }
 
 /* Tailwind forms plugin resets — override for dark selects */

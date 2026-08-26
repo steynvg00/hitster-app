@@ -71,6 +71,45 @@ const TYPE_LOGO: Record<ChallengeType, { src: string; height: number }> = {
 	mashup: CHALLENGE_LOGOS.mashups
 };
 
+/**
+ * Logo's die per CHALLENGE gekozen worden in plaats van per type.
+ *
+ * Hitster en Icons zijn allebei variant `standard`, dus op het type alleen
+ * kreeg Icons het Hitster-logo. Er is (nog) geen icon_asset-kolom, dus de
+ * keuze hangt aan het enige stabiele kenmerk dat de challenge zelf al heeft:
+ * zijn titel. De sleutelwoorden hieronder komen 1-op-1 overeen met de namen
+ * in CHALLENGE_LOGOS, zodat een challenge die "Icons" heet het Icons-logo
+ * krijgt en een die "Hitster" heet het Hitster-logo — ongeacht variant.
+ *
+ * Volgorde telt: de eerste treffer wint. Zet specifiekere sleutelwoorden
+ * daarom vóór algemenere.
+ */
+const TITLE_LOGO: ReadonlyArray<[RegExp, { src: string; height: number }]> = [
+	[/\bicons?\b/i, CHALLENGE_LOGOS.icons],
+	[/\bhitster\b/i, CHALLENGE_LOGOS.hitster],
+	[/\banthems?\b/i, CHALLENGE_LOGOS.anthems],
+	[/\bfragments?\b/i, CHALLENGE_LOGOS.fragments],
+	[/\bmash-?ups?\b/i, CHALLENGE_LOGOS.mashups],
+	[/\beffects?\b/i, CHALLENGE_LOGOS.effects]
+];
+
+/**
+ * Het logo van EEN challenge. Geef de titel mee waar je die hebt: dan wint
+ * een titeltreffer van de type-fallback. Zonder titel is het gedrag exact
+ * als voorheen (puur op type).
+ */
+export function getChallengeLogo(
+	type: string,
+	title?: string | null
+): { src: string; height: number } | null {
+	if (title) {
+		for (const [pattern, logo] of TITLE_LOGO) {
+			if (pattern.test(title)) return logo;
+		}
+	}
+	return TYPE_LOGO[type as ChallengeType] ?? null;
+}
+
 export function getTypeLogo(type: string): { src: string; height: number } | null {
 	return TYPE_LOGO[type as ChallengeType] ?? null;
 }

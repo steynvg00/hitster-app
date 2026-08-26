@@ -71,9 +71,16 @@
 		overflow: hidden;
 		box-sizing: border-box;
 		/* Designbron: padding 56px 0 30px. Op echte toestellen mag de notch
-		   niet over de inhoud vallen, vandaar de safe-area-ondergrens. */
+		   niet over de inhoud vallen, vandaar de safe-area-ondergrens.
+		   Sinds viewport-fit=cover in app.html leveren deze env()'s echte
+		   waarden op (daarvoor altijd 0): de achtergrond loopt door tot achter
+		   de dynamic island en de browserbalk, de INHOUD blijft ervoor. */
 		padding-top: max(56px, calc(env(safe-area-inset-top, 0px) + 14px));
 		padding-bottom: max(30px, calc(env(safe-area-inset-bottom, 0px) + 8px));
+		/* Links/rechts alleen in landschap of op toestellen met zijinsets; in
+		   portret is dit 0 en verandert er niets aan de designmaten. */
+		padding-left: env(safe-area-inset-left, 0px);
+		padding-right: env(safe-area-inset-right, 0px);
 		font-family: var(--font-ui);
 		color: var(--color-mixup-paper);
 	}
