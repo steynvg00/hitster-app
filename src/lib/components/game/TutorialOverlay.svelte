@@ -51,7 +51,7 @@
 		if (e.target === e.currentTarget) onclose();
 	}}
 >
-	<div class="sheet w-full max-w-lg">
+	<div class="sheet w-full max-w-lg squircle">
 		<!-- Greep -->
 		<div class="flex justify-center pt-3 pb-1">
 			<div class="h-1 w-10 rounded-full bg-[rgba(229,242,255,0.28)]"></div>
@@ -124,7 +124,6 @@
 		border: 1px solid rgba(229, 242, 255, 0.18);
 		border-bottom: 0;
 		border-radius: var(--radius-mixup-modal) var(--radius-mixup-modal) 0 0;
-		corner-shape: squircle;
 		padding-bottom: env(safe-area-inset-bottom, 0px);
 		box-shadow: 0 -18px 50px rgba(11, 11, 31, 0.65);
 	}
