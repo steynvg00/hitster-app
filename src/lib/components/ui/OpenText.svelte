@@ -32,7 +32,7 @@
 	{placeholder}
 	autocomplete="off"
 	class="mixup-input w-full rounded-mixup-sm squircle"
-	style={value ? `border-color: ${teamHex};` : ''}
+	style="--accent: {teamHex};{value ? ' border-color: var(--accent);' : ''}"
 />
 
 <style>
@@ -44,8 +44,23 @@
 		font-family: var(--font-ui);
 		font-weight: 500;
 		font-size: 16px;
+		transition:
+			border-color 0.18s ease,
+			box-shadow 0.18s ease;
+	}
+	/* @tailwindcss/forms zet op :focus een 1px blue-600 ring (box-shadow) plus een
+	   blauwe border — de browser-blauwe rechthoek uit de toesteltest. Hier
+	   vervangen door een ring in de teamkleur op :focus-visible; box-shadow volgt
+	   de border-radius/squircle van het veld zelf. outline gaat pas uit als de
+	   ring er is, zodat toetsenbord-focus zichtbaar blijft. */
+	.mixup-input:focus {
+		box-shadow: none;
+		border-color: rgba(229, 242, 255, 0.22);
+	}
+	.mixup-input:focus-visible {
 		outline: none;
-		transition: border-color 0.18s ease;
+		border-color: var(--accent);
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 32%, transparent);
 	}
 	.mixup-input::placeholder {
 		color: var(--color-mixup-dim);
