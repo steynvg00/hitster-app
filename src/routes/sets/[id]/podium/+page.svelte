@@ -250,10 +250,10 @@
 		</header>
 
 		{#if inBattlePhase}
-			<!-- Battle-fase (stuk 3c): de head-to-heads gaan vóór het podium.
+			<!-- Battle-fase: de ranglijsten per battle gaan vóór het podium.
 			     Geen eigen-team-markering: dit is het gedeelde scherm. -->
 			<section class="battles">
-				<p class="battles__eyebrow">Head-to-head</p>
+				<p class="battles__eyebrow">Ranglijst per challenge</p>
 				<h2 class="battles__title">De battles</h2>
 
 				{#if revealedBattles.length === 0}

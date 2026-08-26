@@ -17,7 +17,7 @@
 	import CodeRain from '$lib/components/CodeRain.svelte';
 	import { MIXUP_LOGO, RANK_ASSETS } from '$lib/mixup-assets';
 	import { teamHex } from '$lib/team-theme';
-	import { topScoreOf, wearsCrown } from '$lib/standings';
+	import { topScoreOf, wearsCrown, livePlaceLabel } from '$lib/standings';
 	import type { PageData } from './$types';
 
 	type TeamRow = (typeof data.teams)[number];
@@ -114,7 +114,7 @@
 				{@const delta = rankDeltas.get(team.id) ?? 0}
 				{@const streak = streakOf(team)}
 				<div class="tv-row">
-					<span class="tv-row__rank">{i + 1}</span>
+					<span class="tv-row__rank">{livePlaceLabel(team.score, i + 1)}</span>
 					<span class="tv-row__dot" style="--dot: {hex};"></span>
 					<span class="tv-row__name">
 						{team.display_name}

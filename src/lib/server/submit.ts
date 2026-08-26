@@ -175,12 +175,15 @@ export async function scoreAndPersistSubmission(
 
 	const pcRaw = (challenge.points_config ?? {}) as Record<string, unknown>;
 
-	// Battle mode (additive): a battle challenge scores + awards EXACTLY like a
-	// normal one here (nothing below is deferred or skipped). The only battle-
-	// specific work at submit is recording the ranking key (base+bonus, written
-	// into the submission insert below); the rank-based ladder bonus is added
-	// later by resolveBattle. Detecting it here keeps the whole feature to a
-	// couple of guarded lines in this shared pipeline.
+	// Battle mode: een battle-challenge scoort EXACT als een normale (er wordt
+	// hieronder niets uitgesteld of overgeslagen) en levert ook geen extra punten
+	// op. Het enige battle-specifieke werk is het aanroepen van de resolver zodra
+	// alle teams klaar zijn; die rangschikt de opgeslagen submissions.score.
+	//
+	// De kolom submissions.battle_raw_score werd hier gevuld als sorteersleutel
+	// van de verdwenen ladderbonus (base+bonus, pre-multiplier). De ranglijst
+	// gebruikt sindsdien submissions.score — het getal dat het team echt kreeg —
+	// dus die kolom wordt niet meer geschreven en nergens meer gelezen.
 	const isBattle = ((pcRaw.battle ?? {}) as { enabled?: boolean }).enabled === true;
 
 	const { data: vdRow } = await admin
@@ -341,12 +344,7 @@ export async function scoreAndPersistSubmission(
 		// Nullish-coalesced to 0 only to satisfy the optional result type; both are
 		// always present on a scoreSubmission result.
 		fields_correct: scoredResult.fieldsCorrect ?? 0,
-		fields_total: scoredResult.fieldsTotal ?? 0,
-		// Ranking key for battle mode: base+bonus (scoredResult.total), PRE any
-		// multiplier / insurance floor / speed / streak. Only set for a battle
-		// challenge — a normal submission never references the column, so normal
-		// play is decoupled from the 0061 migration.
-		...(isBattle ? { battle_raw_score: scoredResult.total } : {})
+		fields_total: scoredResult.fieldsTotal ?? 0
 	};
 
 	// ── The retry claim ───────────────────────────────────────────────────────
@@ -502,7 +500,8 @@ export async function scoreAndPersistSubmission(
 	}
 
 	// Battle resolution hook: this team's attempt was just ended above, so if it
-	// was the last set-team to finish, resolve now (rank + ladder bonus + crown).
+	// was the last set-team to finish, rangschik nu (alleen vastleggen — een
+	// battle deelt geen punten uit).
 	// The timer→auto-submit→ended_at machinery drives this for the auto path too,
 	// since the backstop also flows through here. Idempotent (CAS in resolveBattle)
 	// and best-effort — a resolution hiccup must never fail the submit itself, and

@@ -626,9 +626,10 @@ export const actions: Actions = {
 		return { success: true, action: 'saveArtistBonus' };
 	},
 
-	// Battle mode (stuk 2): merge-save points_config.battle = { enabled, max_points }.
-	// The ladder is no longer stored — it's derived at resolution time from
-	// max_points + the set's real team_count (see deriveLadder in battle-ranking.ts).
+	// Battle mode: merge-save points_config.battle = { enabled }.
+	// Er valt verder niets in te stellen — een battle deelt geen punten uit, dus
+	// het oude `max_points` (de kop van de verdwenen ladder) is weg. Bestaande
+	// rijen dragen die sleutel nog; deze save schrijft hem er simpelweg af.
 	// Same read-modify-write discipline as saveFields — points_config also carries
 	// fields[]/field_modes/field_points, which must survive untouched.
 	saveBattle: async ({ request, params }) => {
@@ -636,15 +637,6 @@ export const actions: Actions = {
 		const data = await request.formData();
 
 		const enabled = data.get('enabled') === 'true';
-		const maxPointsRaw = data.get('max_points') as string | null;
-		if (maxPointsRaw == null) return fail(400, { error: 'Missing max_points' });
-
-		// Server-side validation mirrors the client's — never trust the wire.
-		const maxPointsParsed = parseInt(maxPointsRaw, 10);
-		if (!Number.isFinite(maxPointsParsed) || maxPointsParsed < 0) {
-			return fail(400, { error: 'max_points must be a non-negative integer' });
-		}
-		const max_points = Math.round(maxPointsParsed);
 
 		const { data: existing } = await db
 			.from('challenges')
@@ -655,7 +647,7 @@ export const actions: Actions = {
 
 		// Read-modify-write: spread battle over the existing points_config, never
 		// wholesale-replace (same trap as saveFields / the powerup-config merge fix).
-		const points_config = { ...existingPc, battle: { enabled, max_points } };
+		const points_config = { ...existingPc, battle: { enabled } };
 
 		const { error: e2 } = await db
 			.from('challenges')

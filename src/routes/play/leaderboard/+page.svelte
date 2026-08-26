@@ -18,7 +18,7 @@
 	import { supabaseBrowser } from '$lib/supabase-browser';
 	import PlayerScreen from '$lib/components/game/PlayerScreen.svelte';
 	import { teamHex } from '$lib/team-theme';
-	import { topScoreOf, wearsCrown } from '$lib/standings';
+	import { topScoreOf, wearsCrown, livePlaceLabel } from '$lib/standings';
 	import type { PageData } from './$types';
 
 	type TeamRow = (typeof data.teams)[number];
@@ -124,7 +124,7 @@
 			{@const streak = streakOf(team)}
 			<div class="lb-row squircle">
 				<div class="lb-row__head">
-					<span class="lb-rank">{i + 1}</span>
+					<span class="lb-rank">{livePlaceLabel(team.score, i + 1)}</span>
 					<span class="lb-dot" style="--dot: {hex};"></span>
 					<span class="lb-name">{team.display_name}</span>
 

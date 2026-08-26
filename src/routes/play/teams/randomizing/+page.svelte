@@ -14,6 +14,7 @@
 	 * die de server valideert; deze pagina schrijft niets.
 	 */
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import PlayerScreen from '$lib/components/game/PlayerScreen.svelte';
 	import { ICON_ASSETS, SPLASH_VIDEO } from '$lib/mixup-assets';
 	import { teamHex } from '$lib/team-theme';
@@ -24,6 +25,48 @@
 	let phase = $state<'rolling' | 'reveal' | 'done'>('rolling');
 	let splashEl = $state<HTMLVideoElement | null>(null);
 
+	/**
+	 * "Deze speler heeft de reveal van DIT team al gezien."
+	 *
+	 * localStorage en niet sessionStorage: de vlag moet een tabsluiting en een
+	 * herstart overleven, anders speelt de reveal opnieuw af voor iemand die
+	 * zijn team allang kent. De waarde is de teamkleur, niet een boolean — komt
+	 * de speler na een reset in een ander team, dan wijkt de waarde af en is de
+	 * reveal terecht weer nieuw.
+	 */
+	const SEEN_KEY = 'mixup_team_reveal_seen';
+
+	function alreadySeen(): boolean {
+		try {
+			return localStorage.getItem(SEEN_KEY) === data.team;
+		} catch {
+			// Private mode / geblokkeerde opslag: dan maar één keer te vaak spelen.
+			return false;
+		}
+	}
+
+	function markSeen() {
+		try {
+			localStorage.setItem(SEEN_KEY, data.team);
+		} catch {
+			/* zie alreadySeen() */
+		}
+	}
+
+	/**
+	 * Naar de team-console, en dit scherm uit de history-stack halen.
+	 *
+	 * replaceState is de kern van de terugswipe-fix: de randomizer stond als
+	 * echte entry direct onder /team, dus één back-stap te veel (of een
+	 * bfcache-restore van die entry) zette de speler terug in de reveal van een
+	 * team dat hij allang kende. Wat er niet in de stack staat, kan de
+	 * back-gesture ook niet raken.
+	 */
+	function toTeam() {
+		markSeen();
+		void goto('/team', { replaceState: true });
+	}
+
 	const hex = $derived(teamHex(data.team));
 	const revealed = $derived(phase === 'reveal' || phase === 'done');
 	/** Achtergrond wisselt bij de reveal naar een radial in de teamkleur. */
@@ -32,25 +75,58 @@
 	);
 
 	onMount(() => {
-		const t1 = setTimeout(() => (phase = 'reveal'), 1800);
+		// Kent deze speler zijn team al, dan is er niets te onthullen: meteen door
+		// naar de console, zónder history-entry. Dit dekt ook het handmatig
+		// terugtypen van de URL en een join-redirect na een tabsluiting.
+		if (alreadySeen()) {
+			void goto('/team', { replaceState: true });
+			return;
+		}
+
+		const t1 = setTimeout(() => {
+			phase = 'reveal';
+			markSeen();
+			startSplash();
+		}, 1800);
 		const t2 = setTimeout(() => (phase = 'done'), 3600);
+
+		// Een bfcache-restore draait onMount niet opnieuw; zonder dit kon de oude
+		// randomizer-entry als bevroren reveal terugkomen.
+		const onPageShow = (e: PageTransitionEvent) => {
+			if (e.persisted && alreadySeen()) void goto('/team', { replaceState: true });
+		};
+		window.addEventListener('pageshow', onPageShow);
+
 		return () => {
 			clearTimeout(t1);
 			clearTimeout(t2);
+			window.removeEventListener('pageshow', onPageShow);
 		};
 	});
 
 	/**
 	 * autoplay+muted+loop+playsinline alleen is niet genoeg: zonder expliciete
-	 * play() blijft de video op frame 0 staan. De catch vangt browsers die de
-	 * belofte afwijzen.
+	 * play() blijft de video op frame 0 staan.
+	 *
+	 * En play() alleen was óók niet genoeg. De video (406 kB) hing tot nu toe
+	 * achter `{#if}`: hij kwam pas in de DOM op t=1800 ms — precies het moment
+	 * dat hij moest spelen. Op een warme cache lukte dat, op een koude was het
+	 * reveal-venster voorbij voordat het eerste frame binnen was. Dát was het
+	 * "soms wel, soms niet".
+	 *
+	 * Nu staat het element er vanaf t=0 met preload="auto" (verborgen tijdens
+	 * het rollen), zodat het bufferen 1,8 s de tijd heeft. Wordt play() alsnog
+	 * afgewezen omdat er nog geen data is, dan pakt de canplay-listener hem op.
 	 */
-	$effect(() => {
-		if (!splashEl) return;
-		splashEl.muted = true;
-		splashEl.loop = true;
-		void splashEl.play().catch(() => {});
-	});
+	function startSplash() {
+		const el = splashEl;
+		if (!el) return;
+		el.muted = true;
+		el.loop = true;
+		el.play().catch(() => {
+			el.addEventListener('canplay', () => void el.play().catch(() => {}), { once: true });
+		});
+	}
 </script>
 
 <svelte:head>
@@ -68,6 +144,19 @@
 		<div class="h-[190px] shrink"></div>
 
 		<div class="relative flex h-[190px] w-[190px] flex-none items-center justify-center">
+			<!-- De splashvideo staat er vanaf het begin (preload="auto"), alleen
+			     onzichtbaar tijdens het rollen — zie startSplash() voor waarom. -->
+			<video
+				bind:this={splashEl}
+				src={SPLASH_VIDEO}
+				preload="auto"
+				muted
+				loop
+				playsinline
+				aria-hidden="true"
+				class="splash"
+				class:splash--waiting={!revealed}
+			></video>
 			{#if phase === 'rolling'}
 				<img
 					src={ICON_ASSETS.dice}
@@ -76,15 +165,6 @@
 					style="filter: drop-shadow(0 14px 34px rgba(255,45,170,0.5));"
 				/>
 			{:else}
-				<video
-					bind:this={splashEl}
-					src={SPLASH_VIDEO}
-					autoplay
-					muted
-					loop
-					playsinline
-					class="splash"
-				></video>
 				<div class="reveal-circle" style="--tc: {hex};"></div>
 			{/if}
 		</div>
@@ -112,7 +192,9 @@
 
 			<div class="flex h-14 flex-none items-center justify-center">
 				{#if phase === 'done'}
-					<a href="/team" class="go-btn squircle">NAAR JE TEAM →</a>
+					<!-- Geen <a>: de navigatie moet dit scherm VERVANGEN in de history,
+					     niet er een entry bovenop leggen. -->
+					<button type="button" onclick={toTeam} class="go-btn squircle">NAAR JE TEAM →</button>
 				{/if}
 			</div>
 		</div>
@@ -164,6 +246,13 @@
 		z-index: 0;
 	}
 
+	/* Tijdens het rollen staat de video er al (te bufferen) maar mag hij niet te
+	   zien zijn. opacity, geen display:none of visibility:hidden — Safari mag een
+	   verborgen video de decoder afpakken, en dan is het bufferen voor niets. */
+	.splash--waiting {
+		opacity: 0;
+	}
+
 	.reveal-circle {
 		position: relative;
 		z-index: 1;
@@ -210,5 +299,8 @@
 		color: #1a1400;
 		box-shadow: 0 10px 30px rgba(255, 127, 17, 0.35);
 		animation: reveal-pop 0.5s ease both;
+		/* Was een <a>; als <button> heeft hij deze twee nog nodig. */
+		border: 0;
+		cursor: pointer;
 	}
 </style>

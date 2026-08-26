@@ -608,6 +608,9 @@ export type Database = {
 					is_final: boolean;
 					submitted_at: string;
 					created_at: string;
+					/** LEGACY (0061): sorteersleutel van de verwijderde battle-ladderbonus.
+					 *  Wordt niet meer geschreven of gelezen; de battle-ranglijst gebruikt
+					 *  `score`. De kolom staat er nog omdat er geen migratie voor draaide. */
 					battle_raw_score: number | null;
 					// Migration 0077: how many non-bonus, non-grouping fields this
 					// submission got FULL points on, out of how many there were. NULL on

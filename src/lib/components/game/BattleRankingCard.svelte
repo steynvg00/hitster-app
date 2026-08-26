@@ -1,6 +1,11 @@
 <script lang="ts">
 	/**
-	 * BATTLE-KAART — de gedeelde onthulkaart van één beslecht duel.
+	 * BATTLE-KAART — de ranglijst van één battle.
+	 *
+	 * Een battle is ALLE teams tegen elkaar op één challenge, geen duels. De
+	 * kaart toont per team wat het op DIE challenge scoorde, hoogste bovenaan,
+	 * met plaatsnummer, teamkleur-bol en teamnaam, en onderaan een winnaarsregel.
+	 * Er worden GEEN bonuspunten toegekend — de battle is puur weergave.
 	 *
 	 * Rendert op BEIDE ceremoniesurfaces: het wachtscherm van de speler (met het
 	 * eigen team gemarkeerd) en het TV-podium (zonder markering), zodat de twee
@@ -8,18 +13,14 @@
 	 *
 	 * Vormgeving (redesign fase 6): design/M!XUP Ceremonie en Randen.dc.html,
 	 * scherm "01 · WACHTSCHERM — BATTLE-FASE". Glaskaart met titel-eyebrow,
-	 * teamrijen met bol + naam + getal, VS-scheiding ertussen en een
-	 * uitkomst-tag onderaan.
+	 * teamrijen met bol + naam + getal en een uitkomst-tag onderaan. De
+	 * VS-scheiding tussen de rijen is eruit: die tekende een duel dat er niet is.
 	 *
 	 * PURE DISPLAY over opgeslagen data: `ranking` is set_challenges.battle_ranking
 	 * exact zoals resolveBattle hem vastlegde — al geordend best->slechtst, met
 	 * `rank` al toegekend (competition numbering, dus een gelijk blok DEELT zijn
-	 * nummer en twee teams kunnen allebei "2" lezen). Nooit hier hersorteren of
+	 * nummer en twee teams kunnen allebei "1" lezen). Nooit hier hersorteren of
 	 * herrangschikken; de opgeslagen volgorde en nummers zijn de waarheid.
-	 *
-	 * Toont rang + team + toegekende ladderpunten. raw_score en elapsed_seconds
-	 * bewust NIET: raw_score is de pre-multiplier sorteersleutel en leest als een
-	 * verkeerde score naast het leaderboard.
 	 *
 	 * MAATVOERING: alle maten zijn een veelvoud van `--bc-u`, één designpixel.
 	 * Standaard 1px (de telefoonmaat uit de designbron); het TV-podium zet er
@@ -30,7 +31,8 @@
 	type BattleRankRow = {
 		team_id: string;
 		rank: number;
-		awarded: number;
+		/** Wat dit team op deze challenge scoorde. */
+		score: number;
 	};
 	type TeamInfo = { id: string; color: string; display_name: string };
 
@@ -53,19 +55,21 @@
 	const teamById = $derived(new Map(teams.map((t) => [t.id, t])));
 
 	/**
-	 * De uitkomst-tag onderaan, afgeleid uit de OPGESLAGEN rangen — niet
-	 * herberekend. Deelt meer dan één team rang 1, dan is het per definitie een
-	 * gelijkspel (competition numbering), en dat toont de designbron als een
-	 * eigen gele tag in plaats van een winnaar.
+	 * De winnaarsregel onderaan, afgeleid uit de OPGESLAGEN rangen — niet
+	 * herberekend. Deelt meer dan één team rang 1, dan is de eerste plaats
+	 * gedeeld (competition numbering) en worden ze allemaal genoemd; die krijgt
+	 * de gele tag in plaats van de groene.
 	 */
 	const winners = $derived(ranking.filter((r) => r.rank === 1));
+	const nameOf = (id: string) => teamById.get(id)?.display_name ?? 'Onbekend team';
 	const verdict = $derived.by(() => {
 		if (winners.length === 0) return null;
-		if (winners.length > 1) return { text: 'Gelijkspel — gedeelde rang', draw: true };
-		const row = winners[0]!;
-		const name = teamById.get(row.team_id)?.display_name ?? 'Onbekend team';
-		const points = row.awarded > 0 ? ` +${row.awarded}` : '';
-		return { text: `${name} wint${points}`, draw: false };
+		const names = winners.map((w) => nameOf(w.team_id));
+		if (names.length > 1) {
+			const joined = `${names.slice(0, -1).join(', ')} & ${names[names.length - 1]}`;
+			return { text: `Winnaar: ${joined} (gedeeld)`, draw: true };
+		}
+		return { text: `Winnaar: ${names[0]}`, draw: false };
 	});
 </script>
 
@@ -73,31 +77,22 @@
 	<p class="bc__title">{title}</p>
 
 	<div class="bc__rows">
-		{#each ranking as row, i (row.team_id)}
+		{#each ranking as row (row.team_id)}
 			{@const team = teamById.get(row.team_id)}
 			{@const hex = teamHex(team?.color)}
 			{@const glow = teamGlow(team?.color)}
 			{@const isMine = highlightTeamId !== null && row.team_id === highlightTeamId}
 
-			{#if i > 0}
-				<div class="bc__vs" aria-hidden="true">
-					<span class="bc__vs-line"></span>
-					<span class="bc__vs-label">VS</span>
-					<span class="bc__vs-line"></span>
-				</div>
-			{/if}
-
 			<div class="bc__row" class:bc__row--mine={isMine} style="--team: {hex};">
-				<!-- Gedeelde rangen herhalen bewust: twee teams kunnen allebei 2e zijn. -->
+				<!-- Gedeelde rangen herhalen bewust: twee teams kunnen allebei 1e zijn. -->
 				<span class="bc__rank" class:bc__rank--first={row.rank === 1}>{row.rank}</span>
 				<span class="bc__dot" style="--dot: {hex}; --dot-glow: {glow};"></span>
 				<span class="bc__name">{team?.display_name ?? 'Onbekend team'}</span>
 				{#if isMine}
 					<span class="bc__you">Jij</span>
 				{/if}
-				<span class="bc__awarded" class:bc__awarded--zero={row.awarded <= 0}>
-					{row.awarded > 0 ? `+${row.awarded}` : '0'}
-				</span>
+				<!-- Het getal is de score op DEZE challenge, geen bonus: dus geen "+". -->
+				<span class="bc__score" class:bc__score--zero={row.score <= 0}>{row.score}</span>
 			</div>
 		{/each}
 	</div>
@@ -214,7 +209,7 @@
 		color: var(--color-mixup-paper);
 	}
 
-	.bc__awarded {
+	.bc__score {
 		flex: 0 0 auto;
 		font-family: var(--font-display);
 		font-weight: 900;
@@ -224,26 +219,8 @@
 		font-variant-numeric: tabular-nums;
 	}
 
-	.bc__awarded--zero {
+	.bc__score--zero {
 		color: var(--color-mixup-muted);
-	}
-
-	.bc__vs {
-		display: flex;
-		align-items: center;
-		gap: calc(8 * var(--bc-u));
-	}
-
-	.bc__vs-line {
-		flex: 1 1 auto;
-		height: 1px;
-		background: rgba(229, 242, 255, 0.14);
-	}
-
-	.bc__vs-label {
-		font-family: var(--font-data);
-		font-size: calc(10 * var(--bc-u));
-		color: var(--color-mixup-dim);
 	}
 
 	.bc__verdict {
