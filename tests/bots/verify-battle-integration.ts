@@ -5,13 +5,16 @@
 //
 // The gap between the pure-math verify-battle (computeBattleRanking in isolation)
 // and verify-regression (non-battle scoring unchanged): this proves the DB wiring
-// end-to-end — submissions.score → resolveBattle → een opgeslagen ranglijst, CAS
-// idempotency, en maybeResolveBattle's all-done detection against real attempt
-// rows.
+// end-to-end — submissions.score → resolveBattle → een opgeslagen ranglijst +
+// de ladderbonus op teams.score, CAS idempotency, en maybeResolveBattle's
+// all-done detection against real attempt rows.
 //
-// EEN BATTLE RAAKT GEEN ENKELE SCORE. Waar deze harness vroeger de ladderbonus
-// op teams.score narekende, is de kern nu het omgekeerde: na resolutie moet élke
-// teamscore, de kroon en de kroon-log ONGEWIJZIGD zijn. De battle is weergave.
+// TWEE DINGEN MOETEN TEGELIJK WAAR ZIJN, en dat is precies wat hier wordt
+// vastgelegd: (a) de ladderbonus wordt bij teams.score opgeteld — de exacte
+// getallen staan per scenario met de hand uitgeschreven; (b) de KROON beweegt
+// daar niet van mee. De batch-hercalculatie die vroeger aan de bonus hing
+// (recomputeCrownAfterBattle, +1 steal) is bewust weg: een battle deelt punten
+// uit maar verplaatst de kroon niet.
 //
 // How it drives the real code: tsx can't import resolveBattle (its $lib runtime
 // imports only resolve inside Vite), so the harness seeds controlled state at the
@@ -22,8 +25,9 @@
 // numbers (precision the browser can't give); the resolution side is the genuine
 // production code path.
 //
-// Oracle: expected ranks are hand-written per scenario (NOT computed via
-// computeBattleRanking) so the test can't be circular.
+// Oracle: expected ranks EN bonussen zijn per scenario met de hand geschreven
+// (NIET via computeBattleRanking/deriveLadder berekend) zodat de test niet
+// circulair is. Met 4 teams en max_points 10 is de ladder [10, 7, 3, 0].
 //
 // FIXTURE HYGIENE (the ch20-pollution lesson): ch20's points_config is snapshotted
 // before the run and restored in a finally; battle state is reset before AND after.
@@ -210,36 +214,61 @@ const scoreFor = (ranking: Array<Record<string, unknown>>, teamId: string) =>
 	ranking.find((r) => r.team_id === teamId)?.score ?? null;
 const rankFor = (ranking: Array<Record<string, unknown>>, teamId: string) =>
 	ranking.find((r) => r.team_id === teamId)?.rank ?? null;
+const awardFor = (ranking: Array<Record<string, unknown>>, teamId: string) =>
+	ranking.find((r) => r.team_id === teamId)?.awarded ?? null;
+
+/** Hoeveel battle_award-regels resolveBattle schreef (één per team met bonus). */
+async function battleAwardLogCount(db: SupabaseClient, teamIds: string[]): Promise<number> {
+	const { count } = await db
+		.from('activity_log')
+		.select('*', { count: 'exact', head: true })
+		.eq('event_type', 'battle_award')
+		.in('team_id', teamIds);
+	return count ?? 0;
+}
 
 // ─── scenarios ────────────────────────────────────────────────────────────────
 // t[0]=blue t[1]=yellow t[2]=green t[3]=red (TEAM_COLOR_ORDER for team_count 4)
 
-/** Elke scenario-assert die ertoe doet: resolutie mag geen enkele score raken. */
+/** De teamscores in TEAM_COLOR_ORDER — de basis van elke bonus-assert. */
 async function allScores(db: SupabaseClient, t: Team[]): Promise<number[]> {
 	return Promise.all(t.map((x) => teamScore(db, x.id)));
 }
 
-async function s1RanksAndTouchesNothing(db: SupabaseClient, t: Team[]) {
+async function s1RanksAndAwards(db: SupabaseClient, t: Team[]) {
 	await resetBattle(db, t);
-	// Vier verschillende challengescores → vier verschillende plekken.
+	// Vier verschillende challengescores → vier verschillende plekken → de hele
+	// ladder [10,7,3,0] wordt uitgedeeld.
 	await seedSubmission(db, t[0].id, { score: 40, elapsedSec: 30 });
 	await seedSubmission(db, t[1].id, { score: 20, elapsedSec: 30 });
 	await seedSubmission(db, t[2].id, { score: 12, elapsedSec: 30 });
 	await seedSubmission(db, t[3].id, { score: 0, elapsedSec: 30 }); // speelde, leeg
 	await setCrown(db, t[0].id);
 
-	const before = await allScores(db, t);
 	await callResolve('resolve');
-	const after = await allScores(db, t);
 
 	const r = await battleRanking(db);
 	assert('S1 blue plek 1 met 40', [rankFor(r, t[0].id), scoreFor(r, t[0].id)], [1, 40]);
 	assert('S1 yellow plek 2 met 20', [rankFor(r, t[1].id), scoreFor(r, t[1].id)], [2, 20]);
 	assert('S1 green plek 3 met 12', [rankFor(r, t[2].id), scoreFor(r, t[2].id)], [3, 12]);
 	assert('S1 red plek 4 met 0', [rankFor(r, t[3].id), scoreFor(r, t[3].id)], [4, 0]);
+	assert(
+		'S1 bonus per plek = [10,7,3,0]',
+		t.map((x) => awardFor(r, x.id)),
+		[10, 7, 3, 0]
+	);
 	assert('S1 battle_resolved_at set', (await resolvedAt(db)) != null, true);
-	// DE kernassert van deze wijziging.
-	assert('S1 GEEN score veranderd door resolutie', after, before);
+	// DE kernassert: challengescore + bonus staan in teams.score.
+	assert('S1 teamscores = challengescore + bonus', await allScores(db, t), [50, 27, 15, 0]);
+	assert(
+		'S1 één battle_award-regel per team MET bonus (rank 4 krijgt niets)',
+		await battleAwardLogCount(
+			db,
+			t.map((x) => x.id)
+		),
+		3
+	);
+	// De kroon volgt de bonus NIET.
 	assert('S1 kroon onaangeroerd', await crownHolder(db), t[0].id);
 	assert(
 		'S1 geen kroon-log uit een battle',
@@ -254,44 +283,48 @@ async function s1RanksAndTouchesNothing(db: SupabaseClient, t: Team[]) {
 async function s2SharedFirstPlace(db: SupabaseClient, t: Team[]) {
 	await resetBattle(db, t);
 	// blue en yellow scoorden allebei 30 — en blue was sneller. Snelheid telt NIET
-	// meer mee: gelijke score is een GEDEELDE eerste plaats, en de volgende plek
-	// slaat de verbruikte plek over (competition numbering).
+	// mee: gelijke score is een GEDEELDE eerste plaats waar BEIDE teams de
+	// hoogste bonus voor krijgen, en de volgende plek slaat de verbruikte plek
+	// over (competition numbering) met de bonus die daarbij hoort.
 	await seedSubmission(db, t[0].id, { score: 30, elapsedSec: 20 });
 	await seedSubmission(db, t[1].id, { score: 30, elapsedSec: 40 });
 	await seedSubmission(db, t[2].id, { score: 12, elapsedSec: 30 });
 	await seedSubmission(db, t[3].id, { score: 6, elapsedSec: 30 });
 	await setCrown(db, t[0].id);
 
-	const before = await allScores(db, t);
 	await callResolve('resolve');
-	const after = await allScores(db, t);
 
 	const r = await battleRanking(db);
 	assert('S2 blue en yellow delen plek 1', [rankFor(r, t[0].id), rankFor(r, t[1].id)], [1, 1]);
 	assert('S2 snelheid breekt de gelijke stand NIET', scoreFor(r, t[1].id), 30);
+	assert(
+		'S2 beide koplopers krijgen de HOOGSTE bonus',
+		[awardFor(r, t[0].id), awardFor(r, t[1].id)],
+		[10, 10]
+	);
 	assert('S2 green krijgt plek 3, niet 2', rankFor(r, t[2].id), 3);
-	assert('S2 red krijgt plek 4', rankFor(r, t[3].id), 4);
-	assert('S2 GEEN score veranderd door resolutie', after, before);
+	assert('S2 green krijgt de bonus van plek 3', awardFor(r, t[2].id), 3);
+	assert('S2 red krijgt plek 4 zonder bonus', [rankFor(r, t[3].id), awardFor(r, t[3].id)], [4, 0]);
+	assert('S2 teamscores = challengescore + bonus', await allScores(db, t), [40, 40, 15, 6]);
 }
 
 async function s3NonParticipant(db: SupabaseClient, t: Team[]) {
 	await resetBattle(db, t);
 	// red heeft geen attempt/submission → de auto-hook zou niet vuren; direct
 	// resolven (het host-pad). red hoort er met 0 gewoon in te staan: de kaart
-	// toont ALLE teams.
+	// toont ALLE teams — en krijgt als laatste geen bonus.
 	await seedSubmission(db, t[0].id, { score: 40, elapsedSec: 30 });
 	await seedSubmission(db, t[1].id, { score: 12, elapsedSec: 30 });
 	await seedSubmission(db, t[2].id, { score: 6, elapsedSec: 30 });
 	await setCrown(db, t[0].id);
 
-	const before = await allScores(db, t);
 	await callResolve('resolve');
-	const after = await allScores(db, t);
 
 	const r = await battleRanking(db);
 	assert('S3 alle vier de teams in de ranglijst', r.length, 4);
 	assert('S3 afwezige red plek 4 met 0', [rankFor(r, t[3].id), scoreFor(r, t[3].id)], [4, 0]);
-	assert('S3 GEEN score veranderd door resolutie', after, before);
+	assert('S3 afwezige red krijgt geen bonus', awardFor(r, t[3].id), 0);
+	assert('S3 teamscores = challengescore + bonus', await allScores(db, t), [50, 19, 9, 0]);
 }
 
 async function s4Idempotency(db: SupabaseClient, t: Team[]) {
@@ -306,22 +339,31 @@ async function s4Idempotency(db: SupabaseClient, t: Team[]) {
 	const after1 = await allScores(db, t);
 	const resolvedAt1 = await resolvedAt(db);
 	const ranking1 = await battleRanking(db);
+	assert('S4 eerste resolve deelde de bonus uit', after1, [50, 19, 9, 0]);
 
 	const res2 = await callResolve('resolve'); // tweede call moet de CAS verliezen
 	const after2 = await allScores(db, t);
 
 	assert('S4 second resolve reports resolved:false', res2.resolved, false);
-	assert('S4 scores unchanged after 2nd call', after2, after1);
+	// DE reden dat de CAS er is: de ladderbonus mag nooit dubbel worden bijgeschreven.
+	assert('S4 bonus NIET dubbel bijgeschreven', after2, after1);
 	assert('S4 battle_resolved_at unchanged (claimed once)', await resolvedAt(db), resolvedAt1);
 	assert('S4 ranglijst ongewijzigd', await battleRanking(db), ranking1);
-	assert('S4 blue staat nog op zijn eigen challengescore', after1[0], 40);
+	assert(
+		'S4 geen tweede reeks battle_award-regels',
+		await battleAwardLogCount(
+			db,
+			t.map((x) => x.id)
+		),
+		3
+	);
 }
 
 async function s5CrownNeverMoves(db: SupabaseClient, t: Team[]) {
 	await resetBattle(db, t);
-	// De oude ladder kon hier de kroon verplaatsen: blue won de battle en klom er
-	// met bonuspunten overheen. Zonder bonus verandert er niets — yellow houdt de
-	// kroon, ook al wint blue de battle.
+	// Het geval waar de verwijderde recomputeCrownAfterBattle op af ging: blue
+	// wint de battle en klimt MET de bonus over yellow heen op het totaal. De
+	// punten tellen (40 > 39), maar de kroon blijft waar hij lag.
 	await seedSubmission(db, t[0].id, { score: 30, elapsedSec: 30 });
 	await seedSubmission(db, t[1].id, { score: 12, elapsedSec: 30 });
 	await seedSubmission(db, t[2].id, { score: 10, elapsedSec: 30 });
@@ -329,14 +371,13 @@ async function s5CrownNeverMoves(db: SupabaseClient, t: Team[]) {
 	await db.from('teams').update({ score: 32 }).eq('id', t[1].id); // yellow leidt op totaal
 	await setCrown(db, t[1].id);
 
-	const before = await allScores(db, t);
 	await callResolve('resolve');
-	const after = await allScores(db, t);
 
 	const r = await battleRanking(db);
 	assert('S5 blue wint de battle', rankFor(r, t[0].id), 1);
-	assert('S5 kroon blijft bij yellow', await crownHolder(db), t[1].id);
-	assert('S5 GEEN score veranderd door resolutie', after, before);
+	assert('S5 blue krijgt de topbonus', awardFor(r, t[0].id), 10);
+	assert('S5 blue gaat met de bonus over yellow heen', await allScores(db, t), [40, 39, 13, 0]);
+	assert('S5 kroon blijft toch bij yellow', await crownHolder(db), t[1].id);
 	assert(
 		'S5 geen kroon-log uit een battle',
 		await battleCrownLogCount(
@@ -348,34 +389,36 @@ async function s5CrownNeverMoves(db: SupabaseClient, t: Team[]) {
 }
 
 async function s6AutoHook(db: SupabaseClient, t: Team[]) {
-	// (a) Alle vier klaar → maybeResolveBattle moet vanzelf resolven.
+	// (a) Alle vier klaar → maybeResolveBattle moet vanzelf resolven én uitdelen.
 	await resetBattle(db, t);
 	await seedSubmission(db, t[0].id, { score: 40, elapsedSec: 30 });
 	await seedSubmission(db, t[1].id, { score: 20, elapsedSec: 30 });
 	await seedSubmission(db, t[2].id, { score: 12, elapsedSec: 30 });
 	await seedSubmission(db, t[3].id, { score: 6, elapsedSec: 30 });
 	await setCrown(db, t[0].id);
-	const beforeA = await allScores(db, t);
 	await callResolve('maybe');
 	assert(
 		'S6a all-done → auto-resolved (battle_resolved_at set)',
 		(await resolvedAt(db)) != null,
 		true
 	);
-	assert('S6a auto-resolve raakt geen score', await allScores(db, t), beforeA);
+	assert('S6a auto-resolve deelt de bonus uit', await allScores(db, t), [50, 27, 15, 6]);
 
-	// (b) Eén team startte nooit → maybeResolveBattle mag NIET resolven.
+	// (b) Eén team startte nooit → maybeResolveBattle mag NIET resolven, en dus
+	// ook geen enkele bonus uitdelen.
 	await resetBattle(db, t);
 	await seedSubmission(db, t[0].id, { score: 40, elapsedSec: 30 });
 	await seedSubmission(db, t[1].id, { score: 20, elapsedSec: 30 });
 	await seedSubmission(db, t[2].id, { score: 12, elapsedSec: 30 });
 	// t[3] (red) heeft geen attempt
+	const beforeB = await allScores(db, t);
 	await callResolve('maybe');
 	assert(
 		'S6b partial turnout → NOT resolved (battle_resolved_at null)',
 		await resolvedAt(db),
 		null
 	);
+	assert('S6b geen bonus zonder resolutie', await allScores(db, t), beforeB);
 }
 
 // ─── de recap-barrière ────────────────────────────────────────────────────────
@@ -386,8 +429,8 @@ async function s6AutoHook(db: SupabaseClient, t: Team[]) {
 async function s7aBarrierResolvesAbsentee(db: SupabaseClient, t: Team[]) {
 	await resetBattle(db, t);
 	// Precies het geval dat de auto-hook weigert (S6b): red startte nooit. Zonder
-	// barrière bereikt deze set de recap met battle_ranking NULL en verdwijnt de
-	// battle uit de onthulling.
+	// barrière bereikt deze set de recap met battle_ranking NULL, verdwijnt de
+	// battle uit de onthulling én krijgt niemand zijn bonus.
 	await seedSubmission(db, t[0].id, { score: 40, elapsedSec: 30 });
 	await seedSubmission(db, t[1].id, { score: 20, elapsedSec: 30 });
 	await seedSubmission(db, t[2].id, { score: 12, elapsedSec: 30 });
@@ -397,9 +440,7 @@ async function s7aBarrierResolvesAbsentee(db: SupabaseClient, t: Team[]) {
 	await callResolve('maybe');
 	assert('S7a precondition: auto-hook leaves it unresolved', await resolvedAt(db), null);
 
-	const before = await allScores(db, t);
 	const res = await callRecapBarrier();
-	const after = await allScores(db, t);
 
 	assert('S7a barrier reports it resolved', (res.resolved as string[])?.length, 1);
 	assert('S7a battle_resolved_at now set', (await resolvedAt(db)) != null, true);
@@ -407,15 +448,16 @@ async function s7aBarrierResolvesAbsentee(db: SupabaseClient, t: Team[]) {
 	assert('S7a battle_ranking populated (all 4 teams)', r.length, 4);
 	assert('S7a blue plek 1 met 40', [rankFor(r, t[0].id), scoreFor(r, t[0].id)], [1, 40]);
 	assert('S7a afwezige red plek 4 met 0', [rankFor(r, t[3].id), scoreFor(r, t[3].id)], [4, 0]);
-	assert('S7a GEEN score veranderd door de barrière', after, before);
+	assert('S7a barrière deelt de bonus alsnog uit', await allScores(db, t), [50, 27, 15, 0]);
 	assert('S7a kroon onaangeroerd', await crownHolder(db), t[0].id);
 }
 
 async function s7bBarrierSkipsZeroSubmissions(db: SupabaseClient, t: Team[]) {
 	await resetBattle(db, t);
-	// Niemand speelde deze battle. Een ranglijst waarin élk team op 0 staat zegt
-	// niets, dus de barrière slaat hem over en laat battle_ranking NULL — de
-	// onthulling sluit hem dan uit (die leest WHERE battle_ranking IS NOT NULL).
+	// Niemand speelde deze battle. Resolven zou de hele ladder uitdelen aan teams
+	// die nooit meededen, dus de barrière slaat hem over en laat battle_ranking
+	// NULL — de onthulling sluit hem dan uit (die leest WHERE battle_ranking IS
+	// NOT NULL).
 	const before = await allScores(db, t);
 	const res = await callRecapBarrier();
 	const after = await allScores(db, t);
@@ -432,15 +474,15 @@ async function s7bBarrierSkipsZeroSubmissions(db: SupabaseClient, t: Team[]) {
 		(await battleRanking(db)).length,
 		0
 	);
-	assert('S7b no scores moved', after, before);
+	assert('S7b geen bonus aan teams die niet speelden', after, before);
 }
 
 async function s7cBarrierNoDoubleWrite(db: SupabaseClient, t: Team[]) {
 	await resetBattle(db, t);
 	// DE concurrency-check: een battle die de auto-hook al resolvede, waar
 	// startRecap's barrière daarna overheen loopt. resolveBattle CAS-claimt
-	// battle_resolved_at eerst, dus de barrière verliest de claim en verandert
-	// niets — geen tweede ranglijst-write.
+	// battle_resolved_at eerst, dus de barrière verliest de claim — geen tweede
+	// ranglijst-write en, wat hier het echte risico is, geen tweede bonus.
 	await seedSubmission(db, t[0].id, { score: 40, elapsedSec: 30 });
 	await seedSubmission(db, t[1].id, { score: 20, elapsedSec: 30 });
 	await seedSubmission(db, t[2].id, { score: 12, elapsedSec: 30 });
@@ -452,12 +494,13 @@ async function s7cBarrierNoDoubleWrite(db: SupabaseClient, t: Team[]) {
 	const resolvedAtHook = await resolvedAt(db);
 	const rankingHook = await battleRanking(db);
 	assert('S7c precondition: auto-hook resolved it', resolvedAtHook != null, true);
+	assert('S7c precondition: bonus is uitgedeeld', afterHook, [50, 27, 15, 6]);
 
 	const res = await callRecapBarrier();
 	const afterBarrier = await allScores(db, t);
 
 	assert('S7c barrier resolved nothing (already resolved)', (res.resolved as string[])?.length, 0);
-	assert('S7c scores IDENTIEK', afterBarrier, afterHook);
+	assert('S7c bonus NIET dubbel uitgedeeld', afterBarrier, afterHook);
 	assert('S7c battle_resolved_at unchanged (claimed once)', await resolvedAt(db), resolvedAtHook);
 	assert('S7c battle_ranking unchanged', await battleRanking(db), rankingHook);
 	assert(
@@ -494,14 +537,14 @@ async function main() {
 	const originalConfig = chBefore?.points_config ?? null;
 
 	try {
-		// Make ch20 a battle challenge for the run. Storage is { enabled } — er valt
-		// niets meer in te stellen, een battle deelt geen punten uit.
+		// Make ch20 a battle challenge for the run. max_points 10 + 4 teams geeft
+		// de ladder [10, 7, 3, 0]; elke verwachting hieronder rekent daarmee.
 		await db
 			.from('challenges')
-			.update({ points_config: { battle: { enabled: true } } })
+			.update({ points_config: { battle: { enabled: true, max_points: 10 } } })
 			.eq('id', BATTLE_CH);
 
-		await s1RanksAndTouchesNothing(db, teams);
+		await s1RanksAndAwards(db, teams);
 		await s2SharedFirstPlace(db, teams);
 		await s3NonParticipant(db, teams);
 		await s4Idempotency(db, teams);

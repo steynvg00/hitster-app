@@ -3,6 +3,7 @@ import type { Database } from '$lib/types/database';
 import { getTeamsInSet } from '$lib/server/randomize';
 import {
 	computeBattleRanking,
+	deriveLadder,
 	parseBattleConfig,
 	type BattleEntry,
 	type BattleRankEntry
@@ -13,30 +14,28 @@ type AdminClient = SupabaseClient<Database>;
 // Battle Mode — de resolver. De pure ranglijst-math + config-parser staan in
 // $lib/battle-ranking (client-safe, geen server-imports) zodat de harness ze
 // los kan draaien; deze module is de DB-lijm: lees wat elk team op de challenge
-// scoorde, rangschik, leg de uitslag vast.
+// scoorde, rangschik, deel de ladderbonus uit, leg de uitslag vast.
 //
-// Een battle is ALLE teams tegen elkaar op één challenge en verandert NIETS aan
-// de score. De challenge wordt gespeeld en gescoord als elke andere (volledige
-// score, multipliers, streak, powerups, kroon — alles bij submit, zie
-// scoreAndPersistSubmission); de battle rangschikt daarna alleen wat daar
-// uitkwam.
+// Een battle is ALLE teams tegen elkaar op één challenge. De challenge zelf
+// wordt gescoord als elke andere (volledige score, multipliers, streak,
+// powerups, kroon — alles bij submit, zie scoreAndPersistSubmission); de battle
+// rangschikt daarna wat daar uitkwam en telt daar een LADDERBONUS bij op
+// (aflopend per plek, laatste plek 0).
 //
-// Tot deze wijziging deelde de resolver hier een LADDERBONUS uit (rang 1 kreeg
-// max_points, de laatste 0), schreef die rechtstreeks in teams.score, logde hem
-// als `battle_award` en liet er via recomputeCrownAfterBattle nog een kroon-steal
-// (+1) op volgen. Dat hoorde niet in het ontwerp en is weg. Standen die vóór deze
-// wijziging zijn gespeeld dragen die punten nog wél — de battle_award-regels in
-// activity_log zijn het spoor.
+// Wat hier NIET meer gebeurt: de kroon-hercalculatie die vroeger op de bonus
+// volgde (recomputeCrownAfterBattle, +1 steal aan de nieuwe leider). Een battle
+// deelt punten uit maar verplaatst de kroon niet.
 
 /**
  * Resolve a battle challenge for one set: rangschik alle set-teams op wat ze op
- * deze challenge scoorden en leg de uitslag vast. Raakt geen enkele score aan.
+ * deze challenge scoorden, tel de ladderbonus per plek bij teams.score op en
+ * leg de uitslag vast.
  *
  * Idempotent via a CAS claim on set_challenges.battle_resolved_at (claimed FIRST,
  * WHERE battle_resolved_at IS NULL) — same pattern as tryConsumeShield. Concurrent
- * last-team submits race to claim; only the winner writes. Returns
- * { resolved: false } when the claim was lost (already resolved) or the
- * (set, challenge) pair doesn't exist.
+ * last-team submits race to claim; only the winner awards, zodat de ladderbonus
+ * nooit dubbel wordt bijgeschreven. Returns { resolved: false } when the claim
+ * was lost (already resolved) or the (set, challenge) pair doesn't exist.
  */
 export async function resolveBattle(
 	admin: AdminClient,
@@ -53,19 +52,31 @@ export async function resolveBattle(
 		.select('id');
 	if (!claimed || claimed.length === 0) return { resolved: false };
 
-	// 2. Teams in the set (TEAM_COLOR_ORDER-ordered). ALLE teams komen in de
+	// 2. Max-points from the challenge config.
+	const { data: ch } = await admin
+		.from('challenges')
+		.select('points_config')
+		.eq('id', challengeId)
+		.maybeSingle();
+	const { max_points } = parseBattleConfig(ch?.points_config);
+
+	// 3. Teams in the set (TEAM_COLOR_ORDER-ordered). ALLE teams komen in de
 	// ranglijst, ook wie niets inleverde — dat team staat er met 0.
 	const teams = await getTeamsInSet(admin, setId);
 	const teamIds = teams.map((t) => t.id);
 	if (teamIds.length === 0) return { resolved: true };
 
-	// 3. Ranglijst-invoer: wat elk team op DEZE challenge scoorde.
+	// De ladder volgt uit max_points + het ECHTE team_count op resolutiemoment —
+	// nooit opgeslagen, dus hij past altijd bij de werkelijke opkomst.
+	const ladder = deriveLadder(max_points, teamIds.length);
+
+	// 4. Ranglijst-invoer: wat elk team op DEZE challenge scoorde.
 	//
 	// `submissions.score` en niet `battle_raw_score`: score is het getal dat het
 	// team daadwerkelijk kreeg — hetzelfde getal dat de team-console als
 	// "DONE · +N" toont en dat in teams.score belandde. battle_raw_score was de
-	// pre-multiplier sorteersleutel van de verdwenen ladder en leest náást het
-	// leaderboard als een verkeerde score.
+	// pre-multiplier sorteersleutel van een eerdere ladder-opzet en leest náást
+	// het leaderboard als een verkeerde score.
 	const { data: subs } = await admin
 		.from('submissions')
 		.select('team_id, score')
@@ -77,10 +88,30 @@ export async function resolveBattle(
 		score: scoreByTeam.get(id) ?? 0
 	}));
 
-	// 4. Rangschikken en vastleggen. Geen score-updates, geen activity_log, geen
-	// kroon-hercalculatie: een battle deelt niets uit.
-	const ranking = computeBattleRanking(entries);
+	// 5. Rangschikken + de bonus per plek bepalen.
+	const ranking = computeBattleRanking(entries, ladder);
 
+	// 6. De ladderbonus bijschrijven (read-then-write, net als de rest van de
+	// score-pijplijn — resolutie draait als alle attempts op deze challenge klaar
+	// zijn, een rustig moment, dus een gelijktijdige score-write is onwaarschijnlijk).
+	// Per team gelogd als battle_award, zodat /admin/live de bonus kan tonen.
+	const { data: curTeams } = await admin.from('teams').select('id, score').in('id', teamIds);
+	const scoreById = new Map((curTeams ?? []).map((t) => [t.id, t.score]));
+	for (const r of ranking) {
+		if (r.awarded <= 0) continue;
+		await admin
+			.from('teams')
+			.update({ score: (scoreById.get(r.team_id) ?? 0) + r.awarded })
+			.eq('id', r.team_id);
+		await admin.from('activity_log').insert({
+			team_id: r.team_id,
+			event_type: 'battle_award',
+			payload: { challenge_id: challengeId, rank: r.rank, awarded: r.awarded }
+		} as never);
+	}
+
+	// 7. De uitslag vastleggen. Geen kroon-hercalculatie: een battle verplaatst
+	// de kroon niet.
 	await admin
 		.from('set_challenges')
 		.update({ battle_ranking: ranking as never } as never)
@@ -108,13 +139,12 @@ export async function resolveBattle(
  * resolveBattle directly — the same thing the host's "Resolve now" fallback
  * does. Safe to call on an already-resolved battle: resolveBattle CAS-claims
  * battle_resolved_at first and returns { resolved: false } if the claim is lost,
- * so a battle already resolved by the auto-hook wordt niet twee keer
- * weggeschreven.
+ * so a battle already resolved by the auto-hook krijgt de bonus nooit twee keer.
  *
  * A battle with ZERO submissions from this set's teams is skipped, not resolved:
  * there is nothing to rank, so battle_resolved_at/battle_ranking stay NULL and
  * the reveal excludes it (the reveal reads battles WHERE battle_ranking IS NOT
- * NULL). Een ranglijst waarin élk team op 0 staat zegt niets.
+ * NULL). Resolving it would award the whole ladder to teams that never played.
  *
  * Per-battle independent, so order doesn't matter here; reveal ordering (by
  * set_challenges.position) is stuk 3b's concern.
@@ -223,7 +253,7 @@ export type RevealableBattle = {
 	 * The stored outcome, ordered best→worst — BattleRankEntry, NOT BattleEntry.
 	 * BattleEntry ({teamId, score}) is resolveBattle's INPUT; what lands in
 	 * set_challenges.battle_ranking is computeBattleRanking's OUTPUT
-	 * ({team_id, rank, score}).
+	 * ({team_id, rank, score, awarded}).
 	 */
 	battle_ranking: BattleRankEntry[];
 };

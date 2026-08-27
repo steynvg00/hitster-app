@@ -237,13 +237,11 @@
 		if (a.event_type === 'tap_to_break' && payload) {
 			return `🔒 ${teamLabel(a.team_id)} locked ${teamLabel(payload.target_team_id as string | null) ?? '?'}`;
 		}
-		// LEGACY: battles kenden ooit een ladderbonus toe en logden die per team.
-		// Dat gebeurt niet meer — een battle raakt de score niet. Het label blijft
-		// staan zodat oude regels in de log leesbaar blijven.
+		// De ladderbonus van een beslechte battle, per team gelogd door resolveBattle.
 		if (a.event_type === 'battle_award' && payload) {
 			const rank = Number(payload.rank ?? 0);
 			const awarded = Number(payload.awarded ?? 0);
-			return `⚔️ ${teamLabel(a.team_id)} ranked ${ordinal(rank)} (+${awarded}, oude bonus)`;
+			return `⚔️ ${teamLabel(a.team_id)} ranked ${ordinal(rank)} (+${awarded})`;
 		}
 		if (a.event_type === 'challenge_closed') return 'Challenge closed';
 		if (a.event_type === 'attempt_reset') return 'Attempt reset';
