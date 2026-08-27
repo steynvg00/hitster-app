@@ -4,7 +4,18 @@
 	import type { PageData, ActionData } from './$types';
 	import { setPresets } from '$lib/presets/setPresets';
 	import Modal from '$lib/components/ui/Modal.svelte';
-	import * as LucideIcons from 'lucide-svelte';
+	import {
+		Sparkles,
+		PartyPopper,
+		Coins,
+		Zap,
+		Mountain,
+		Swords,
+		Trophy,
+		Medal,
+		Dices,
+		FilePlus2
+	} from 'lucide-svelte';
 	import { PackageOpen } from 'lucide-svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -59,8 +70,30 @@
 		return setPresets.find((p) => p.slug === key)?.icon ?? 'FilePlus2';
 	}
 
+	/**
+	 * De iconen die `setPresets` bij naam noemt, als letterlijke map.
+	 *
+	 * Dit was een lookup in een `import * as LucideIcons`-namespace, en juist die
+	 * vorm blokkeerde tree-shaking voor de HELE app (zie de noot in
+	 * $lib/variants.ts). De namen komen uit één gesloten lijst —
+	 * $lib/presets/setPresets.ts — dus een expliciete map dekt ze allemaal, en
+	 * FilePlus2 is dezelfde fallback die presetIconName() al teruggeeft.
+	 */
+	const PRESET_ICONS: Record<string, typeof Sparkles> = {
+		Sparkles,
+		PartyPopper,
+		Coins,
+		Zap,
+		Mountain,
+		Swords,
+		Trophy,
+		Medal,
+		Dices,
+		FilePlus2
+	};
+
 	function getIcon(name: string) {
-		return (LucideIcons as Record<string, unknown>)[name] as typeof LucideIcons.Sparkles;
+		return PRESET_ICONS[name] ?? FilePlus2;
 	}
 
 	function setParam(key: string, value: string) {
