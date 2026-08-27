@@ -17,6 +17,15 @@
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
+	// Het naamveld is two-way gebonden aan lokale state. Met `value={form?.name}`
+	// stond de DOM-waarde onder controle van het gedeelde template-effect van dit
+	// fragment; elke tik op de fotocirkel liet dat effect opnieuw lopen en schreef
+	// '' over de al ingetypte naam. De binding maakt de state de bron van waarheid,
+	// dus de naam overleeft het opnieuw tekenen van de fotosectie.
+	// svelte-ignore state_referenced_locally -- de beginwaarde is precies wat we willen:
+	// na een mislukte POST vult de server de naam voor, daarna is het veld van de speler.
+	let playerName = $state(form?.name ?? '');
+
 	let photoOpen = $state(false);
 	let photoPreviewUrl = $state<string | null>(null);
 	let photoFile = $state<File | null>(null);
@@ -88,6 +97,7 @@
 			method="POST"
 			enctype="multipart/form-data"
 			use:enhance={({ formData }) => {
+				formData.set('name', playerName);
 				if (photoFile) formData.set('photo', photoFile, photoFile.name);
 				submitting = true;
 				return async ({ update }) => {
@@ -140,7 +150,7 @@
 				<input
 					name="name"
 					type="text"
-					value={form?.name ?? ''}
+					bind:value={playerName}
 					required
 					minlength="2"
 					maxlength="30"
