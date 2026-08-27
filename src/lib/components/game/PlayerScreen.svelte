@@ -84,7 +84,26 @@
 			<div class="player-screen__tint" style="background: {backdrop};"></div>
 		{/if}
 		{#if corners}
-			<img src={OVERLAY_ASSETS.frameCorners} alt="" class="player-screen__corners" />
+			<img
+				src={OVERLAY_ASSETS.frameCorners.linksboven}
+				alt=""
+				class="player-screen__corner player-screen__corner--lb"
+			/>
+			<img
+				src={OVERLAY_ASSETS.frameCorners.rechtsboven}
+				alt=""
+				class="player-screen__corner player-screen__corner--rb"
+			/>
+			<img
+				src={OVERLAY_ASSETS.frameCorners.linksonder}
+				alt=""
+				class="player-screen__corner player-screen__corner--lo"
+			/>
+			<img
+				src={OVERLAY_ASSETS.frameCorners.rechtsonder}
+				alt=""
+				class="player-screen__corner player-screen__corner--ro"
+			/>
 		{/if}
 	</div>
 	<div class="player-screen__body {className}">
@@ -205,22 +224,54 @@
 		inset: 0;
 	}
 
-	/* De hoeken vullen de vaste laag, dus ze landen in de hoeken van het SCHERM
-	   in plaats van in die van .player-screen.
+	/* ── Vier losse hoeken ──────────────────────────────────────────────────
+	   Was één afbeelding van 768x1376 met alle vier de hoeken erin, met
+	   `inset: 0` en `object-fit: cover` over het hele vlak uitgerekt. Twee
+	   problemen: 86,40% van dat bestand was alfa 0 (lege ruimte die elk scherm
+	   meelaadde), en de hoeken waren niet afzonderlijk te plaatsen — cover
+	   schaalt op de langste as en snijdt de rest weg, dus op een smal scherm
+	   schoven ze naar buiten.
 
-	   GEEN opacity meer. Die stond op 0.35-0.5 en zette de hele afbeelding door,
-	   inclusief de volledig dekkende delen — daardoor was de code-regen dwars
-	   door het kristal heen te zien. Gemeten op het asset
-	   (frame-hoeken_kristal_alpha.png, 768x1376): 10,01% van de pixels heeft
-	   alfa 255 en 86,40% heeft alfa 0. De doorzichtigheid zit dus al ín het
-	   bestand; een tweede laag opacity eroverheen maakte ook het dekkende deel
-	   doorzichtig. Het asset is nooit naar WebP omgezet en is ongeschonden. */
-	.player-screen__corners {
+	   Nu is elke hoek een eigen bestand, strak bijgesneden, verankerd in zijn
+	   eigen SCHERMhoek. De breedte staat in procenten van de laag en komt uit
+	   de bron: 265/768 = 34,51% voor de bovenhoeken, 335/768 = 43,62% en
+	   336/768 = 43,75% voor de onderhoeken. De hoogte volgt uit de eigen
+	   beeldverhouding, dus ze vervormen op geen enkel schermformaat.
+
+	   De inzetten komen ook uit de bron: de bovenhoeken stonden 11px van de
+	   rand (1,43% breed, 0,80% hoog), de onderhoeken sloten aan op de rand.
+
+	   GEEN opacity. Die stond ooit op 0.35-0.5 en zette de hele afbeelding
+	   door, inclusief de volledig dekkende delen — daardoor was de code-regen
+	   dwars door het kristal heen te zien. De doorzichtigheid zit in het
+	   alfakanaal. */
+	.player-screen__corner {
 		position: absolute;
-		inset: 0;
-		height: 100%;
-		width: 100%;
-		object-fit: cover;
+		height: auto;
+	}
+
+	.player-screen__corner--lb {
+		top: 0.8%;
+		left: 1.43%;
+		width: 34.51%;
+	}
+
+	.player-screen__corner--rb {
+		top: 0.8%;
+		right: 1.43%;
+		width: 34.51%;
+	}
+
+	.player-screen__corner--lo {
+		bottom: 0;
+		left: 0;
+		width: 43.62%;
+	}
+
+	.player-screen__corner--ro {
+		bottom: 0;
+		right: 0;
+		width: 43.75%;
 	}
 
 	.player-screen__body {

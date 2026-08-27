@@ -68,8 +68,31 @@ export const CHALLENGE_LOGOS = {
 export const OVERLAY_ASSETS = {
 	/** Code-regen tegel — zie CodeRain.svelte. */
 	codeRain: `${BASE}/voor-claude-design/overlay-coderain_cyaan.png`,
-	/** Kristal-hoeken overlay, opacity 0.35-0.4. */
-	frameCorners: `${BASE}/voor-claude-design/frame-hoeken_kristal_alpha.png`,
+	/**
+	 * Kristal-hoeken, vier LOSSE bestanden.
+	 *
+	 * Was één PNG van 768x1376 met alle vier de hoeken erin, uitgerekt over het
+	 * hele vlak — 362.657 bytes waarvan 86,40% alfa 0: bijna negen tiende lege
+	 * ruimte die elk scherm meelaadde, en de hoeken waren niet los te plaatsen.
+	 *
+	 * Elke hoek is nu strak bijgesneden tot zijn eigen inhoud en apart verankerd
+	 * in zijn SCHERMhoek (zie PlayerScreen). Zelfde behandeling als batch A:
+	 * WebP, kwaliteit 88, alphaQuality 100. Samen 89.186 bytes — 75,4% minder.
+	 *
+	 * Native pixelmaat behouden, NIET geschaald: de grootste hoek rendert op een
+	 * 402px-scherm 175 CSS-px breed, dus 526 device-px op 3x DPR, en het bestand
+	 * is 335px. Verkleinen zou hem juist te klein maken.
+	 */
+	frameCorners: {
+		/** 265x288, 17.634 bytes. Inzet vanaf de schermhoek: 1,43% / 0,80%. */
+		linksboven: `${BASE}/voor-claude-design/frame-hoek-linksboven-v2.webp`,
+		/** 265x287, 18.060 bytes. Inzet: 1,43% / 0,80%. */
+		rechtsboven: `${BASE}/voor-claude-design/frame-hoek-rechtsboven-v2.webp`,
+		/** 335x428, 26.718 bytes. Sluit aan op de hoek (inzet 0). */
+		linksonder: `${BASE}/voor-claude-design/frame-hoek-linksonder-v2.webp`,
+		/** 336x427, 26.774 bytes. Sluit aan op de hoek (inzet 0). */
+		rechtsonder: `${BASE}/voor-claude-design/frame-hoek-rechtsonder-v2.webp`
+	},
 	lightningArc: `${BASE}/voor-claude-design/effect-lightning-arc_alpha.png`,
 	glitchBackground: `${BASE}/voor-claude-design/achtergrond-attention_glitch.jpg`,
 	/** Voorbeeld van een gameset-logo (Vriendenweekend 2026). */
