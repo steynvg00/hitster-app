@@ -162,13 +162,18 @@
 
 	// The value allYearValues holds for a tab/slot the team has never touched.
 	//
-	// Deliberately OUT of YearInput's own range (min 2000) so an untouched year can
-	// never accidentally score. That also means it must never be used to decide
-	// "did the team answer this?": the browser clamps an out-of-range value to `min`
-	// and Svelte's input binding writes that clamped number straight back into state
-	// during hydration, so the seed is already gone by the time anything can read it.
-	// Answeredness is tracked explicitly in yearTouched instead.
-	const YEAR_SEED = 1990;
+	// Deliberately OUT of YearInput's own range so an untouched year can never
+	// accidentally score. That also means it must never be used to decide "did the
+	// team answer this?": the browser clamps an out-of-range value to `min` and
+	// Svelte's input binding writes that clamped number straight back into state
+	// during hydration, so the seed is already gone by the time anything can read
+	// it. Answeredness is tracked explicitly in yearTouched instead.
+	//
+	// Was 1990, want dat lag toen onder de ondergrens van de slider (2000). Die
+	// ondergrens is nu zelf 1990, zodat de track uit 1995 gekozen kan worden — dus
+	// 1990 is voortaan een GELDIG antwoord en deugt niet meer als kiemwaarde. Het
+	// hele punt van dit getal is dat het buiten bereik ligt; vandaar 1900.
+	const YEAR_SEED = 1900;
 
 	// Year values: per-tab, per-slot
 	let allYearValues = $state<number[][]>(
