@@ -1,0 +1,133 @@
+
+> hitster-app@0.0.1 dev
+> vite dev --port 5199
+
+9:46:53 PM [vite] (client) Forced re-optimization of dependencies
+
+  VITE v8.0.10  ready in 2356 ms
+
+  ➜  Local:   http://localhost:5199/
+  ➜  Network: use --host to expose
+9:46:55 PM [vite] (client) [optimizer] bundling dependencies...
+[dev-auth] Admin login bypassed — acting as steynvg.00@gmail.com
+9:46:58 PM [vite-plugin-svelte] src/lib/components/game/PowerupRevealModal.svelte:150:24 This reference only captures the initial value of `powerupType`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally
+9:46:58 PM [vite-plugin-svelte] src/lib/components/game/PowerupRevealModal.svelte:151:47 This reference only captures the initial value of `skipRollAnimation`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally
+9:46:59 PM [vite-plugin-svelte] src/lib/components/game/PowerupActivationModal.svelte:124:28 This reference only captures the initial value of `variantFields`. Did you mean to reference it inside a derived instead?
+https://svelte.dev/e/state_referenced_locally
+9:47:14 PM [vite-plugin-svelte] src/lib/components/DevNav.svelte:617:7 A form label must be associated with a control
+https://svelte.dev/e/a11y_label_has_associated_control
+9:47:14 PM [vite-plugin-svelte] src/lib/components/DevNav.svelte:53:5 `searchInput` is updated, but is not declared with `$state(...)`. Changing its value will not correctly trigger updates
+https://svelte.dev/e/non_reactive_update
+9:47:35 PM [vite-plugin-svelte] src/lib/components/DevNav.svelte:617:7 A form label must be associated with a control
+https://svelte.dev/e/a11y_label_has_associated_control
+9:47:35 PM [vite-plugin-svelte] src/lib/components/DevNav.svelte:53:5 `searchInput` is updated, but is not declared with `$state(...)`. Changing its value will not correctly trigger updates
+https://svelte.dev/e/non_reactive_update
+9:47:36 PM [vite-plugin-svelte] src/lib/components/game/PowerupRevealModal.svelte:150:24 This reference only captures the initial value of `powerupType`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally
+9:47:36 PM [vite-plugin-svelte] src/lib/components/game/PowerupRevealModal.svelte:151:47 This reference only captures the initial value of `skipRollAnimation`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally
+9:47:36 PM [vite-plugin-svelte] src/lib/components/game/PowerupActivationModal.svelte:124:28 This reference only captures the initial value of `variantFields`. Did you mean to reference it inside a derived instead?
+https://svelte.dev/e/state_referenced_locally
+9:47:36 PM [vite] (client) [console.warn] [svelte] hydration_attribute_changed
+The `src` attribute on `<img src="/uploads/Powerups/lifeline.png" alt="" class="slot-img svelte-1r3hw85 slot-img--rolling" style="--reel-step: 0.045s;" onerror="this.__e=event">` changed its value between server and client renders. The client value, `/uploads/Powerups/lucky_dice.png`, will be ignored in favour of the server value
+https://svelte.dev/e/hydration_attribute_changed
+9:49:39 PM [vite] (client) hmr update /src/routes/layout.css, /src/lib/components/game/PowerupRevealModal.svelte, /src/lib/components/game/PowerupActivationModal.svelte, /src/lib/components/CodeRain.svelte
+9:49:39 PM [vite] (ssr) page reload src/lib/mixup-assets.ts
+9:49:39 PM [vite] (client) hmr update /src/routes/layout.css
+9:49:39 PM [vite] (ssr) page reload src/routes/dev/reveal/+page.svelte
+9:49:39 PM [vite-plugin-svelte] src/lib/components/game/PowerupRevealModal.svelte:150:24 This reference only captures the initial value of `powerupType`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally
+9:49:39 PM [vite-plugin-svelte] src/lib/components/game/PowerupRevealModal.svelte:151:47 This reference only captures the initial value of `skipRollAnimation`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally
+9:49:39 PM [vite] (client) page reload .svelte-kit/generated/client/nodes/28.js
+9:49:39 PM [vite] (client) page reload .svelte-kit/generated/client/app.js
+9:49:39 PM [vite-plugin-svelte] src/lib/components/game/PowerupRevealModal.svelte:150:24 This reference only captures the initial value of `powerupType`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally
+9:49:39 PM [vite-plugin-svelte] src/lib/components/game/PowerupRevealModal.svelte:151:47 This reference only captures the initial value of `skipRollAnimation`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally
+9:49:39 PM [vite] (client) hmr update /src/lib/components/game/PowerupRevealModal.svelte, /src/lib/components/game/PowerupRevealModal.svelte?svelte&type=style&lang.css, /src/routes/layout.css
+9:49:39 PM [vite] (ssr) page reload src/lib/components/game/PowerupRevealModal.svelte
+9:50:04 PM [vite] (client) hmr update /src/routes/layout.css, /src/lib/components/game/PowerupRevealModal.svelte, /src/lib/components/game/PowerupActivationModal.svelte, /src/lib/components/CodeRain.svelte
+9:50:04 PM [vite] (ssr) page reload src/lib/mixup-assets.ts
+9:50:04 PM [vite] (client) hmr update /src/routes/layout.css
+9:50:04 PM [vite] (ssr) page reload src/routes/dev/reveal/+page.svelte
+9:50:04 PM [vite-plugin-svelte] src/lib/components/game/PowerupRevealModal.svelte:150:24 This reference only captures the initial value of `powerupType`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally
+9:50:04 PM [vite-plugin-svelte] src/lib/components/game/PowerupRevealModal.svelte:151:47 This reference only captures the initial value of `skipRollAnimation`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally
+9:50:04 PM [vite-plugin-svelte] src/lib/components/game/PowerupRevealModal.svelte:150:24 This reference only captures the initial value of `powerupType`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally
+9:50:04 PM [vite-plugin-svelte] src/lib/components/game/PowerupRevealModal.svelte:151:47 This reference only captures the initial value of `skipRollAnimation`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally
+9:50:05 PM [vite] (client) page reload .svelte-kit/generated/client/nodes/28.js
+9:50:05 PM [vite] (client) page reload .svelte-kit/generated/client/app.js
+9:50:05 PM [vite] (client) hmr update /src/lib/components/game/PowerupRevealModal.svelte, /src/lib/components/game/PowerupRevealModal.svelte?svelte&type=style&lang.css, /src/routes/layout.css
+9:50:05 PM [vite] (ssr) page reload src/lib/components/game/PowerupRevealModal.svelte
+9:51:04 PM [vite-plugin-svelte] src/lib/components/game/PowerupRevealModal.svelte:150:24 This reference only captures the initial value of `powerupType`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally
+9:51:04 PM [vite-plugin-svelte] src/lib/components/game/PowerupRevealModal.svelte:151:47 This reference only captures the initial value of `skipRollAnimation`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally
+9:51:04 PM [vite] (client) hmr update /src/lib/components/game/PowerupRevealModal.svelte, /src/routes/layout.css
+9:51:04 PM [vite] (ssr) page reload src/lib/components/game/PowerupRevealModal.svelte
+9:51:11 PM [vite] (client) page reload .svelte-kit/generated/client/nodes/0.js
+9:51:11 PM [vite] (client) page reload .svelte-kit/generated/client/nodes/1.js
+9:51:11 PM [vite] (client) page reload .svelte-kit/generated/client/nodes/28.js
+9:51:11 PM [vite] (client) page reload .svelte-kit/generated/client/app.js
+9:51:11 PM [vite] (client) page reload .svelte-kit/generated/client/matchers.js
+9:51:11 PM [vite] (ssr) page reload .svelte-kit/generated/server/internal.js
+9:51:11 PM [vite] (client) page reload .svelte-kit/generated/root.js
+9:51:11 PM [vite] (ssr) page reload .svelte-kit/generated/root.js
+9:51:11 PM [vite] (ssr) page reload .svelte-kit/generated/root.svelte
+9:51:18 PM [vite-plugin-svelte] src/lib/components/game/PowerupRevealModal.svelte:150:24 This reference only captures the initial value of `powerupType`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally
+9:51:18 PM [vite-plugin-svelte] src/lib/components/game/PowerupRevealModal.svelte:151:47 This reference only captures the initial value of `skipRollAnimation`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally
+9:51:32 PM [vite-plugin-svelte] src/lib/components/game/PowerupRevealModal.svelte:150:24 This reference only captures the initial value of `powerupType`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally
+9:51:32 PM [vite-plugin-svelte] src/lib/components/game/PowerupRevealModal.svelte:151:47 This reference only captures the initial value of `skipRollAnimation`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally
+9:51:32 PM [vite] (client) [console.warn] [svelte] hydration_attribute_changed
+The `src` attribute on `<img src="/uploads/Powerups/tap_to_break.png" alt="" class="slot-img svelte-1r3hw85 slot-img--rolling" style="--reel-step: 0.045s;" onerror="this.__e=event">` changed its value between server and client renders. The client value, `/uploads/Powerups/double_down.png`, will be ignored in favour of the server value
+https://svelte.dev/e/hydration_attribute_changed
+9:52:25 PM [vite] (client) [console.warn] [svelte] hydration_attribute_changed
+The `src` attribute on `<img src="/uploads/Powerups/double_down.png" alt="" class="slot-img svelte-1r3hw85 slot-img--rolling" style="--reel-step: 0.045s;" onerror="this.__e=event">` changed its value between server and client renders. The client value, `/uploads/Powerups/x_ray.png`, will be ignored in favour of the server value
+https://svelte.dev/e/hydration_attribute_changed
+9:52:29 PM [vite] (client) [console.warn] [svelte] hydration_attribute_changed
+The `src` attribute on `<img src="/uploads/Powerups/lifeline.png" alt="" class="slot-img svelte-1r3hw85 slot-img--rolling" style="--reel-step: 0.045s;" onerror="this.__e=event">` changed its value between server and client renders. The client value, `/uploads/Powerups/single_event_mult.png`, will be ignored in favour of the server value
+https://svelte.dev/e/hydration_attribute_changed
+9:52:34 PM [vite] (client) [console.warn] [svelte] hydration_attribute_changed
+The `src` attribute on `<img src="/uploads/Powerups/lucky_dice.png" alt="" class="slot-img svelte-1r3hw85 slot-img--rolling" style="--reel-step: 0.045s;" onerror="this.__e=event">` changed its value between server and client renders. The client value, `/uploads/Powerups/time_drain.png`, will be ignored in favour of the server value
+https://svelte.dev/e/hydration_attribute_changed
+9:53:17 PM [vite-plugin-svelte] src/lib/components/game/PowerupRevealModal.svelte:150:24 This reference only captures the initial value of `powerupType`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally
+9:53:17 PM [vite-plugin-svelte] src/lib/components/game/PowerupRevealModal.svelte:151:47 This reference only captures the initial value of `skipRollAnimation`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally
+9:53:17 PM [vite] (client) hmr update /src/lib/components/game/PowerupRevealModal.svelte, /src/routes/layout.css
+9:53:17 PM [vite] (ssr) page reload src/lib/components/game/PowerupRevealModal.svelte
+9:53:17 PM [vite-plugin-svelte] src/lib/components/game/PowerupRevealModal.svelte:150:24 This reference only captures the initial value of `powerupType`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally
+9:53:17 PM [vite-plugin-svelte] src/lib/components/game/PowerupRevealModal.svelte:151:47 This reference only captures the initial value of `skipRollAnimation`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally
+9:53:18 PM [vite-plugin-svelte] src/lib/components/game/PowerupRevealModal.svelte:150:24 This reference only captures the initial value of `powerupType`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally
+9:53:18 PM [vite-plugin-svelte] src/lib/components/game/PowerupRevealModal.svelte:151:47 This reference only captures the initial value of `skipRollAnimation`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally
+9:53:18 PM [vite] (client) [console.warn] [svelte] hydration_attribute_changed
+The `src` attribute on `<img src="/uploads/Powerups/lifeline.png" alt="" class="slot-img svelte-1r3hw85 slot-img--rolling" style="--reel-step: 0.045s;" onerror="this.__e=event">` changed its value between server and client renders. The client value, `/uploads/Powerups/penalty_shot.png`, will be ignored in favour of the server value
+https://svelte.dev/e/hydration_attribute_changed
+9:53:22 PM [vite] (client) [console.warn] [svelte] hydration_attribute_changed
+The `src` attribute on `<img src="/uploads/Powerups/all_seeing_eye.png" alt="" class="slot-img svelte-1r3hw85 slot-img--rolling" style="--reel-step: 0.045s;" onerror="this.__e=event">` changed its value between server and client renders. The client value, `/uploads/Powerups/free_answer.png`, will be ignored in favour of the server value
+https://svelte.dev/e/hydration_attribute_changed
+9:53:27 PM [vite] (client) [console.warn] [svelte] hydration_attribute_changed
+The `src` attribute on `<img src="/uploads/Powerups/lucky_dice.png" alt="" class="slot-img svelte-1r3hw85 slot-img--rolling" style="--reel-step: 0.045s;" onerror="this.__e=event">` changed its value between server and client renders. The client value, `/uploads/Powerups/double_down.png`, will be ignored in favour of the server value
+https://svelte.dev/e/hydration_attribute_changed
+9:53:42 PM [vite] (client) hmr update /src/routes/layout.css
+9:53:42 PM [vite] (ssr) page reload src/routes/dev/reveal/+page.svelte
+ENOENT: no such file or directory, stat '/Users/steynvangerwen/Claude Projecten/M!XUP/.svelte-kit/types/src/routes/proxy+page.server.ts'
+9:53:42 PM [vite] (client) page reload .svelte-kit/generated/client/nodes/28.js
+9:53:42 PM [vite] (client) page reload .svelte-kit/generated/client/nodes/28.js
+9:53:42 PM [vite] (client) page reload .svelte-kit/generated/client/app.js
+ENOENT: no such file or directory, stat '/Users/steynvangerwen/Claude Projecten/M!XUP/.svelte-kit/types/src/routes/proxy+page.server.ts'
+ENOENT: no such file or directory, stat '/Users/steynvangerwen/Claude Projecten/M!XUP/.svelte-kit/types/src/routes/proxy+page.server.ts'
