@@ -139,6 +139,9 @@
 	 * stuurden altijd al het juiste ding aan.
 	 */
 	const tabUnit = $derived(isMultiSource ? 'Beurt' : 'Track');
+	/* Meervoud van datzelfde woord, voor de overzichtsregel op de poort. Apart
+	   omdat 'track' → 'tracks' en 'beurt' → 'beurten' geen gedeelde regel hebben. */
+	const tabUnitPlural = $derived(isMultiSource ? 'beurten' : 'tracks');
 
 	// ── Field state: per-tab, per-slot ───────────────────────────────────────
 	// allDrafts[tabIdx][slotIdx].fieldValues[field]
@@ -391,12 +394,42 @@
 		return d;
 	}
 
-	// Aantal te raden tracks, voor de variant-pil op de pre-game poort. Som van de
+	// Aantal te raden tracks, voor het overzicht op de pre-game poort. Som van de
 	// bron-tracks over alle tabs: een mashup met 3 bronnen in één tab telt als 3,
-	// een standaard challenge met 5 tabs als 5.
+	// een standaard challenge met 5 tabs als 5, en een fragments-challenge met 3
+	// beurten van 3 tracks als 9 — dat laatste is precies waarom hier de BRON-
+	// TRACKS geteld worden en niet de tabs.
 	const gateTrackCount = $derived(
 		data.tabs.reduce((n, t) => n + Math.max(t.sourceTracks.length, 1), 0)
 	);
+
+	/**
+	 * Welke velden deze challenge vraagt, en welke daarvan bonus zijn — afgeleid
+	 * uit de geladen data, niet uit een lijstje per variant.
+	 *
+	 * `data.tabs[].fields` is de bron: zodra een tab eigen velden heeft (C3b)
+	 * staat daar zijn eigen lijst in, en zonder override staat er de
+	 * challengebrede lijst. De UNIE over de tabs is dus in beide gevallen het
+	 * eerlijke antwoord op "wat moet je invullen". De VOLGORDE komt uit
+	 * `data.variantFields`, die de host-console via points_config.fields[]
+	 * vastlegt; wat daar niet in staat komt er achteraan.
+	 */
+	const gateFieldNames = $derived.by(() => {
+		const present = data.tabs.flatMap((t) => t.fields ?? []);
+		const source = present.length > 0 ? present : variantFields.map((f) => String(f));
+
+		// Volgorde uit variantFields (= points_config.fields[], de ▲/▼-volgorde uit
+		// de host-console), daarna wat alleen op een tab staat.
+		const ordered = variantFields.map((f) => String(f)).filter((f) => source.includes(f));
+		return [...ordered, ...source.filter((f) => !ordered.includes(f))].filter(
+			(f, i, a) => a.indexOf(f) === i
+		);
+	});
+
+	const gateBonusFields = $derived.by(() => {
+		const bonus = [...(data.bonusFields ?? []), ...data.tabs.flatMap((t) => t.bonusFields ?? [])];
+		return gateFieldNames.filter((f) => bonus.includes(f));
+	});
 
 	// ── Tab state ─────────────────────────────────────────────────────────────
 	let activeTabIndex = $state(0);
@@ -2137,8 +2170,9 @@
 		"6 Pre-game poort" ("TIMER START PAS BIJ TAP").
 
 		Dit is de wachtstate vóór de start: er is nog geen challenge_attempts-rij,
-		dus de timer loopt nog niet. Eén gecentreerde glaskaart met de variant-pil,
-		de titel en de uitleg, daaronder de startknop en de timer-noot.
+		dus de timer loopt nog niet. Eén gecentreerde glaskaart met de titel, de
+		uitleg en het overzicht van wat deze challenge vraagt, daaronder de
+		startknop en de timer-noot.
 
 		Code-regen staat hier WEL aan (het enige scherm in deze fase dat hem heeft;
 		7B en 8 hebben in de bron alleen de kristal-hoeken). CodeRain schildert zelf
@@ -2162,30 +2196,86 @@
 				class="flex flex-col gap-3.5 rounded-mixup-hero px-5 py-6 mixup-glass-strong squircle"
 				style="background: linear-gradient(135deg, rgba(229,242,255,0.10), rgba(229,242,255,0.03));"
 			>
-				<span
-					class="self-start rounded-full border px-3 py-[5px] text-[10px] font-extrabold tracking-[0.16em] text-mixup-cyan uppercase"
-					style="border-color: rgba(0,229,255,0.5);"
-				>
-					{data.challenge.variant} · {gateTrackCount}
-					{gateTrackCount === 1 ? 'track' : 'tracks'}
-				</span>
+				<!--
+					De variant-pil ("STANDARD · 8 TRACKS") is weg. Hij zei het type hardop
+					in hostjargon en herhaalde daarna een getal dat nu in het overzicht
+					hieronder staat, met meer context erbij.
 
+					De titel is `challengeTitle`, niet `data.challenge.title`: de setnaam
+					staat in de opgeslagen titel ("Vrienden Weekend 2026 Hitster") en
+					hoort niet op het scherm van een speler die al in die set zit. Dezelfde
+					afkorting die het antwoordscherm gebruikte.
+				-->
 				<h1
 					class="font-display text-[44px] leading-[0.95] font-black text-mixup-paper uppercase"
 					style="text-shadow: 0 0 26px rgba(124,77,255,0.85);"
 				>
-					{data.challenge.title}
+					{challengeTitle}
 				</h1>
 
-				{#if data.tutorialText}
+				{#if data.tutorialText || gateFieldNames.length > 0}
 					<div
-						class="flex flex-col gap-1.5 border-t pt-3"
+						class="flex flex-col gap-2.5 border-t pt-3"
 						style="border-color: rgba(229,242,255,0.12);"
 					>
 						<span class="text-[11px] font-extrabold tracking-[0.14em] text-mixup-yellow uppercase"
 							>Hoe werkt het</span
 						>
-						<p class="text-sm leading-[1.5] font-medium text-mixup-muted">{data.tutorialText}</p>
+						{#if data.tutorialText}
+							<p class="text-sm leading-[1.5] font-medium text-mixup-muted">{data.tutorialText}</p>
+						{/if}
+
+						<!--
+							Het overzicht: wat er te raden valt, wat je invult, en wat daarvan
+							bonus is. Drie regels van label + waarde, alles uit de geladen data
+							— `gateTrackCount` telt de bron-tracks over alle tabs (bij fragments
+							dus 3 beurten × 3 tracks = 9), `gateFieldNames` de unie van de
+							velden per tab in de volgorde die de host-console vastlegt.
+						-->
+						{#if gateFieldNames.length > 0}
+							<dl class="flex flex-col gap-1.5 text-[13px] leading-tight">
+								<div class="flex gap-2.5">
+									<dt
+										class="w-[74px] shrink-0 pt-[1px] text-[10px] font-extrabold tracking-[0.12em] text-mixup-dim uppercase"
+									>
+										Te raden
+									</dt>
+									<dd class="font-semibold text-mixup-paper">
+										{gateTrackCount}
+										{gateTrackCount === 1
+											? 'track'
+											: 'tracks'}{#if data.tabs.length > 1 && data.tabs.length !== gateTrackCount}<span
+												class="font-medium text-mixup-muted"
+											>
+												— {data.tabs.length}
+												{tabUnitPlural} van {Math.round(gateTrackCount / data.tabs.length)}</span
+											>{/if}
+									</dd>
+								</div>
+								<div class="flex gap-2.5">
+									<dt
+										class="w-[74px] shrink-0 pt-[1px] text-[10px] font-extrabold tracking-[0.12em] text-mixup-dim uppercase"
+									>
+										Invullen
+									</dt>
+									<dd class="font-semibold text-mixup-paper">
+										{gateFieldNames.map((f) => resultFieldLabel(f as AnswerField)).join(' · ')}
+									</dd>
+								</div>
+								{#if gateBonusFields.length > 0}
+									<div class="flex gap-2.5">
+										<dt
+											class="w-[74px] shrink-0 pt-[1px] text-[10px] font-extrabold tracking-[0.12em] text-mixup-dim uppercase"
+										>
+											Bonus
+										</dt>
+										<dd class="font-semibold text-mixup-amber">
+											{gateBonusFields.map((f) => resultFieldLabel(f as AnswerField)).join(' · ')}
+										</dd>
+									</div>
+								{/if}
+							</dl>
+						{/if}
 					</div>
 				{/if}
 			</div>
