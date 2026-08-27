@@ -30,3 +30,7 @@ static/ffmpeg/
 
 # Design handoff package (assets go to static/, the package itself stays out of git)
 design_handoff_mixup_redesign/
+
+# Spelersflow-simulatie: screenshots blijven buiten de repo
+/tmp/sim-screenshots/
+sim-screenshots/
