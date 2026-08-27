@@ -157,6 +157,45 @@ html {
 	background-image: var(--gradient-mixup-page);
 	background-repeat: no-repeat;
 	background-attachment: fixed;
+
+	/* ── Geen rubber-band ───────────────────────────────────────────────────
+	   Dit is wat de sticky bovenzone van /challenge/[id] naar beneden liet
+	   duwen: de teampil, de klok, de segmentbalk en de audiokaart schoven mee
+	   als je voorbij de bovenrand trok.
+
+	   Het mechanisme zit in de definitie van sticky, niet in een bug. Een
+	   sticky element met `top: 0` krijgt pas een verschuiving zodra zijn
+	   natuurlijke plek BOVEN de bovenrand van het scrollvenster zou komen. Bij
+	   rubber-band is de scrollpositie NEGATIEF, dus die plek ligt juist lager
+	   dan normaal en er is niets om vast te zetten: het element staat op zijn
+	   natuurlijke plek, en die is met de hele pagina meegetrokken.
+
+	   Dat verklaart ook meteen waarom de powerup-pil onderaan wél bleef staan,
+	   het gedrag dat als voorbeeld genoemd werd: die hangt aan `bottom`, en die
+	   grens is bij een negatieve scrollpositie juist wél actief.
+
+	   Nagemeten in WebKit op de antwoordkaart (venster 714, pagina 1152):
+	   .stick-top staat bovenaan op top=56 (zijn natuurlijke plek onder de
+	   safe-area-marge) en zit vanaf scrollY 200 op top=0 en blijft daar. Sticky
+	   werkt dus gewoon; alleen de negatieve kant ontbrak. Die kant is op
+	   desktop niet na te bootsen — de scrollpositie klemt daar op 0.
+
+	   `overscroll-behavior-y: none` haalt de negatieve kant weg. Geen negatieve
+	   scrollpositie betekent geen natuurlijke plek die naar beneden verschuift,
+	   dus de zone kan per constructie niet meer meebewegen.
+
+	   Waarom niet `position: fixed` voor die zone: fixed lost dit niet op.
+	   Tijdens overscroll en tijdens het krimpen van de adresbalk verliest een
+	   fixed element op iOS Safari zijn verankering aan de viewport — in dit
+	   project al eens gemeten als een verschuiving van precies -scrollY. Fixed
+	   haalt het element bovendien uit de flow, zodat de inhoud eronder
+	   doorschuift tenzij er handmatig ruimte wordt gereserveerd. Sticky houdt
+	   die ruimte vanzelf, en het is hetzelfde middel als de powerup-pil
+	   onderaan al gebruikt.
+
+	   Pull-to-refresh verdwijnt hiermee ook. Dat is winst: een ververste pagina
+	   midden in een challenge kost de ploeg hun ingevulde antwoorden. */
+	overscroll-behavior-y: none;
 }
 
 body {

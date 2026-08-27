@@ -152,41 +152,58 @@
 	}
 
 	/* ── De vaste achtergrondlaag ───────────────────────────────────────────
-	   De regen en de hoeken stonden als `absolute; inset: 0` BINNEN
-	   .player-screen. Ze konden daardoor per constructie nooit buiten die doos
-	   schilderen — en die doos is min-height:100svh.
+	   De regen, de kleurtint en de vier kristal-hoeken hangen hier aan. De laag
+	   is `fixed`, zodat hij niet met de pagina meescrollt en de hoeken in de
+	   SCHERMhoeken blijven staan — dat deel is goed en blijft.
 
-	   Toestelmeting (iOS Safari 18.7, iPhone 402px breed):
-	     100svh = 714px      klein  — browserbalk uitgeklapt
-	     100lvh = 754px      groot  — browserbalk ingeklapt
-	   Verschil 40px, en dat is exact de strook die zwart bleef.
+	   De HOOGTE is terug op 100svh. Hij stond op 100lvh; dat was de laatste
+	   overgebleven scherf van de full-bleed-poging, waarvan de rest bij #107 is
+	   teruggedraaid. Los van die rest is het geen halve maatregel maar een
+	   regressie.
 
-	   `position: fixed` haalt de laag uit .player-screen: hij maat tegen het
-	   initial containing block en wordt niet geknipt door de overflow:hidden
-	   hierboven, en hij SCHUIFT NIET MEE bij scrollen. Dat laatste was het
-	   tweede deel van de klacht: naar beneden scrollen haalde wel de onderkant
-	   maar verloor de bovenkant, omdat de laag met de pagina meebewoog.
+	   Toestelmeting die al in deze commit stond (iOS Safari 18.7, iPhone 402px):
+	     100svh = 714px   klein  — browserbalk UITGEKLAPT (de normale stand)
+	     100lvh = 754px   groot  — browserbalk ingeklapt
 
-	   Maar fixed alleen is NIET genoeg. Het initial containing block is per
-	   specificatie zo hoog als de KLEINE viewport — dus `inset: 0` levert
-	   opnieuw 714px en dezelfde strook van 40px. Vandaar de expliciete
-	   `height: 100lvh`: de grootste stand die de viewport ooit aanneemt, zodat
-	   de laag in beide standen van de browserbalk tot de rand loopt.
+	   Een laag van 754px die op top:0 hangt in een venster dat 714px toont,
+	   steekt er 40px onderuit. De twee onderhoeken hangen met `bottom: 0` aan
+	   die laag, dus die 40px valt precies van hen af. Nagemeten in WebKit met de
+	   toestelmaten opgelegd (venster 714, laag 754):
 
-	   Geen negatieve env(safe-area-inset-*)-offsets: op dit toestel zijn alle
-	   vier de insets gemeten op 0px, dus die zouden hier niets doen. Niet
-	   toegevoegd omdat het niet te verifiëren is.
+	     linksboven      6..157   volledig zichtbaar
+	     rechtsboven     6..156   volledig zichtbaar
+	     linksonder    530..754   AFGESNEDEN 40px
+	     rechtsonder   531..754   AFGESNEDEN 40px
 
-	   `100vh` staat ervoor als terugval voor browsers zonder lvh-ondersteuning;
-	   op iOS is 100vh van oudsher al de grote viewport, dus dat is precies de
-	   juiste terugval. */
+	   De onderhoeken zijn 224px hoog, dus dat is 18% eraf, op hun breedste punt.
+
+	   100lvh was er om de volle schermhoogte te halen ACHTER de browserbalk. Dat
+	   doel bestaat niet meer. Wat overblijft is de eis uit de designbron: vier
+	   hoeken, heel, in de vier schermhoeken. 100svh is de KLEINSTE stand die de
+	   viewport aanneemt en past dus in allebei de standen van de balk — de laag
+	   kan per constructie nooit meer buiten beeld steken.
+
+	   De prijs staat er eerlijk bij: met de balk INGEKLAPT reikt de laag 40px te
+	   kort. Kleurverschil geeft dat niet, want html draagt dezelfde gradient met
+	   background-attachment: fixed; de onderhoeken staan dan 40px van de
+	   onderrand in plaats van eraan vast. Dat is exact hoe het was vóór de
+	   full-bleed-reeks, en dat is de gevraagde uitkomst.
+
+	   100dvh is overwogen en afgevallen: dat volgt de balk, dus dan zouden de
+	   hoeken tijdens het in- en uitklappen mee op en neer schuiven. Liever 40px
+	   marge in één stand dan hoeken die bewegen terwijl je scrollt.
+
+	   `100vh` blijft als terugval voor browsers zonder svh-ondersteuning. Op iOS
+	   is 100vh van oudsher de GROTE viewport, dus die terugval is daar ruimer dan
+	   svh — maar hij geldt alleen waar svh niet bestaat, en daar is lvh er ook
+	   niet. */
 	.player-screen__backdrop {
 		position: fixed;
 		top: 0;
 		left: 0;
 		right: 0;
 		height: 100vh;
-		height: 100lvh;
+		height: 100svh;
 		z-index: 0;
 		overflow: hidden;
 		pointer-events: none;
