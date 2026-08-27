@@ -1,12 +1,4 @@
-import {
-	Music,
-	Flag,
-	Tag,
-	Blend,
-	Puzzle,
-	Sliders,
-	HelpCircle
-} from 'lucide-svelte';
+import { Music, Flag, Tag, Blend, Puzzle, Sliders, HelpCircle } from 'lucide-svelte';
 import type { ChallengeType } from '$lib/types/index.js';
 import { CHALLENGE_LOGOS } from '$lib/mixup-assets';
 
