@@ -1712,6 +1712,16 @@
 		elders in deze flow "ga verder" betekent.
 	-->
 	<PlayerScreen class="px-5">
+		<!-- Alleen de teampil. De challengetitel stond hier rechts, maar op dit
+		     scherm is die dubbelop: de host noemt een challenge "<Setnaam>
+		     <Challenge>", dus er stond in de praktijk de setnaam plus het type —
+		     "Vrienden Weekend 2026 Hitster" — terwijl de speler net zelf op die
+		     challenge heeft ingeleverd en de uitslag eronder al toont waarover het
+		     gaat. De teampil links blijft: dat is wél informatie die je nergens
+		     anders op dit scherm ziet.
+
+		     Het resultatenscherm hierna heeft dezelfde kop; die is met opzet niet
+		     aangeraakt. -->
 		<div class="flex items-center justify-between">
 			<span class="flex items-center gap-[7px] rounded-full px-3 py-1.5 mixup-glass squircle">
 				<span
@@ -1722,9 +1732,6 @@
 					>{data.team.display_name}</span
 				>
 			</span>
-			<span class="truncate pl-3 text-[11px] font-medium tracking-[0.12em] text-mixup-muted"
-				>{data.challenge.title}</span
-			>
 		</div>
 
 		<div class="flex min-h-0 flex-1 flex-col justify-center gap-4 py-4">
