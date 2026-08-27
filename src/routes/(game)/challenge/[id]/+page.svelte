@@ -1720,8 +1720,8 @@
 		     gaat. De teampil links blijft: dat is wél informatie die je nergens
 		     anders op dit scherm ziet.
 
-		     Het resultatenscherm hierna heeft dezelfde kop; die is met opzet niet
-		     aangeraakt. -->
+		     Het resultatenscherm hierna heeft dezelfde kop en dezelfde behandeling,
+		     zodat de titel niet tussen twee opeenvolgende schermen opduikt. -->
 		<div class="flex items-center justify-between">
 			<span class="flex items-center gap-[7px] rounded-full px-3 py-1.5 mixup-glass squircle">
 				<span
@@ -1815,6 +1815,10 @@
 		komt onveranderd uit `result` / de realtime-subscription.
 	-->
 	<PlayerScreen class="px-5">
+		<!-- Alleen de teampil, net als op het INGELEVERD-scherm hiervoor. De
+		     challengetitel stond hier rechts, maar dit scherm komt direct ná dat
+		     scherm in dezelfde flow: hem daar weghalen en hier laten staan zou
+		     betekenen dat hij tussen twee opeenvolgende schermen verschijnt. -->
 		<div class="flex items-center justify-between">
 			<span class="flex items-center gap-[7px] rounded-full px-3 py-1.5 mixup-glass squircle">
 				<span
@@ -1825,9 +1829,6 @@
 					>{data.team.display_name}</span
 				>
 			</span>
-			<span class="truncate pl-3 text-[11px] font-medium tracking-[0.12em] text-mixup-muted"
-				>{data.challenge.title}</span
-			>
 		</div>
 
 		<h1
