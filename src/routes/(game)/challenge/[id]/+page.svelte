@@ -39,6 +39,15 @@
 	import TrackSegmentBar from '$lib/components/game/TrackSegmentBar.svelte';
 	import { teamHex as teamHexFor, teamOnColor } from '$lib/team-theme';
 	import { stripSetNameFromTitle } from '$lib/challenge-title';
+	import {
+		freshPhase,
+		nextPhase,
+		pointsButton,
+		promisedCount,
+		resumePhase,
+		splitEarned,
+		type ResultPhase
+	} from '$lib/result-flow';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -998,6 +1007,11 @@
 			description: string | null;
 			holdable: boolean;
 			immediate_use: boolean;
+			// De server stuurt de hele powerup_types-rij mee (select('*') in
+			// awardPowerups), dus deze staat er al in. Hij wordt hier pas
+			// gedeclareerd omdat de resultaatflow hem nodig heeft: 'punishment' is
+			// wat een strafshot onderscheidt van een prijs.
+			category?: string | null;
 		};
 		activation?: {
 			success: boolean;
@@ -1020,6 +1034,13 @@
 	// (each form result carries a fresh earnedPowerups array) so the $effect doesn't
 	// re-enqueue on unrelated re-runs.
 	let earnedQueue = $state<EarnedPowerup[]>([]);
+	/**
+	 * Strafshots hebben hun eigen wachtrij, want ze horen in de flow op een andere
+	 * plek: helemaal vooraan, vóór het puntenscherm. De scheidslijn (`isPunishment`)
+	 * en alle andere fasebeslissingen staan in $lib/result-flow, zodat ze zonder
+	 * database te controleren zijn — zie tests/bots/verify-result-flow.ts.
+	 */
+	let penaltyQueue = $state<EarnedPowerup[]>([]);
 	let handledEarnRef: unknown = null;
 
 	// Power Spin awards a SECOND powerup at activation time, so one earned entry can
@@ -1044,14 +1065,19 @@
 	}
 
 	/**
-	 * Onthullingen wachten tot de speler zijn resultaat gezien heeft.
+	 * Wachtkamer tussen "de server heeft iets toegekend" en "de kaart gaat open".
 	 *
-	 * PowerupRevealModal dekt scherm 8 volledig af. Bij het inleveren worden
-	 * `result` en `earnedPowerups` in dezelfde flush gezet, dus de modal ging
-	 * open in dezelfde frame waarin het resultatenscherm verscheen: de speler
-	 * kreeg eerst zijn powerup en pas na het wegtikken hoeveel hij goed had.
-	 * Omgekeerd hoort het. Vandaar deze wachtkamer tussen het binnenkomen van
-	 * een onthulling en het openen van de kaart.
+	 * Bij het inleveren komen `result` en `earnedPowerups` in dezelfde flush
+	 * binnen. Zonder wachtkamer opent de kaart in de frame waarin ook het
+	 * resultaat verschijnt, en die kaart dekt het scherm volledig af: de speler
+	 * kreeg zijn powerup vóór hij wist hoeveel hij goed had.
+	 *
+	 * WAT HIER VERANDERDE: de kamer werd geleegd zodra de count-up op TOTAAL
+	 * stilstond, met een timer van 2,5 s als vangnet omdat rAF stilligt als de
+	 * speler wegschakelt. Dat was een gok naar "heeft hij het gezien?". De fasen
+	 * hieronder maken er een antwoord van: de kamer gaat open als de speler zélf
+	 * op "PAK JE POWERUPS" drukt. De count-up hoeft niets meer te bewaken en het
+	 * vangnet is niet langer nodig.
 	 */
 	let pendingEarned = $state<EarnedPowerup[]>([]);
 
@@ -1064,38 +1090,167 @@
 	});
 
 	/**
-	 * "Het resultaat is gezien" = de count-up op TOTAAL staat op zijn eindwaarde.
+	 * ONAFGEMAAKTE ONTHULLINGEN VAN EEN VORIGE SESSIE.
 	 *
-	 * Dat is de laatste beweging van scherm 8; staat die stil op de eindscore,
-	 * dan heeft de speler zijn x/y-goed-rijen en zijn punten voor zich gehad.
-	 * De count-up zet die eindwaarde letterlijk in zijn laatste frame, dus de
-	 * gelijkheidstest is exact en niet op een marge gebaseerd.
+	 * De server geeft elke team_powerups-rij van deze challenge mee die nog op
+	 * 'pending' staat — zie de load. Dat is de speler die halverwege wegging.
+	 * Ze gaan door dezelfde wachtkamer als een verse toekenning, dus de rest van
+	 * de flow hoeft geen onderscheid te maken.
 	 *
-	 * Het vangnet erachter is er voor het geval de count-up nooit landt — rAF
-	 * ligt stil zodra de speler naar een andere tab of app wegschakelt. Zonder
-	 * dat vangnet zou een verdiende powerup in de wachtkamer blijven hangen.
-	 * De timer wordt bij elke stap van de count-up opnieuw gezet, dus hij vuurt
-	 * pas 2,5 s nadat de teller écht stil is komen te liggen.
+	 * `withSpun` hoeft er NIET overheen: een Power Spin die al gedraaid heeft,
+	 * heeft zijn prijs als eigen team_powerups-rij gekregen, en die staat dan
+	 * gewoon zelf in deze lijst.
 	 */
-	let resultSeen = $state(false);
-
+	let seededPending = false;
 	$effect(() => {
-		if (!result || resultSeen) return;
-		if (liveScore !== null && animatedScore === liveScore) {
-			resultSeen = true;
-			return;
-		}
-		const t = setTimeout(() => (resultSeen = true), 2500);
-		return () => clearTimeout(t);
+		if (seededPending) return;
+		seededPending = true;
+		const seed = (data.pendingEarnedPowerups ?? []) as EarnedPowerup[];
+		if (seed.length) pendingEarned = [...untrack(() => pendingEarned), ...seed];
 	});
 
 	$effect(() => {
 		if (!pendingEarned.length) return;
-		// Geen resultatenscherm in beeld — Power Spin activeert vanaf het
-		// antwoordformulier — dan is er niets om op te wachten.
-		if (result && !resultSeen) return;
-		earnedQueue = [...untrack(() => earnedQueue), ...pendingEarned];
+		const binnen = pendingEarned;
 		pendingEarned = [];
+		// Geen resultatenscherm in beeld — Power Spin activeert ook vanaf het
+		// antwoordformulier — dan is er geen fase om op te wachten en is er ook
+		// niets om een straf vóór te laten gaan.
+		if (!result) {
+			earnedQueue = [...untrack(() => earnedQueue), ...binnen];
+			return;
+		}
+		const { penalties, prizes } = splitEarned(binnen);
+		penaltyQueue = [...untrack(() => penaltyQueue), ...penalties];
+		earnedQueue = [...untrack(() => earnedQueue), ...prizes];
+	});
+
+	/* ══ RESULTAATFLOW · FASEN ══════════════════════════════════════════════════
+	   Vier fasen op ÉÉN scherm, niet vier routes. De afweging:
+
+	   · `earnedPowerups` bestaat alleen in de terugkeerwaarde van de
+	     submit-action. Voor een immediate_use-type draagt die een `activation`
+	     mee (onthulde waarde, geblokkeerd ja/nee, de prijs van een Power Spin) en
+	     dat is niet uit de database terug te halen — status is dan al 'consumed'.
+	     Een routewissel zou die gegevens weggooien.
+	   · De count-up, de realtime-subscription op `submissions` die `liveScore` en
+	     `liveStatus` bijwerkt, het review-formulier en de onthullingswachtrij
+	     hangen allemaal aan `result` op DEZE pagina. Over routes verdeeld zou elk
+	     van die vier opnieuw opgetuigd of gedupliceerd moeten worden.
+	   · Eis 4 is "zodra de laatste bewaard of gebruikt is, direct door" — als
+	     fase is dat één toestandsovergang; als route een navigatie met
+	     staatoverdracht.
+	   · De terugknop van de browser zou over routes de speler terugzetten in een
+	     onthulling die hij al afgehandeld heeft. Die powerup is dan al bewaard of
+	     weg; de kaart nog een keer tonen zou liegen. Tussen fasen valt er niets
+	     terug te lopen.
+
+	   Wat het kost: geen eigen URL per fase. Geen van deze standen is er een om
+	   te delen of te bookmarken, dus dat is geen verlies.
+
+	   De volgorde: straf · punten · powerups · resultaten.
+	   ────────────────────────────────────────────────────────────────────────── */
+	/**
+	 * DE TERUGKEREND SPELER, synchroon bepaald.
+	 *
+	 * Wie de app halverwege wegdrukt en terugkomt, laadt de pagina opnieuw met
+	 * `priorResult` gevuld. Waar hij dan landt, hangt af van wat er nog
+	 * openstaat — en dat weet de server al vóór de eerste frame:
+	 *
+	 *   nog openstaande powerups  ->  'points', met de belofte er weer bij
+	 *   niets meer open           ->  'details', het resultatenscherm zelf
+	 *
+	 * Dit staat expres NIET in een $effect. Een effect draait na de eerste
+	 * render, en dan zou de terugkeerder die op 'details' hoort te landen eerst
+	 * een frame puntenscherm zien. Bij een verse inlevering kan die flits niet
+	 * bestaan — daar stond het antwoordformulier nog in beeld — dus daar mag de
+	 * overgang wél uit een effect komen.
+	 *
+	 * Een strafshot komt hier niet terug. Hij is immediate_use: bij het toekennen
+	 * meteen geactiveerd, status 'consumed', en als activity_log-regel vastgelegd.
+	 * De verplichting staat dus op het scherm van de host op /admin/live en gaat
+	 * niet verloren doordat de speler de kaart niet gezien heeft — maar hij is ook
+	 * niet opnieuw op te roepen, want er is geen openstaande rij meer.
+	 */
+	let resultPhase = $state<ResultPhase | null>(
+		// `untrack` omdat deze lezing bewust EENMALIG is: dit is de instapfase, geen
+		// waarde die met `data` mee hoort te bewegen. Zonder untrack leest Svelte dit
+		// als een reactieve verwijzing die per ongeluk buiten een $derived is blijven
+		// staan en waarschuwt hij erover — terecht, want dat is meestal een fout.
+		untrack(() => resumePhase(!!data.priorResult, (data.pendingEarnedPowerups ?? []).length))
+	);
+
+	/**
+	 * De instapfase na een VERSE inlevering.
+	 *
+	 * Het wachten op een lege `pendingEarned` is wat maakt dat hier al vaststaat
+	 * of er een straf tussen zit: de wachtkamer loopt in dezelfde ronde leeg.
+	 */
+	$effect(() => {
+		if (!result || resultPhase !== null || pendingEarned.length) return;
+		resultPhase = freshPhase(penaltyQueue.length);
+	});
+
+	/**
+	 * De automatische overgangen: straf afgetikt -> punten, laatste powerup
+	 * afgehandeld -> DIRECT de resultaten. Geen tussenklik; het legen van de
+	 * wachtrij ís de overgang.
+	 */
+	$effect(() => {
+		if (!resultPhase) return;
+		resultPhase = nextPhase(resultPhase, {
+			penalties: penaltyQueue.length,
+			prizes: earnedQueue.length
+		});
+	});
+
+	/**
+	 * Het aantal dat het puntenscherm belooft.
+	 *
+	 * De prijs van een Power Spin telt NIET mee. Hij bestaat pas doordat de speler
+	 * aan het wiel trekt, en meetellen zou vooraf verklappen dat er een spin in
+	 * zit én dat die iets opgeleverd heeft. De spin zelf telt als één; zijn prijs
+	 * komt er tijdens de onthullingen als verrassing achteraan.
+	 *
+	 * Strafshots tellen ook niet mee: die zijn op dit punt al afgetikt, en ze zijn
+	 * geen powerup om te halen.
+	 */
+	const powerupsTeHalen = $derived(promisedCount(earnedQueue));
+	const puntenKnop = $derived(pointsButton(powerupsTeHalen));
+
+	/**
+	 * Het puntenscherm: hoeveel velden helemaal goed, van hoeveel.
+	 *
+	 * Dezelfde telling als de per-tab-badges op het resultatenscherm (tabMarks),
+	 * over alle tabs opgeteld, zodat de twee schermen elkaar niet kunnen
+	 * tegenspreken. Bonusvelden tellen niet mee — die zitten niet in het
+	 * "hoeveel moest ik weten"-totaal.
+	 *
+	 * Het PERCENTAGE hoort bij deze twee getallen en is dus goed/totaal. Dat is
+	 * bewust NIET het scorepercentage waar de powerup-ladder op werkt: dat rekent
+	 * met deelpunten (een antwoord van 80% gelijkenis levert punten maar geldt
+	 * hier niet als goed). Eén scherm, één rekensom — de punten zelf staan een
+	 * fase verderop volledig uitgesplitst.
+	 */
+	const antwoordScore = $derived.by(() => {
+		let ok = 0;
+		let total = 0;
+		for (const t of result?.tabs ?? []) {
+			const m = tabMarks(t);
+			ok += m.ok;
+			total += m.total;
+		}
+		// Oudere resultaten zonder tabs dragen hun velden plat in `tracks`.
+		if (total === 0) {
+			for (const tr of result?.tracks ?? []) {
+				for (const fr of tr.fields ?? []) {
+					if (fr.isBonus) continue;
+					total++;
+					if (baseScoreOf(fr) === fr.maxScore) ok++;
+				}
+			}
+		}
+		return { ok, total, pct: total > 0 ? Math.round((ok / total) * 100) : 0 };
 	});
 
 	// ── Validation ────────────────────────────────────────────────────────────
@@ -1361,6 +1516,13 @@
 	 * starten en de easing per frame resetten.
 	 */
 	$effect(() => {
+		// De count-up is de laatste beweging van het resultatenscherm. Vroeger begon
+		// hij zodra `result` er was; met de fasen kan dat scherm pas later in beeld
+		// komen, en dan zou de teller al uitgeteld zijn voordat iemand hem ziet.
+		// Hij start nu mét de fase waar hij bij hoort. Zolang `result` er niet is
+		// (Power Spin vanaf het antwoordformulier) is er ook geen scherm om op te
+		// wachten.
+		if (result && resultPhase !== 'details') return;
 		const target = liveScore ?? 0;
 		const from = untrack(() => animatedScore);
 		if (target === from) return;
@@ -1394,7 +1556,35 @@
 	/>
 {/if}
 
-{#if earnedQueue.length > 0}
+<!--
+	STAP 1 — de strafshot, apart en vóór alles. Hij verschijnt boven het
+	puntenscherm, dus de speler ziet zijn cijfers al staan terwijl hij de straf
+	wegtikt, maar hij komt er niet omheen: de kaart dekt het scherm af en de
+	knoppenrij eronder bestaat in deze fase nog niet.
+-->
+{#if resultPhase === 'penalty' && penaltyQueue.length > 0}
+	{#key penaltyQueue[0].teamPowerupId}
+		<PowerupRevealModal
+			teamPowerupId={penaltyQueue[0].teamPowerupId}
+			type={penaltyQueue[0].type}
+			activation={penaltyQueue[0].activation}
+			teamId={data.team.id}
+			setTeams={data.setTeams}
+			onclose={() => (penaltyQueue = penaltyQueue.slice(1))}
+		/>
+	{/key}
+{/if}
+
+<!--
+	STAP 4 — de powerups, één voor één, precies zoals ze al gingen. De wachtrij
+	loopt leeg en dat legen ís de overgang naar de resultaten; er zit geen
+	tussenklik meer tussen de laatste kaart en het resultatenscherm.
+
+	`!result` houdt het pad open dat geen fasen kent: een Power Spin die vanaf
+	het antwoordformulier geactiveerd wordt, heeft geen resultaatflow om in te
+	passen en toont zijn kaart meteen.
+-->
+{#if (resultPhase === 'powerups' || !result) && earnedQueue.length > 0}
 	{#key earnedQueue[0].teamPowerupId}
 		<PowerupRevealModal
 			teamPowerupId={earnedQueue[0].teamPowerupId}
@@ -1466,6 +1656,108 @@
 			>
 		</div>
 	</div>
+{:else if result && resultPhase !== 'details'}
+	<!--
+		── Scherm 8A · PUNTENSCHERM ─────────────────────────────────────────────
+		STAP 2 en 3 van de resultaatflow. Wat hier staat is de UITSLAG in één
+		oogopslag — hoeveel goed van hoeveel, het percentage — plus de belofte:
+		HOEVEEL powerups er te halen zijn. Nog niet WELKE; dat is precies wat de
+		onthullingskaarten erna doen, en het vooraf verklappen zou die kaarten
+		leeghalen.
+
+		Onder de fasen 'penalty' en 'powerups' staat dit scherm óók: het is de
+		achtergrond waar de kaart overheen valt. De knoppenrij hangt daarom aan
+		fase 'points' — tijdens een kaart is er niets te kiezen.
+
+		Dezelfde vormtaal als het resultatenscherm erna: teampil + challengetitel
+		boven, display-kop, glaskaarten, en de knop in het geel-oranje verloop dat
+		elders in deze flow "ga verder" betekent.
+	-->
+	<PlayerScreen class="px-5">
+		<div class="flex items-center justify-between">
+			<span class="flex items-center gap-[7px] rounded-full px-3 py-1.5 mixup-glass squircle">
+				<span
+					class="h-2.5 w-2.5 rounded-full"
+					style="background: {teamHex}; box-shadow: 0 0 10px {teamHex};"
+				></span>
+				<span class="text-[11px] font-extrabold tracking-[0.1em] text-mixup-paper uppercase"
+					>{data.team.display_name}</span
+				>
+			</span>
+			<span class="truncate pl-3 text-[11px] font-medium tracking-[0.12em] text-mixup-muted"
+				>{data.challenge.title}</span
+			>
+		</div>
+
+		<div class="flex min-h-0 flex-1 flex-col justify-center gap-4 py-4">
+			<h1
+				class="font-display text-[34px] leading-[0.95] font-black text-mixup-paper uppercase"
+				style="text-shadow: 0 0 26px rgba(124,77,255,0.85);"
+			>
+				Ingeleverd
+			</h1>
+
+			<!-- Goed van totaal, en het percentage dat daarbij hoort. -->
+			<div class="rounded-mixup-lg p-5 text-center mixup-glass-strong squircle">
+				<div class="font-display text-[64px] leading-none font-black tabular-nums">
+					<span class="text-mixup-yellow">{antwoordScore.ok}</span><span class="text-mixup-dim"
+						>/{antwoordScore.total}</span
+					>
+				</div>
+				<div class="mt-1.5 text-[10px] font-extrabold tracking-[0.18em] text-mixup-muted uppercase">
+					Goed beantwoord
+				</div>
+				<div
+					class="mt-3 inline-flex items-center rounded-full px-3.5 py-1.5"
+					style="background: rgba(0,229,255,0.10); border: 1px solid rgba(0,229,255,0.45);"
+				>
+					<span class="font-display text-lg font-black text-mixup-cyan tabular-nums"
+						>{antwoordScore.pct}%</span
+					>
+				</div>
+			</div>
+
+			<!--
+				De belofte. Bij nul powerups blijft de kaart staan met de nulstand: dat
+				is óók een uitslag, en hem weglaten zou het scherm laten springen
+				tussen de twee gevallen.
+			-->
+			<div
+				class="flex items-center gap-3 rounded-mixup-lg p-4 mixup-glass squircle"
+				class:powerup-belofte--geen={powerupsTeHalen === 0}
+			>
+				<span
+					class="powerup-belofte__getal font-display text-[34px] leading-none font-black tabular-nums"
+				>
+					{powerupsTeHalen}
+				</span>
+				<!-- Ook bij nul dezelfde zin, alleen enkelvoud/meervoud. "0 powerups te
+				     halen" leest als één mededeling; een aparte nulzin naast een
+				     gedempte 0 leest als een tikfout. -->
+				<span class="min-w-0 flex-1 text-[13px] font-semibold text-mixup-paper">
+					{powerupsTeHalen === 1 ? 'powerup' : 'powerups'} te halen
+				</span>
+			</div>
+		</div>
+
+		<!--
+			STAP 3 — één knop. Zijn er powerups, dan brengt hij je naar de kaarten;
+			zijn ze er niet, dan rechtstreeks naar de resultaten. Twee bestemmingen,
+			nooit twee knoppen.
+		-->
+		{#if resultPhase === 'points'}
+			<div class="pb-2">
+				<button
+					type="button"
+					onclick={() => (resultPhase = puntenKnop.next)}
+					class="flex h-[54px] w-full items-center justify-center rounded-mixup-modal text-base font-extrabold tracking-[0.06em] uppercase squircle"
+					style="background: linear-gradient(90deg,#FFE600,#FF7F11); color: #1A1400; box-shadow: 0 10px 30px rgba(255,127,17,0.35);"
+				>
+					{puntenKnop.label}
+				</button>
+			</div>
+		{/if}
+	</PlayerScreen>
 {:else if result}
 	<!--
 		── Scherm 8 · RESULTATEN ────────────────────────────────────────────────
@@ -2591,6 +2883,19 @@
 		padding-bottom: 8px;
 		background: linear-gradient(180deg, #0b0b1f 78%, rgba(11, 11, 31, 0.94) 100%);
 		box-shadow: 0 10px 22px rgba(11, 11, 31, 0.55);
+	}
+
+	/* ── Puntenscherm · de belofte ──────────────────────────────────────────────
+	   Het getal draagt de kleur: geel als er iets te halen valt (dezelfde
+	   betekenis die geel in deze flow overal heeft), gedempt bij nul. */
+	.powerup-belofte__getal {
+		color: var(--color-mixup-yellow);
+		text-shadow: 0 0 22px rgba(255, 230, 0, 0.45);
+	}
+
+	.powerup-belofte--geen .powerup-belofte__getal {
+		color: var(--color-mixup-dim);
+		text-shadow: none;
 	}
 
 	/* Powerup-balk — de zwevende schil. Hoger z-index dan de bovenzone: ze raken
