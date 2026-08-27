@@ -392,7 +392,9 @@
 				{@const src = srcs[0]}
 				{@const pIdx = Math.min(previewIdx[tab.id] ?? 0, Math.max(0, tabClips.length - 1))}
 				{@const previewTc = tabClips[pIdx]}
-				{@const previewClip = previewTc ? (clips.find((c) => c.id === previewTc.clip_id) ?? null) : null}
+				{@const previewClip = previewTc
+					? (clips.find((c) => c.id === previewTc.clip_id) ?? null)
+					: null}
 				{@const anyEnabled = EFFECT_KEYS.some(
 					(k) => !!(cfg[k] as { enabled?: boolean } | undefined)?.enabled
 				)}
@@ -497,9 +499,7 @@
 												type="button"
 												onclick={() => (previewIdx[tab.id] = ci)}
 												class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold transition-colors
-													{pIdx === ci
-													? 'bg-cyan-400 text-zinc-950'
-													: 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'}"
+													{pIdx === ci ? 'bg-cyan-400 text-zinc-950' : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'}"
 												title="Use this clip in the dry/wet preview">FX</button
 											>
 											{#if c?.storage_path}
@@ -1542,4 +1542,3 @@
 		</div>
 	{/if}
 </section>
-
