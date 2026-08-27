@@ -192,6 +192,19 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		tutorialText = (vd as { tutorial_text?: string | null }).tutorial_text ?? null;
 	}
 
+	// Uitlegtekst: de challenge wint van de variant (migratie 0080).
+	//
+	// variant_defaults heeft de VARIANT als sleutel, en Hitster en Icons draaien
+	// allebei op 'standard' — één tekstveld voor twee challenges, waarbij een
+	// update voor de ene de andere overschreef. challenges.tutorial_text is de
+	// eigen tekst; NULL of leeg betekent "geen eigen tekst" en valt terug op de
+	// varianttekst hierboven, dus elke challenge waar niets is ingevuld gedraagt
+	// zich exact zoals voorheen.
+	const challengeTutorial = (
+		challenge as unknown as { tutorial_text?: string | null }
+	).tutorial_text?.trim();
+	if (challengeTutorial) tutorialText = challengeTutorial;
+
 	// Single source of truth for fields + modes + points + bonus flags.
 	const resolvedFields = resolveChallengeFields(variant, pcRaw, variantDefaultPoints);
 	const {

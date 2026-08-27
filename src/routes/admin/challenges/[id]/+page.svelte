@@ -250,6 +250,31 @@
 					>{(data.challenge as unknown as { hint_text?: string | null }).hint_text ?? ''}</textarea
 				>
 			</div>
+			<!--
+				Tutorial text (migratie 0080). Overrules variant_defaults.tutorial_text
+				voor DEZE challenge. Nodig omdat variant_defaults op de variant is
+				gesleuteld: Hitster en Icons zijn allebei 'standard', dus daar deelden
+				twee challenges één tekstveld.
+
+				Leeg laten = terugvallen op de varianttekst; de placeholder toont welke
+				dat is, zodat zichtbaar is wat je overschrijft.
+			-->
+			<div>
+				<label for="tutorial_text" class="mb-1 block text-xs text-zinc-400">
+					Tutorial text (optional — overrides the variant default)
+				</label>
+				<textarea
+					id="tutorial_text"
+					name="tutorial_text"
+					rows="2"
+					class="input-field"
+					placeholder={data.variantTutorialText
+						? `Leeg = varianttekst: ${data.variantTutorialText}`
+						: 'Shown on the pre-game gate under "Hoe werkt het"'}
+					>{(data.challenge as unknown as { tutorial_text?: string | null }).tutorial_text ??
+						''}</textarea
+				>
+			</div>
 			<div class="flex justify-end">
 				<button type="submit" class="btn-primary">Save details</button>
 			</div>

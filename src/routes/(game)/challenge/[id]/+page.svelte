@@ -1479,7 +1479,11 @@
 
 	onMount(() => {
 		if (data.tutorialText && data.team?.id && data.attempt) {
-			const key = `tutorial_seen_${data.team.id}_${data.challenge.variant}`;
+			// Gesleuteld op de CHALLENGE, niet op de variant. Sinds migratie 0080 kan
+			// elke challenge een eigen uitlegtekst hebben, en Hitster en Icons zijn
+			// allebei variant 'standard' — met de oude sleutel zou het lezen van
+			// Hitster de uitleg van Icons voorgoed onderdrukken.
+			const key = `tutorial_seen_${data.team.id}_${data.challenge.id}`;
 			if (!localStorage.getItem(key)) {
 				showTutorial = true;
 				localStorage.setItem(key, '1');

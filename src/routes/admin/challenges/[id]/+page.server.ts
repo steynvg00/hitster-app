@@ -98,7 +98,7 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 	// scoring pipeline uses so the editor never drifts from what actually scores.
 	const { data: vdRow } = await db
 		.from('variant_defaults')
-		.select('points_config')
+		.select('points_config, tutorial_text')
 		.eq('variant', challenge.variant)
 		.maybeSingle();
 	const variantDefaultPoints = ((vdRow?.points_config as Record<string, unknown> | null)
@@ -128,6 +128,10 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 
 	return {
 		challenge,
+		// De varianttekst die deze challenge krijgt zolang tutorial_text leeg is
+		// (migratie 0080). Alleen voor de placeholder in de editor: zo ziet de host
+		// wat hij overschrijft in plaats van te moeten raden.
+		variantTutorialText: (vdRow as { tutorial_text?: string | null } | null)?.tutorial_text ?? null,
 		resolvedFields,
 		poolBackedFields,
 		battleConfig,
@@ -182,6 +186,10 @@ export const actions: Actions = {
 		const speedRaw = (data.get('speed_threshold_seconds') as string | null)?.trim();
 		const speed_threshold_seconds = speedRaw ? parseInt(speedRaw, 10) || null : null;
 		const hint_text = (data.get('hint_text') as string | null)?.trim() || null;
+		// Leeg veld -> NULL, niet ''. NULL is wat de speler-load als "geen eigen
+		// tekst" leest en op variant_defaults laat terugvallen (migratie 0080);
+		// een lege string zou een challenge zonder uitleg opleveren.
+		const tutorial_text = (data.get('tutorial_text') as string | null)?.trim() || null;
 		const nfcOverrideRaw = data.get('nfc_lock_override') as string | null;
 		const nfc_lock_override =
 			nfcOverrideRaw === 'true' ? true : nfcOverrideRaw === 'false' ? false : null;
@@ -206,6 +214,7 @@ export const actions: Actions = {
 				difficulty_rating,
 				speed_threshold_seconds,
 				hint_text,
+				tutorial_text,
 				nfc_lock_override
 			})
 			.eq('id', params.id);
@@ -721,6 +730,7 @@ export const actions: Actions = {
 				difficulty_rating: source.difficulty_rating,
 				speed_threshold_seconds: source.speed_threshold_seconds,
 				hint_text: source.hint_text,
+				tutorial_text: source.tutorial_text,
 				nfc_lock_override: source.nfc_lock_override,
 				status: 'draft',
 				is_active: false,

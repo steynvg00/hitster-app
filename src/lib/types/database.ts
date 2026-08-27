@@ -205,6 +205,7 @@ export type Database = {
 					difficulty_rating: number;
 					speed_threshold_seconds: number | null;
 					hint_text: string | null;
+					tutorial_text: string | null;
 					nfc_lock_override: boolean | null;
 					created_by: string | null;
 					created_at: string;
@@ -221,6 +222,7 @@ export type Database = {
 					difficulty_rating?: number;
 					speed_threshold_seconds?: number | null;
 					hint_text?: string | null;
+					tutorial_text?: string | null;
 					nfc_lock_override?: boolean | null;
 					created_by?: string | null;
 					created_at?: string;
@@ -237,6 +239,7 @@ export type Database = {
 					difficulty_rating?: number;
 					speed_threshold_seconds?: number | null;
 					hint_text?: string | null;
+					tutorial_text?: string | null;
 					nfc_lock_override?: boolean | null;
 					created_by?: string | null;
 					created_at?: string;
