@@ -165,7 +165,10 @@ export const FIELD_LABEL_NL: Record<string, string> = {
 	label: 'LABEL',
 	festival: 'FESTIVAL',
 	vocal_source: 'VOCAL',
-	grouping: 'INDELING'
+	// 'INDELING' zei niets over wat je krijgt. Op het antwoordscherm heten deze
+	// chips fragmenten en dragen ze een nummer — dat is ook het woord waarin de
+	// host erover praat, dus dat woord staat nu in de kiezer.
+	grouping: 'FRAGMENTEN'
 };
 
 export function fieldLabel(field: string): string {

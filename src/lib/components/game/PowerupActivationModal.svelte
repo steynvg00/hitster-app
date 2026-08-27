@@ -118,10 +118,16 @@
 
 	let activating = $state(false);
 	let activateError = $state('');
-	// `grouping` (fragments) is scored across the whole tab, not per track, so it
-	// has no single value to reveal — the server refuses it and it is not offered.
-	const revealableFields = $derived(variantFields.filter((f) => f !== 'grouping'));
-	let selectedField = $state(variantFields.filter((f) => f !== 'grouping')[0] ?? '');
+	// ÁLLE velden van de tab die nu open staat, grouping inbegrepen.
+	//
+	// Grouping was uitgesloten op de grond dat het "over de hele tab" gescoord zou
+	// worden en dus geen enkelvoudig antwoord had. Dat klopte niet: scoreTab scoort
+	// het per slot, tegen de fragmentnummers van de track die aan dat slot gematcht
+	// is. Bij fragments kon een team daardoor kiezen uit titel, artiest en jaar
+	// maar niet uit de clipnummers — precies het deel dat de meeste punten kost.
+	// De server lost het nu op via groupingAnswerForTrack.
+	const revealableFields = $derived(variantFields);
+	let selectedField = $state(variantFields[0] ?? '');
 	let selectedTargetId = $state('');
 	// After a targeted attack resolves, show a confirmation instead of auto-closing.
 	// 'rolled' is the same idea for lucky_dice: an activation with an OUTCOME the
@@ -232,6 +238,17 @@
 	});
 	const needsFieldPicker = $derived(powerupType.id === 'free_answer');
 
+	// Waar een free_answer-onthulling landt: de tab en de track die de speler op
+	// dit moment open heeft. De modal krijgt dat adres al mee (`tabId` +
+	// `slotIndex`, dezelfde twee die als hidden input meegaan); dit is puur het
+	// leesbaar maken ervan. Het tracknummer alleen als de tab meer dan één track
+	// heeft — anders is het ruis.
+	const openTab = $derived(revealTabs.find((t) => t.id === tabId));
+	const openAddressLabel = $derived(
+		[openTab?.label, (openTab?.slotCount ?? 1) > 1 ? `Track ${slotIndex + 1}` : null]
+			.filter(Boolean)
+			.join(' · ') || 'de track die je nu open hebt'
+	);
 
 	// ── free_tab tab picker ───────────────────────────────────────────────────
 	//
@@ -634,7 +651,13 @@
 							</button>
 						{/each}
 					</div>
-					<p class="hint">De onthulling wordt écht ingevuld in jullie antwoord.</p>
+					<!-- Kort en concreet: het antwoord komt op de plek die je NU open hebt.
+					     Zonder deze regel is dat niet te zien — de tab en de track staan
+					     achter de modal — en op een fragments-beurt van drie tracks is dat
+					     precies het verschil tussen een raak en een verspild antwoord. -->
+					<p class="hint">
+						Voor {openAddressLabel}. De onthulling wordt écht ingevuld in jullie antwoord.
+					</p>
 				</div>
 			{/if}
 
