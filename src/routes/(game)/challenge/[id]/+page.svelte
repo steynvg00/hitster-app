@@ -2702,143 +2702,154 @@
 						{/if}
 						<!-- Same clamped slot the free_answer reveal is addressed to. -->
 						{@const slotIdx = activeSlotEffective}
-						{#each variantFields.filter((f) => f !== 'grouping') as field (field)}
-							{@const mode = data.fieldModes[field] as InputMode}
-							<div class="flex flex-col gap-1.5">
-								<!-- Label row: the field's own label, plus X-Ray's reveal button while a
+						{#each variantFields as field (field)}
+							<!--
+								ÉÉN lus over álle velden, in de volgorde die de host-console
+								vastlegt (points_config.fields[] → resolveChallengeFields →
+								data.variantFields). `grouping` stond hier vroeger buiten: de lus
+								filterde het weg en de fragmentchips stonden als los blok ná de
+								lus. Daardoor kwam grouping in de speler-UI altijd onderaan, ook
+								als het in de editor met ▲ bovenaan gezet was. Nu bepaalt de
+								opgeslagen volgorde de plek, en de chips zijn gewoon het uiterlijk
+								van één van de velden.
+							-->
+							{#if field === 'grouping'}
+								{#if hasGrouping && activeTab}
+									<div class="flex flex-col gap-2">
+										<span
+											class="text-[11px] font-extrabold tracking-[0.14em] text-mixup-paper uppercase"
+											>Welke fragmenten horen bij deze track?</span
+										>
+										<div class="flex flex-wrap gap-2">
+											{#each activeTab.clips as clipItem, ci}
+												{@const fragNum = clipItem.fragmentNumber ?? ci + 1}
+												{@const selected = (
+													allDrafts[activeTabIndex]?.[slotIdx]?.fragments ?? []
+												).includes(fragNum)}
+												<button
+													type="button"
+													onclick={() => toggleFragment(activeTabIndex, slotIdx, fragNum)}
+													class="rounded-mixup-chip px-3.5 py-2 text-sm font-bold transition-colors squircle"
+													style={selected
+														? `background: ${teamHex}; color: ${teamOn}; border: 1px solid ${teamHex}; box-shadow: 0 0 18px ${teamHex}80;`
+														: 'background: rgba(229,242,255,0.05); color: #9FB1D9; border: 1px solid rgba(229,242,255,0.16);'}
+												>
+													{fragNum}
+												</button>
+											{/each}
+										</div>
+									</div>
+								{/if}
+							{:else}
+								{@const mode = data.fieldModes[field] as InputMode}
+								<div class="flex flex-col gap-1.5">
+									<!-- Label row: the field's own label, plus X-Ray's reveal button while a
 							     budget is running. The button sits BESIDE the label, not inside it
 							     (a button in a <label> hijacks the label's click), and is
 							     type="button" — so the answer form is untouched: no nested form,
 							     no accidental submit, and the tab dots / Next / Previous are
 							     unaffected. -->
-								<div class="flex items-center justify-between gap-2">
-									<label
-										class="flex items-center gap-1.5 text-[11px] font-extrabold tracking-[0.14em] text-mixup-paper uppercase"
-									>
-										{fieldLabel(field)}
-										{#if isBonusField(field)}
-											<span
-												class="rounded-full bg-mixup-amber/20 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-mixup-amber normal-case squircle"
-												>Bonus</span
-											>
-										{/if}
-									</label>
-									{#if xrayRemaining > 0 && !revealFor(String(field), slotIdx)}
-										<button
-											type="button"
-											onclick={() => spendXrayReveal(String(field), slotIdx)}
-											disabled={!!xraySpending}
-											class="shrink-0 rounded-mixup-chip border border-mixup-amber/50 bg-mixup-amber/10 px-2 py-0.5 text-[11px] font-bold text-mixup-amber transition-colors squircle disabled:opacity-40"
+									<div class="flex items-center justify-between gap-2">
+										<label
+											class="flex items-center gap-1.5 text-[11px] font-extrabold tracking-[0.14em] text-mixup-paper uppercase"
 										>
-											{xraySpending ===
-											freeAnswerRevealKey(activeTab?.id ?? '', slotIdx, String(field))
-												? '…'
-												: `🔎 Onthul (${xrayRemaining})`}
-										</button>
-									{/if}
-								</div>
-								{#if revealFor(String(field), slotIdx)}
-									<div class="flex items-center gap-1.5 text-xs font-semibold text-mixup-amber">
-										<span>💡</span>
-										<span>Onthuld: {revealFor(String(field), slotIdx)}</span>
+											{fieldLabel(field)}
+											{#if isBonusField(field)}
+												<span
+													class="rounded-full bg-mixup-amber/20 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-mixup-amber normal-case squircle"
+													>Bonus</span
+												>
+											{/if}
+										</label>
+										{#if xrayRemaining > 0 && !revealFor(String(field), slotIdx)}
+											<button
+												type="button"
+												onclick={() => spendXrayReveal(String(field), slotIdx)}
+												disabled={!!xraySpending}
+												class="shrink-0 rounded-mixup-chip border border-mixup-amber/50 bg-mixup-amber/10 px-2 py-0.5 text-[11px] font-bold text-mixup-amber transition-colors squircle disabled:opacity-40"
+											>
+												{xraySpending ===
+												freeAnswerRevealKey(activeTab?.id ?? '', slotIdx, String(field))
+													? '…'
+													: `🔎 Onthul (${xrayRemaining})`}
+											</button>
+										{/if}
 									</div>
-								{/if}
-								<!-- Lifeline hint: read-only, never an input, never written into the
+									{#if revealFor(String(field), slotIdx)}
+										<div class="flex items-center gap-1.5 text-xs font-semibold text-mixup-amber">
+											<span>💡</span>
+											<span>Onthuld: {revealFor(String(field), slotIdx)}</span>
+										</div>
+									{/if}
+									<!-- Lifeline hint: read-only, never an input, never written into the
 							     draft. Suppressed when this cell has a full reveal — the answer
 							     beats a mask of it. Cyan rather than the reveal's amber so the
 							     two never read as the same thing. -->
-								{#if lifelineFor(String(field), slotIdx) && !revealFor(String(field), slotIdx)}
-									<div class="flex items-center gap-1.5 text-xs font-semibold text-mixup-cyan">
-										<span>🆘</span>
-										<span class="font-data tracking-[0.15em]"
-											>{lifelineFor(String(field), slotIdx)}</span
-										>
-									</div>
-								{/if}
+									{#if lifelineFor(String(field), slotIdx) && !revealFor(String(field), slotIdx)}
+										<div class="flex items-center gap-1.5 text-xs font-semibold text-mixup-cyan">
+											<span>🆘</span>
+											<span class="font-data tracking-[0.15em]"
+												>{lifelineFor(String(field), slotIdx)}</span
+											>
+										</div>
+									{/if}
 
-								{#if field === 'artist' && artistIsTagged}
-									<ArtistTagInput
-										name="artist_{slotIdx}"
-										bind:tags={artistTags[activeTabIndex][slotIdx]}
-										pool={artistPool}
-										accentHex={teamHex}
-										placeholder={artistPool.length > 0
-											? 'Zoek artiesten, Enter om toe te voegen…'
-											: 'Typ een naam, Enter om toe te voegen…'}
-									/>
-									<p class="text-[11px] text-mixup-dim">
-										Voeg elke artiest op de track toe — elk is een deel van de punten waard.
-									</p>
-								{:else if mode === 'combobox'}
-									<Combobox
-										name="{field}_{slotIdx}"
-										pool={data.pools[field] ?? []}
-										{teamHex}
-										bind:value={allDrafts[activeTabIndex][slotIdx].fieldValues[field]}
-									/>
-								{:else if mode === 'multiple_choice'}
-									<MultipleChoice
-										name="{field}_{slotIdx}"
-										options={data.multipleChoiceOptions[field] ?? []}
-										{teamHex}
-										onColor={teamOn}
-										layout={field === 'year' ? 'chips' : 'list'}
-										bind:value={allDrafts[activeTabIndex][slotIdx].fieldValues[field]}
-									/>
-								{:else if mode === 'open_text'}
-									<OpenText
-										name="{field}_{slotIdx}"
-										{teamHex}
-										placeholder="Typ je antwoord…"
-										bind:value={allDrafts[activeTabIndex][slotIdx].fieldValues[field]}
-									/>
-								{:else if mode === 'slider'}
-									<YearInput
-										name="{field}_{slotIdx}"
-										mode="slider"
-										{teamHex}
-										bind:value={allYearValues[activeTabIndex][slotIdx]}
-										ontouched={() => markYearTouched(activeTabIndex, slotIdx)}
-									/>
-								{:else if mode === 'typeable_number'}
-									<YearInput
-										name="{field}_{slotIdx}"
-										mode="typeable_number"
-										{teamHex}
-										bind:value={allYearValues[activeTabIndex][slotIdx]}
-										ontouched={() => markYearTouched(activeTabIndex, slotIdx)}
-									/>
-								{/if}
-							</div>
-						{/each}
-
-						<!-- Fragment grouping chips -->
-						{#if hasGrouping && activeTab}
-							<div class="flex flex-col gap-2">
-								<span
-									class="text-[11px] font-extrabold tracking-[0.14em] text-mixup-paper uppercase"
-									>Welke fragmenten horen bij deze track?</span
-								>
-								<div class="flex flex-wrap gap-2">
-									{#each activeTab.clips as clipItem, ci}
-										{@const fragNum = clipItem.fragmentNumber ?? ci + 1}
-										{@const selected = (
-											allDrafts[activeTabIndex]?.[slotIdx]?.fragments ?? []
-										).includes(fragNum)}
-										<button
-											type="button"
-											onclick={() => toggleFragment(activeTabIndex, slotIdx, fragNum)}
-											class="rounded-mixup-chip px-3.5 py-2 text-sm font-bold transition-colors squircle"
-											style={selected
-												? `background: ${teamHex}; color: ${teamOn}; border: 1px solid ${teamHex}; box-shadow: 0 0 18px ${teamHex}80;`
-												: 'background: rgba(229,242,255,0.05); color: #9FB1D9; border: 1px solid rgba(229,242,255,0.16);'}
-										>
-											{fragNum}
-										</button>
-									{/each}
+									{#if field === 'artist' && artistIsTagged}
+										<ArtistTagInput
+											name="artist_{slotIdx}"
+											bind:tags={artistTags[activeTabIndex][slotIdx]}
+											pool={artistPool}
+											accentHex={teamHex}
+											placeholder={artistPool.length > 0
+												? 'Zoek artiesten, Enter om toe te voegen…'
+												: 'Typ een naam, Enter om toe te voegen…'}
+										/>
+										<p class="text-[11px] text-mixup-dim">
+											Voeg elke artiest op de track toe — elk is een deel van de punten waard.
+										</p>
+									{:else if mode === 'combobox'}
+										<Combobox
+											name="{field}_{slotIdx}"
+											pool={data.pools[field] ?? []}
+											{teamHex}
+											bind:value={allDrafts[activeTabIndex][slotIdx].fieldValues[field]}
+										/>
+									{:else if mode === 'multiple_choice'}
+										<MultipleChoice
+											name="{field}_{slotIdx}"
+											options={data.multipleChoiceOptions[field] ?? []}
+											{teamHex}
+											onColor={teamOn}
+											layout={field === 'year' ? 'chips' : 'list'}
+											bind:value={allDrafts[activeTabIndex][slotIdx].fieldValues[field]}
+										/>
+									{:else if mode === 'open_text'}
+										<OpenText
+											name="{field}_{slotIdx}"
+											{teamHex}
+											placeholder="Typ je antwoord…"
+											bind:value={allDrafts[activeTabIndex][slotIdx].fieldValues[field]}
+										/>
+									{:else if mode === 'slider'}
+										<YearInput
+											name="{field}_{slotIdx}"
+											mode="slider"
+											{teamHex}
+											bind:value={allYearValues[activeTabIndex][slotIdx]}
+											ontouched={() => markYearTouched(activeTabIndex, slotIdx)}
+										/>
+									{:else if mode === 'typeable_number'}
+										<YearInput
+											name="{field}_{slotIdx}"
+											mode="typeable_number"
+											{teamHex}
+											bind:value={allYearValues[activeTabIndex][slotIdx]}
+											ontouched={() => markYearTouched(activeTabIndex, slotIdx)}
+										/>
+									{/if}
 								</div>
-							</div>
-						{/if}
+							{/if}
+						{/each}
 					{:else}
 						<!-- Single-slot layout (standard / anthem / label) -->
 						{#each variantFields as field (field)}
