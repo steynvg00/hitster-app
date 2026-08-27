@@ -40,6 +40,48 @@ export const handle: Handle = async ({ event, resolve }) => {
 	event.locals.teamId = teamId;
 	event.locals.playerId = playerId;
 
+	// ── Laagprobe (?probe=laag) ────────────────────────────────────────────
+	// Diagnose op het toestel, zie $lib/components/LayerProbe.svelte.
+	//
+	// Waarom dit hier moet en niet in het component: bijna elk instappunt van
+	// de spelersflow is een REDIRECT. /join stuurt door naar /team,
+	// /sets/[id]/join naar /play/teams of /play/teams/randomizing. SvelteKit
+	// stuurt daarbij een kale Location mee, dus de query-parameter valt weg
+	// vóórdat er ook maar één regel clientcode draait — het component kreeg
+	// hem nooit te zien. En juist de schermen uit de klacht (de randomizer,
+	// de team reveal) zijn alleen via zo'n redirect te bereiken.
+	//
+	// De parameter zet daarom hier een vlag, op de response die de redirect
+	// zelf draagt. Sessiecookie zonder httpOnly: hij verdwijnt als de browser
+	// dicht gaat, en het component mag hem lezen. Er zit niets in behalve
+	// "aan". `?probe=uit` haalt hem weer weg.
+	const probe = event.url.searchParams.get('probe');
+	if (probe === 'laag') {
+		//
+		// Geen `secure`, in tegenstelling tot de sessiecookies hiernaast. Die
+		// dragen identiteit; deze draagt het cijfer 1. Met `secure` weigert de
+		// browser hem op elke preview die niet over https loopt, en dan is de
+		// probe precies daar onbruikbaar waar hij nodig is. Gemeten: over
+		// http://localhost:4173 komt hij mét `secure` niet aan en zónder wel.
+		event.cookies.set('mixup_probe', '1', {
+			path: '/',
+			httpOnly: false,
+			sameSite: 'lax',
+			secure: false
+		});
+	} else if (probe === 'uit') {
+		// Dezelfde attributen als bij het zetten. Met alleen `{ path: '/' }` zet
+		// SvelteKit er zijn standaard `HttpOnly` op, en dan haalt WebKit de
+		// bestaande niet-HttpOnly cookie er niet mee weg — gemeten: `?probe=uit`
+		// leek te werken, maar op de volgende pagina stond de balk er weer.
+		event.cookies.delete('mixup_probe', {
+			path: '/',
+			httpOnly: false,
+			sameSite: 'lax',
+			secure: false
+		});
+	}
+
 	// Supabase Auth — getUser() does a server-round-trip to verify the JWT,
 	// so the result is trustworthy (unlike getSession() which trusts the cookie as-is).
 	const supabase = createPublicClient(event.cookies);

@@ -3,8 +3,22 @@
 	 * LAAGPROBE — meet de achtergrondlaag op het TOESTEL, op de echte pagina.
 	 *
 	 * Aanzetten met `?probe=laag` achter een willekeurige spelers-URL, bijv.
-	 * /team?probe=laag. Staat die parameter er niet, dan rendert dit component
-	 * niets en meet het niets.
+	 * /team?probe=laag. Uitzetten met `?probe=uit`, of door de tab te sluiten.
+	 *
+	 * ── Waarom de vlag uit een cookie komt ──────────────────────────────────
+	 * De eerste versie keek alleen naar de query-parameter, en dat werkte niet
+	 * op de plekken waar het ertoe doet. Bijna elk instappunt van de
+	 * spelersflow is een REDIRECT: /join stuurt door naar /team,
+	 * /sets/[id]/join naar /play/teams of /play/teams/randomizing. SvelteKit
+	 * stuurt daarbij een kale Location mee (`redirect(302, '/team')`), dus de
+	 * parameter valt weg vóórdat er clientcode draait. sessionStorage helpt
+	 * daar niet tegen, precies omdat de omleiding op de SERVER gebeurt en het
+	 * component de parameter nooit te zien krijgt.
+	 *
+	 * hooks.server.ts zet de vlag daarom in een sessiecookie, op de response
+	 * die de redirect zelf draagt. Die overleeft de hele keten. Dit component
+	 * leest hem, of de parameter als die er nog staat. Zonder allebei rendert
+	 * het niets en meet het niets.
 	 *
 	 * ── Waarom in de app en niet in de console ──────────────────────────────
 	 * iOS Safari heeft geen console zonder een Mac ernaast. De meting moet op
@@ -20,7 +34,7 @@
 	 * layout (position: fixed, eigen laag bovenop) en het toont uitsluitend
 	 * viewportmaten en berekende CSS — geen spelers-, team- of setgegevens.
 	 */
-	import { onMount } from 'svelte';
+	import { browser } from '$app/environment';
 	import { page } from '$app/stores';
 
 	const CB_PROPS = [
@@ -37,7 +51,21 @@
 		'containerType'
 	] as const;
 
-	const on = $derived($page.url.searchParams.get('probe') === 'laag');
+	const param = $derived($page.url.searchParams.get('probe'));
+
+	/**
+	 * Aan als de cookie het zegt (die hooks.server.ts zet, en die de redirects
+	 * overleeft), of als de parameter nog in de URL staat. `?probe=uit` zet hem
+	 * uit — hooks wist de cookie dan op dezelfde response.
+	 *
+	 * Alleen client-side: tijdens SSR is er geen document, dus de balk verschijnt
+	 * één frame na de hydratie. Voor een diagnosebalk is dat prima.
+	 */
+	const on = $derived(
+		param === 'uit'
+			? false
+			: param === 'laag' || (browser && document.cookie.includes('mixup_probe=1'))
+	);
 
 	let text = $state('meten…');
 	let copied = $state(false);
@@ -122,7 +150,10 @@
 		return L.join('\n');
 	}
 
-	onMount(() => {
+	// $effect en niet onMount: de probe kan binnen dezelfde tab AAN gaan zonder
+	// dat dit component opnieuw mount (client-side navigatie naar een URL mét de
+	// parameter). De lus hangt daarom aan `on`, niet aan de montage.
+	$effect(() => {
 		if (!on) return;
 		const run = () => {
 			text = meet();
