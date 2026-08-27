@@ -99,8 +99,15 @@
 		m.remove();
 
 		const L: string[] = [];
+		// scrollY is sinds de vaste body altijd 0; wat er echt scrolt is
+		// .app-scroll. Allebei tonen, zodat een terugval naar vensterscroll
+		// meteen zichtbaar is.
+		const scroller = document.querySelector('.app-scroll') as HTMLElement | null;
+		const scrollTop = scroller ? Math.round(scroller.scrollTop) : -1;
+
 		L.push(`url        ${location.pathname}`);
-		L.push(`viewport   ${window.innerWidth}x${window.innerHeight}  scrollY ${Math.round(scrollY)}`);
+		L.push(`viewport   ${window.innerWidth}x${window.innerHeight}`);
+		L.push(`scroll     venster ${Math.round(scrollY)}   app-scroll ${scrollTop}`);
 		L.push(`svh ${svh}   lvh ${lvh}   dvh ${dvh}   vh ${vh}`);
 		L.push(`safe-area  ${insets}`);
 
@@ -140,6 +147,11 @@
 		}
 
 		L.push('');
+		// De kern van de toestelmeting: schuift de laag mee met de scroll?
+		// Een verankerde laag houdt top 0, ongeacht hoe ver er gescrold is.
+		L.push(
+			`laag blijft staan    ${Math.round(r.top) === 0 ? 'JA' : `NEE  ← top ${Math.round(r.top)} bij scroll ${scrollTop}`}`
+		);
 		L.push(`bottom==lvh          ${Math.round(r.bottom) === lvh ? 'JA' : 'NEE  ← hier zit het'}`);
 		L.push(`grond is gradient    ${cs.backgroundImage !== 'none' ? 'JA' : 'NEE  ← hier zit het'}`);
 		L.push(`laag is fixed        ${cs.position === 'fixed' ? 'JA' : 'NEE  ← hier zit het'}`);
@@ -162,11 +174,14 @@
 		const t = setInterval(run, 500);
 		addEventListener('resize', run);
 		addEventListener('scroll', run, { passive: true });
+		const scroller = document.querySelector('.app-scroll');
+		scroller?.addEventListener('scroll', run, { passive: true });
 		addEventListener('orientationchange', run);
 		return () => {
 			clearInterval(t);
 			removeEventListener('resize', run);
 			removeEventListener('scroll', run);
+			scroller?.removeEventListener('scroll', run);
 			removeEventListener('orientationchange', run);
 		};
 	});
