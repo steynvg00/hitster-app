@@ -1382,15 +1382,23 @@
 		}
 	});
 
-	/* ── Toetsenbord-inzet voor de sticky powerup-balk ────────────────────────
-	   De balk is een harde eis: altijd zichtbaar en klikbaar. `position: sticky;
-	   bottom: 0` levert dat overal — behalve op iOS met een open toetsenbord.
-	   Daar krimpt het layout-viewport niet mee, dus alles wat aan de onderkant
-	   hangt verdwijnt achter het toetsenbord.
+	/** Staat het iOS-toetsenbord open? Zet de verbergstand van .pu-bar aan. */
+	let toetsenbordOpen = $state(false);
 
-	   visualViewport weet wél hoeveel er bedekt is. Die hoogte gaat als
-	   `--kb-inset` naar de balk, die er dan precies bovenop komt te staan.
-	   Browsers zonder visualViewport houden 0 en gedragen zich als voorheen. */
+	/* ── Toetsenbord-inzet voor de sticky powerup-balk ────────────────────────
+	   De balk moet zichtbaar en klikbaar zijn zolang er GESPEELD wordt. Zodra er
+	   getypt wordt, moet hij juist weg: met het toetsenbord open stond hij
+	   midden over het antwoordveld heen.
+
+	   Op iOS krimpt het layout-viewport niet als het toetsenbord opengaat, dus
+	   de onderrand waar een sticky element vanaf rekent blijft staan.
+	   visualViewport weet wél hoeveel er bedekt is. Diezelfde meting doet nu
+	   twee dingen: ze zet `--kb-inset` (de verbergstand van .pu-bar gebruikt hem
+	   als schuifafstand) en ze zet `toetsenbordOpen`, de vlag die die stand
+	   aanzet.
+
+	   Browsers zonder visualViewport houden 0 en false, en gedragen zich als
+	   voorheen. */
 	onMount(() => {
 		const vv = window.visualViewport;
 		if (!vv) return;
@@ -1399,7 +1407,9 @@
 			const covered = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
 			// Onder de ~80px is het geen toetsenbord maar de in-/uitklappende
 			// adresbalk; die mag de balk niet laten wiebelen tijdens het scrollen.
-			root.style.setProperty('--kb-inset', covered > 80 ? `${Math.round(covered)}px` : '0px');
+			const open = covered > 80;
+			toetsenbordOpen = open;
+			root.style.setProperty('--kb-inset', open ? `${Math.round(covered)}px` : '0px');
 		};
 		update();
 		vv.addEventListener('resize', update);
@@ -1408,6 +1418,7 @@
 			vv.removeEventListener('resize', update);
 			vv.removeEventListener('scroll', update);
 			root.style.removeProperty('--kb-inset');
+			toetsenbordOpen = false;
 		};
 	});
 
@@ -2823,7 +2834,7 @@
 			passen.
 		-->
 		{#if data.activeSetId && data.heldPowerups}
-			<div class="pu-bar">
+			<div class="pu-bar" class:pu-bar--onder-toetsenbord={toetsenbordOpen}>
 				<div class="pu-panel flex items-center gap-2.5 squircle">
 					{#if data.heldPowerups.length > 0}
 						<span
@@ -2952,10 +2963,19 @@
 	   elkaar ruimtelijk nooit (boven vs. onder), en zo kan de bovenzone nooit
 	   over iets heen schilderen dat vanuit deze balk opengaat.
 
-	   De schil is doorzichtig en draagt alleen de POSITIE. `bottom` telt de
-	   toetsenbord-inzet mee (zie het visualViewport-effect) plus de eigen
+	   De schil is doorzichtig en draagt alleen de POSITIE. `bottom` is de eigen
 	   zweefmarge; sticky-offsets tellen vanaf de VENSTERrand, dus de
 	   home-indicator hoort in diezelfde som en niet in de padding van de schil.
+
+	   De toetsenbord-inzet zat eerst IN die som, met een plus: `bottom: 10px +
+	   --kb-inset`. Op iOS krimpt het layout-viewport niet als het toetsenbord
+	   opengaat, dus de onderrand waar sticky vanaf rekent blijft op zijn oude
+	   plek — en die plus tilde de balk 346px omhoog vanaf die onbewogen rand,
+	   precies midden in het zichtbare stuk, boven op het antwoordveld. Zo stond
+	   hij op de melding: de pil met GRATIS TAB en RESURRECTION over het
+	   festivalveld heen.
+
+	   De inzet zit nu niet meer in `bottom` maar in de verbergstand hieronder.
 
 	   Geen `overflow` en geen `backdrop-filter` op DEZE laag: een sticky voorouder
 	   met backdrop-filter zou het bevattende blok kapen van alles wat er fixed in
@@ -2964,10 +2984,47 @@
 	   zit één niveau lager, op het paneel, dat niets fixed bevat. */
 	.pu-bar {
 		position: sticky;
-		bottom: calc(var(--kb-inset, 0px) + max(10px, env(safe-area-inset-bottom, 0px)));
+		bottom: max(10px, env(safe-area-inset-bottom, 0px));
 		z-index: 40;
 		padding: 8px 14px 0;
 		pointer-events: none;
+		transition:
+			transform 0.18s ease-out,
+			visibility 0s;
+	}
+
+	/* Toetsenbord open: de balk zakt eronder en is weg.
+
+	   Waarom een transform en niet de `bottom` van sticky. Eerst geprobeerd door
+	   de toetsenbord-inzet van `bottom` AF te trekken in plaats van erbij op te
+	   tellen. De berekende waarde klopte — bottom werd -326px — maar de balk
+	   bewoog nauwelijks. GEMETEN (venster 714, inzet 336px):
+
+	     bottom  10px    balk 631..704
+	     bottom -326px   balk 642..715   nog steeds in beeld
+
+	   Dat is sticky zoals het hoort te werken: het verschuift een element alleen
+	   ten opzichte van zijn plek in de flow om het BINNEN beeld te houden, en het
+	   duwt het nooit voorbij die plek naar buiten. Een negatieve offset haalt de
+	   verschuiving er dus hooguit af; er komt geen beweging naar beneden bij.
+
+	   Een transform kent die begrenzing niet: die verplaatst bij het tekenen en
+	   trekt zich van de flow niets aan. 100% is de eigen hoogte van de balk,
+	   --kb-inset de bedekte hoogte eronder — samen altijd genoeg om onder de
+	   onderrand te komen, bij elke toetsenbordhoogte.
+
+	   `visibility: hidden` erbij, zodat hij ook echt weg is en niet per ongeluk
+	   aangeraakt kan worden; de vertraging in de transitie laat hem eerst
+	   uitschuiven en dan pas verdwijnen. De transform staat ALLEEN in deze stand:
+	   een blijvende transform op deze laag zou het bevattende blok kapen van
+	   alles wat er fixed in staat — dezelfde reden waarom hier geen overflow en
+	   geen backdrop-filter staan. */
+	.pu-bar--onder-toetsenbord {
+		transform: translateY(calc(100% + var(--kb-inset, 0px)));
+		visibility: hidden;
+		transition:
+			transform 0.18s ease-in,
+			visibility 0s linear 0.18s;
 	}
 
 	/* Het zwevende paneel zelf: glas uit het bestaande systeem
