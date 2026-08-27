@@ -146,6 +146,13 @@
 
 		// Game set state realtime (transitions joining → playing → recap)
 		let setChannel: ReturnType<typeof supabaseBrowser.channel> | undefined;
+		// Lobbykanaal. Staat hier, náást setChannel, om dezelfde reden: de cleanup
+		// hieronder kan alleen opruimen wat hij bij naam kent. Het stond eerder als
+		// losse expressie in het `joining`-blok en werd daardoor nooit verwijderd —
+		// elk bezoek aan /team tijdens de joining-fase liet een permanent
+		// abonnement achter, dat bij elk players-event opnieuw de volledige
+		// lobbyTeams-map draaide.
+		let lobbyChannel: ReturnType<typeof supabaseBrowser.channel> | undefined;
 		if (data.activeSet?.id) {
 			setChannel = supabaseBrowser
 				.channel(`team-set-state-${data.activeSet.id}`)
@@ -175,7 +182,7 @@
 
 			// Lobby: players joining realtime
 			if (data.activeSet.play_state === 'joining') {
-				supabaseBrowser
+				lobbyChannel = supabaseBrowser
 					.channel(`team-lobby-players-${data.activeSet.id}`)
 					.on(
 						'postgres_changes',
@@ -207,6 +214,7 @@
 		return () => {
 			supabaseBrowser.removeChannel(teamChannel);
 			if (setChannel) supabaseBrowser.removeChannel(setChannel);
+			if (lobbyChannel) supabaseBrowser.removeChannel(lobbyChannel);
 			clearPreview();
 		};
 	});
