@@ -5,7 +5,13 @@
 	 * Een battle is ALLE teams tegen elkaar op één challenge, geen duels. De
 	 * kaart toont per team wat het op DIE challenge scoorde, hoogste bovenaan,
 	 * met plaatsnummer, teamkleur-bol en teamnaam, en onderaan een winnaarsregel.
-	 * Er worden GEEN bonuspunten toegekend — de battle is puur weergave.
+	 *
+	 * TWEE GETALLEN PER RIJ, en ze mogen nooit door elkaar gelezen worden: de
+	 * grote groene score is wat het team op de challenge haalde, de gele pil
+	 * eronder is de ladderbonus die het voor zijn PLEK krijgt. Vandaar het "+"
+	 * en het woord "bonus" op de pil: zonder dat leest een speler +10 als deel
+	 * van zijn challengeresultaat, wat precies de verwarring was waardoor de
+	 * bonus ooit voor een duel-mechaniek werd aangezien.
 	 *
 	 * Rendert op BEIDE ceremoniesurfaces: het wachtscherm van de speler (met het
 	 * eigen team gemarkeerd) en het TV-podium (zonder markering), zodat de twee
@@ -13,7 +19,7 @@
 	 *
 	 * Vormgeving (redesign fase 6): design/M!XUP Ceremonie en Randen.dc.html,
 	 * scherm "01 · WACHTSCHERM — BATTLE-FASE". Glaskaart met titel-eyebrow,
-	 * teamrijen met bol + naam + getal en een uitkomst-tag onderaan. De
+	 * teamrijen met bol + naam + getallen en een uitkomst-tag onderaan. De
 	 * VS-scheiding tussen de rijen is eruit: die tekende een duel dat er niet is.
 	 *
 	 * PURE DISPLAY over opgeslagen data: `ranking` is set_challenges.battle_ranking
@@ -33,6 +39,8 @@
 		rank: number;
 		/** Wat dit team op deze challenge scoorde. */
 		score: number;
+		/** De ladderbonus voor deze plek, bovenop die score. */
+		awarded: number;
 	};
 	type TeamInfo = { id: string; color: string; display_name: string };
 
@@ -91,8 +99,16 @@
 				{#if isMine}
 					<span class="bc__you">Jij</span>
 				{/if}
-				<!-- Het getal is de score op DEZE challenge, geen bonus: dus geen "+". -->
-				<span class="bc__score" class:bc__score--zero={row.score <= 0}>{row.score}</span>
+				<!-- Score en bonus staan gestapeld en verschillen in kleur, teken en
+				     label; het zijn twee dingen en dat moet je in één blik zien. -->
+				<span class="bc__nums">
+					<span class="bc__score" class:bc__score--zero={row.score <= 0}>{row.score}</span>
+					{#if row.awarded > 0}
+						<span class="bc__bonus">+{row.awarded} bonus</span>
+					{:else}
+						<span class="bc__bonus bc__bonus--none">geen bonus</span>
+					{/if}
+				</span>
 			</div>
 		{/each}
 	</div>
@@ -209,8 +225,17 @@
 		color: var(--color-mixup-paper);
 	}
 
-	.bc__score {
+	/* Rechterkolom: score boven, bonus eronder. Rechts uitgelijnd zodat de
+	   getallen over de rijen heen op één lijn staan. */
+	.bc__nums {
 		flex: 0 0 auto;
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
+		gap: calc(3 * var(--bc-u));
+	}
+
+	.bc__score {
 		font-family: var(--font-display);
 		font-weight: 900;
 		font-size: calc(24 * var(--bc-u));
@@ -220,6 +245,32 @@
 	}
 
 	.bc__score--zero {
+		color: var(--color-mixup-muted);
+	}
+
+	/* De bonus: pil in mixup-yellow — dezelfde kleur die de scores op het
+	   leaderboard dragen, dus "dit gaat je totaal in". */
+	.bc__bonus {
+		border-radius: 999px;
+		padding: calc(1 * var(--bc-u)) calc(7 * var(--bc-u));
+		background: rgba(255, 230, 0, 0.12);
+		border: 1px solid rgba(255, 230, 0, 0.45);
+		font-family: var(--font-ui);
+		font-weight: 800;
+		font-size: calc(9 * var(--bc-u));
+		line-height: 1.5;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		white-space: nowrap;
+		color: var(--color-mixup-yellow);
+		font-variant-numeric: tabular-nums;
+	}
+
+	/* De laatste plek krijgt niets. Dat is een uitkomst, geen fout: de pil blijft
+	   staan (anders lijkt de rij onvolledig) maar valt terug naar grijs. */
+	.bc__bonus--none {
+		background: transparent;
+		border-color: rgba(229, 242, 255, 0.18);
 		color: var(--color-mixup-muted);
 	}
 

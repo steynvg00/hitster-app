@@ -478,7 +478,10 @@
 							{/if}
 						</span>
 						{#if ch.isBattle}
-							<span title="Battle-challenge — alle teams worden onderling gerangschikt">⚔️</span>
+							<span
+								title="Battle-challenge — alle teams worden gerangschikt; je plek levert bonuspunten op"
+								>⚔️</span
+							>
 						{/if}
 						{#if locked}
 							<img src={ICON_ASSETS.lock} alt="" class="ch-lock" />

@@ -353,8 +353,12 @@
 								class:box--fresh={animatingTeamId === team.id}
 							>
 								{#if revealed && photoOf(team)}
-									<img src={photoOf(team)} alt="" aria-hidden="true" class="box__photo" />
-									<span class="box__scrim"></span>
+									<!-- .squircle op de lagen zelf: waar corner-shape werkt is de
+									     kaart een squircle, en dan moeten foto en scrim diezelfde
+									     hoekvorm aannemen — anders blijft er bij de hoeken een
+									     sliver teamgradient tussen kaart en foto staan. -->
+									<img src={photoOf(team)} alt="" aria-hidden="true" class="box__photo squircle" />
+									<span class="box__scrim squircle"></span>
 								{/if}
 								<span class="box__glyph">{revealed ? team.display_name : '?'}</span>
 							</div>
@@ -749,17 +753,33 @@
 		transform: translateX(-50%) scale(1);
 	}
 
-	/* Teamblok — dashed en pulserend tot de host het onthult. */
+	/* Teamblok — dashed en pulserend tot de host het onthult.
+	 *
+	 * GEEN overflow: hidden. Op iOS Safari 18.7 klipte die langs een RECHTE rand
+	 * in plaats van langs de afgeronde. De foto en de scrim ronden zichzelf nu af
+	 * met --box-r-inner; in Playwright-WebKit levert dat exact hetzelfde hoekpixel
+	 * op als de oude clip, en zonder die radius lekt de foto vierkant over de hoek.
+	 *
+	 * De .squircle op foto en scrim (zie de markup) is voor browsers waar
+	 * corner-shape WEL werkt — daar blijft anders een sliver teamgradient in de
+	 * hoek staan. Op iOS 18.7 doet die klasse niets: corner-shape wordt daar
+	 * gemeten niet ondersteund, dus de squircle-hoekvorm komt er niet tot stand.
+	 *
+	 * LET OP: de teamgekleurde band die de aanleiding was voor dit onderzoek is
+	 * hiermee NIET aantoonbaar opgelost. Die band zit op de plek-reveal op het
+	 * SPELERSCHERM, niet op dit TV-podium. */
 	.box {
+		--box-r: calc(22 * var(--u));
+		/* De binnenrand van de rand: waar de foto en de scrim (inset: 0) staan. */
+		--box-r-inner: calc(var(--box-r) - 2 * var(--u));
 		position: relative;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		box-sizing: border-box;
-		overflow: hidden;
 		width: calc(var(--box-w) * var(--u));
 		height: calc(var(--box-h) * var(--u));
-		border-radius: calc(22 * var(--u));
+		border-radius: var(--box-r);
 		border: calc(2 * var(--u)) dashed rgba(var(--accent), 0.45);
 	}
 
@@ -785,6 +805,7 @@
 		width: 100%;
 		height: 100%;
 		object-fit: cover;
+		border-radius: var(--box-r-inner);
 	}
 
 	/* Houdt de teamnaam leesbaar bovenop een teamfoto. */
@@ -792,10 +813,15 @@
 		position: absolute;
 		inset: 0;
 		background: linear-gradient(180deg, rgba(11, 11, 31, 0.2) 0%, rgba(11, 11, 31, 0.75) 100%);
+		border-radius: var(--box-r-inner);
 	}
 
+	/* Zonder de overflow-clip van .box is dit het enige wat een extreem lange
+	   teamnaam nog binnen de kaart houdt. */
 	.box__glyph {
 		position: relative;
+		max-width: 100%;
+		overflow: hidden;
 		padding: 0 calc(10 * var(--u));
 		text-align: center;
 		font-family: var(--font-display);

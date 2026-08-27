@@ -13,6 +13,7 @@ type BattleRankEntry = {
 	team_id: string;
 	rank: number;
 	score: number;
+	awarded: number;
 };
 type BattleStatus = {
 	resolved: boolean;

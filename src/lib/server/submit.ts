@@ -500,8 +500,7 @@ export async function scoreAndPersistSubmission(
 	}
 
 	// Battle resolution hook: this team's attempt was just ended above, so if it
-	// was the last set-team to finish, rangschik nu (alleen vastleggen — een
-	// battle deelt geen punten uit).
+	// was the last set-team to finish, rangschik nu (ranglijst + ladderbonus).
 	// The timer→auto-submit→ended_at machinery drives this for the auto path too,
 	// since the backstop also flows through here. Idempotent (CAS in resolveBattle)
 	// and best-effort — a resolution hiccup must never fail the submit itself, and

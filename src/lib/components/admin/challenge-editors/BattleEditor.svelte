@@ -1,12 +1,14 @@
 <script lang="ts">
-	type BattleConfig = { enabled: boolean };
+	type BattleConfig = { enabled: boolean; max_points: number };
 
 	let { battleConfig }: { battleConfig: BattleConfig } = $props();
 
 	// Local editable copy — same debounced auto-persist pattern as FieldsEditor.
-	// Er valt hier maar één ding te zetten: aan of uit. Een battle deelt geen
-	// punten uit, dus er is ook geen maximum meer om in te stellen.
+	// De ladder zelf wordt hier niet bewerkt: die volgt bij resolutie uit deze
+	// ene maxwaarde + het échte team_count van de set (lineair max→0 in gelijke
+	// stappen), dus de editor heeft aan één getal genoeg.
 	let enabled = $state(battleConfig.enabled);
+	let maxPoints = $state(battleConfig.max_points);
 	let saveTimer: ReturnType<typeof setTimeout>;
 	let saving = $state(false);
 	let lastSaveOk = $state<boolean | null>(null);
@@ -20,6 +22,7 @@
 		saving = true;
 		const fd = new FormData();
 		fd.append('enabled', enabled ? 'true' : 'false');
+		fd.append('max_points', String(maxPoints));
 		const res = await fetch('?/saveBattle', { method: 'POST', body: fd });
 		saving = false;
 		lastSaveOk = res.ok;
@@ -27,6 +30,12 @@
 
 	function toggleEnabled() {
 		enabled = !enabled;
+		schedSave();
+	}
+
+	function setMaxPoints(val: number) {
+		if (!Number.isFinite(val) || val < 0) return;
+		maxPoints = Math.round(val);
 		schedSave();
 	}
 </script>
@@ -50,7 +59,21 @@
 	</div>
 	<p class="mb-2 text-[11px] text-zinc-600">
 		All teams play this challenge normally — full score, multipliers, and powerups apply as usual.
-		Once every team finishes, the recap shows a ranking of what each team scored on this challenge;
-		highest wins the battle. No bonus points are awarded — the battle is display only.
+		Once every team finishes, they're ranked by what they scored on this challenge and each gets a
+		bonus on top: the max for rank 1, split linearly down to 0 by rank across the set's team count
+		(last place gets nothing). Tied teams share a rank and both get that rank's bonus.
 	</p>
+	{#if enabled}
+		<div class="flex items-center gap-2">
+			<label class="text-xs text-zinc-400" for="battle-max-points">Max points (rank 1)</label>
+			<input
+				id="battle-max-points"
+				type="number"
+				value={maxPoints}
+				min="0"
+				class="input-field w-24"
+				onchange={(e) => setMaxPoints(parseInt((e.target as HTMLInputElement).value, 10))}
+			/>
+		</div>
+	{/if}
 </div>
