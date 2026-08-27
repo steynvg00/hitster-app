@@ -2549,14 +2549,11 @@
 			<!-- /stick-top -->
 		</div>
 
-		<!-- Titel — alleen de challenge-naam, zie `challengeTitle`. Staat sinds de
-		     paginascroll ónder de sticky bovenzone en scrolt dus gewoon weg. -->
-		<h1
-			class="px-5 pt-2.5 pb-1 font-display text-[34px] leading-[0.95] font-black text-mixup-paper uppercase"
-			style="text-shadow: 0 0 26px rgba(124,77,255,0.85);"
-		>
-			{challengeTitle}
-		</h1>
+		<!-- GEEN titel op dit scherm. Hij stond hier als 34px-kop en herhaalde wat
+		     de speler net op de pre-game poort las en zelf aantikte; op een scherm
+		     waar de klok, de tabbalk, de audiokaart en elk antwoordveld om ruimte
+		     vechten is dat de eerste regel die mag vallen. De naam blijft staan op
+		     de poort (scherm 6) en op het resultaatscherm. -->
 
 		{#if data.activeSetId}
 			<IncomingEffectsListener
