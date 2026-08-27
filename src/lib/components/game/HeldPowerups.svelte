@@ -55,6 +55,7 @@
 		teamId,
 		setId,
 		powerups: initialPowerups,
+		compact = false,
 		currentChallengeId,
 		variantFields = [],
 		tabId,
@@ -69,6 +70,14 @@
 		teamId: string;
 		setId: string;
 		powerups: HeldPowerup[];
+		/**
+		 * Krappe variant voor de zwevende balk op het antwoordscherm. Alleen
+		 * MAATVOERING — dezelfde chips, dezelfde sheet, dezelfde activatiemodal,
+		 * hetzelfde verzoek aan de server. De inventaris op /team blijft de ruime
+		 * stand houden; daar is het scherm van de powerups, hier zijn ze te gast
+		 * naast een antwoordformulier dat de ruimte harder nodig heeft.
+		 */
+		compact?: boolean;
 		currentChallengeId?: string;
 		// free_answer addressing — see PowerupActivationModal. Passed straight through.
 		variantFields?: string[];
@@ -174,20 +183,44 @@
 </script>
 
 {#if powerups.length === 0}
-	<p class="text-[13px] font-medium text-mixup-dim">
-		Nog geen powerups — verdien ze door snel en goed te antwoorden.
+	<!--
+		De lege stand nam in de balk twee regels. Kleiner zetten was niet genoeg:
+		GEMETEN in de echte letter (Rubik 500) is de volle zin op 11px 352px breed,
+		terwijl het paneel op het breedste toestel uit deze flow (402px) 348px
+		binnenruimte heeft. Hij past daar dus op geen enkel scherm op één regel —
+		dat is een eigenschap van de ZIN, niet van de opmaak.
+
+		Vandaar een kortere zin, alleen in de krappe stand. Hij houdt alle drie de
+		feiten vast: er zijn er nog geen, je verdient ze door te antwoorden, en het
+		moet snel én goed. Op 11px is hij 255px en past hij vanaf 320px scherm — de
+		hele reeks 320/360/375/390/402 dus, niet alleen het toestel waarop het
+		toevallig getest is. De inventaris op /team houdt de volle zin: daar is de
+		regelbreedte geen probleem.
+
+		De aanhef staat apart en vet, zodat "Nog geen powerups" het eerst leest als
+		er ooit tóch afgebroken wordt.
+	-->
+	<p class="empty" class:empty--compact={compact}>
+		{#if compact}<span class="empty-lead">Nog geen powerups</span> — snel én goed antwoorden.{:else}Nog
+			geen powerups — verdien ze door snel en goed te antwoorden.{/if}
 	</p>
 {:else}
-	<div class="chip-row">
+	<div class="chip-row" class:chip-row--compact={compact}>
 		{#each chips as c (c.entry.powerup_type_id)}
-			<button type="button" class="chip squircle" onclick={() => (sheetFor = c.entry)}>
+			<button
+				type="button"
+				class="chip squircle"
+				class:chip--compact={compact}
+				onclick={() => (sheetFor = c.entry)}
+			>
 				<img
 					src={powerupIcon(c.entry.powerup_type_id)}
 					alt=""
 					class="chip-img"
+					class:chip-img--compact={compact}
 					onerror={(e) => ((e.currentTarget as HTMLImageElement).style.visibility = 'hidden')}
 				/>
-				<span class="chip-label">
+				<span class="chip-label" class:chip-label--compact={compact}>
 					{powerupName(c.entry.powerup_type_id, c.entry.type?.name)}
 					{#if c.count > 1}<span class="text-mixup-yellow">×{c.count}</span>{/if}
 				</span>
@@ -225,6 +258,23 @@
 {/if}
 
 <style>
+	/* De lege stand. */
+	.empty {
+		font-size: 13px;
+		font-weight: 500;
+		color: var(--color-mixup-dim);
+	}
+
+	.empty--compact {
+		font-size: 11px;
+		line-height: 1.25;
+	}
+
+	.empty-lead {
+		font-weight: 700;
+		color: var(--color-mixup-muted);
+	}
+
 	/* Designbron: rij met gap 10. Scrollt horizontaal zodra een team meer
 	   powerups heeft dan er naast elkaar passen (390px referentie). */
 	.chip-row {
@@ -262,6 +312,10 @@
 		box-shadow: 0 0 16px rgba(255, 230, 0, 0.35);
 	}
 
+	.chip-row--compact {
+		gap: 8px;
+	}
+
 	.chip-img {
 		display: block;
 		margin: 0 auto;
@@ -279,5 +333,27 @@
 		letter-spacing: 0.08em;
 		color: var(--color-mixup-paper);
 		white-space: nowrap;
+	}
+
+	/* ── Krappe stand ────────────────────────────────────────────────────────
+	   Alleen maatvoering. De chip blijft een raakvlak van 44px hoog halen via
+	   de padding rondom het icoon plus het label; wat krimpt is het BEELD, niet
+	   het doel. Zie de `compact`-prop voor het waarom. */
+	.chip--compact {
+		min-width: 62px;
+		min-height: 44px;
+		padding: 4px 9px;
+		border-radius: 14px;
+	}
+
+	.chip-img--compact {
+		width: 26px;
+		height: 26px;
+	}
+
+	.chip-label--compact {
+		margin-top: 1px;
+		font-size: 8px;
+		letter-spacing: 0.06em;
 	}
 </style>

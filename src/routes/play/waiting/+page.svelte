@@ -628,7 +628,18 @@
 	══════════════════════════════════════════════════════════════ */
 	.own-reveal {
 		position: fixed;
-		inset: 0;
+		top: 0;
+		left: 0;
+		right: 0;
+		/* Volledige schermhoogte, niet inset:0. Het initial containing block is
+		   per specificatie zo hoog als de KLEINE viewport, dus `inset: 0` op een
+		   fixed laag levert op iOS 100svh op — 714px in een venster van 754px
+		   (toestelmeting #106). Dat is variant B uit die diagnose, en die liet
+		   onderaan exact die strook van 40px onbeschilderd. 100lvh is de
+		   grootste stand die de viewport aanneemt; 100vh staat ervoor als
+		   terugval en is op iOS van oudsher al de grote viewport. */
+		height: 100vh;
+		height: 100lvh;
 		z-index: 50;
 		display: flex;
 		align-items: center;

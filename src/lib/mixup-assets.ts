@@ -21,8 +21,51 @@
 
 const BASE = '/uploads';
 
-/** Het ENIGE toegestane M!XUP-logo — vervangt drip/shatter overal. */
-export const MIXUP_LOGO = `${BASE}/mixup_spin_clean.png`;
+/**
+ * Het ENIGE toegestane M!XUP-logo — vervangt drip/shatter overal.
+ *
+ * ── Waarom -v2.webp en niet meer de PNG ─────────────────────────────────────
+ * #99 haalde een exportartefact uit dit asset: een film van alfa 1-4 over het
+ * hele canvas van 818x297, die tegen de donkere paginagradient las als een
+ * lichte rechthoek achter het logo. Die fix zit nog gewoon in het bestand
+ * (gemeten op static/uploads/mixup_spin_clean.png: alfa 1-4 = 0,00%), maar de
+ * BESTANDSNAAM bleef gelijk — en #104 zette daarna
+ * `cache-control: public, max-age=604800` op /uploads/* (vercel.json).
+ *
+ * Een browser of CDN-edge die de PNG van vóór #99 had, houdt die dus tot een
+ * week vast zonder te hervalideren, en dan is de rechthoek terug. Dat is exact
+ * de reden die #104 zelf noemt voor de `-v2`-naamgeving: een nieuwe naam
+ * omzeilt elke cache. Dit asset had er alleen nog geen gekregen.
+ *
+ * Dus dezelfde behandeling als batch A: WebP, kwaliteit 88, alphaQuality 100,
+ * native pixelmaat behouden (818x297 is op een 402px-scherm bij 3x DPR nog
+ * steeds kleiner dan de weergave, dus verkleinen zou hem juist zachter maken).
+ * 331.769 -> 123.324 bytes (62,8% minder).
+ *
+ * GEMETEN op de drie bestanden (canvas getImageData, alfahistogram over alle
+ * 242.946 pixels van 818x297):
+ *
+ *                                              alfa 0    alfa 1-4    alfa 5-20
+ *   design_handoff/.../mixup_spin_clean.png     7,13%     42,30%       11,73%
+ *   static/uploads/mixup_spin_clean.png        49,42%      0,00%       11,73%
+ *   static/uploads/mixup_spin_clean-v2.webp    49,42%      0,00%       11,73%
+ *
+ * De film is die 42,30%: 102.756 pixels op alfa 1-4, over het HELE canvas tot
+ * in de hoeken. #99 duwde precies die pixels naar alfa 0 (7,13% + 42,30% =
+ * 49,42%, tot op de pixel). De WebP-hercodering is daarin identiek aan de
+ * gerepareerde PNG — de conversie heeft de fix niet aangetast.
+ *
+ * De resterende 11,73% op alfa 5-20 is GEEN tweede film maar de antialiasing
+ * om de letters heen; een 40x15-raster over het canvas laat in -v2.webp overal
+ * buiten de letterzone exact 0 zien, waar het handoff-origineel daar juist
+ * overal 2-8 heeft.
+ *
+ * Alle plekken die het logo tonen gaan via deze constante — NfcTapSplash,
+ * /leaderboard, /sets/[id]/podium, /play/[mode], /play/waiting en de
+ * design-systeempagina. Er staat nergens een los pad naar /uploads/ in de
+ * codebase, en app.html heeft geen og:image of manifest die het logo noemt.
+ */
+export const MIXUP_LOGO = `${BASE}/mixup_spin_clean-v2.webp`;
 
 /** Rang-assets voor de eindstand-schermen (11H) en het podium. */
 export const RANK_ASSETS = {
@@ -68,8 +111,31 @@ export const CHALLENGE_LOGOS = {
 export const OVERLAY_ASSETS = {
 	/** Code-regen tegel — zie CodeRain.svelte. */
 	codeRain: `${BASE}/voor-claude-design/overlay-coderain_cyaan.png`,
-	/** Kristal-hoeken overlay, opacity 0.35-0.4. */
-	frameCorners: `${BASE}/voor-claude-design/frame-hoeken_kristal_alpha.png`,
+	/**
+	 * Kristal-hoeken, vier LOSSE bestanden.
+	 *
+	 * Was één PNG van 768x1376 met alle vier de hoeken erin, uitgerekt over het
+	 * hele vlak — 362.657 bytes waarvan 86,40% alfa 0: bijna negen tiende lege
+	 * ruimte die elk scherm meelaadde, en de hoeken waren niet los te plaatsen.
+	 *
+	 * Elke hoek is nu strak bijgesneden tot zijn eigen inhoud en apart verankerd
+	 * in zijn SCHERMhoek (zie PlayerScreen). Zelfde behandeling als batch A:
+	 * WebP, kwaliteit 88, alphaQuality 100. Samen 89.186 bytes — 75,4% minder.
+	 *
+	 * Native pixelmaat behouden, NIET geschaald: de grootste hoek rendert op een
+	 * 402px-scherm 175 CSS-px breed, dus 526 device-px op 3x DPR, en het bestand
+	 * is 335px. Verkleinen zou hem juist te klein maken.
+	 */
+	frameCorners: {
+		/** 265x288, 17.634 bytes. Inzet vanaf de schermhoek: 1,43% / 0,80%. */
+		linksboven: `${BASE}/voor-claude-design/frame-hoek-linksboven-v2.webp`,
+		/** 265x287, 18.060 bytes. Inzet: 1,43% / 0,80%. */
+		rechtsboven: `${BASE}/voor-claude-design/frame-hoek-rechtsboven-v2.webp`,
+		/** 335x428, 26.718 bytes. Sluit aan op de hoek (inzet 0). */
+		linksonder: `${BASE}/voor-claude-design/frame-hoek-linksonder-v2.webp`,
+		/** 336x427, 26.774 bytes. Sluit aan op de hoek (inzet 0). */
+		rechtsonder: `${BASE}/voor-claude-design/frame-hoek-rechtsonder-v2.webp`
+	},
 	lightningArc: `${BASE}/voor-claude-design/effect-lightning-arc_alpha.png`,
 	glitchBackground: `${BASE}/voor-claude-design/achtergrond-attention_glitch.jpg`,
 	/** Voorbeeld van een gameset-logo (Vriendenweekend 2026). */

@@ -570,6 +570,73 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		}));
 	}
 
+	/**
+	 * ONAFGEMAAKTE ONTHULLINGEN van DEZE challenge — de resume-staat van de
+	 * resultaatflow.
+	 *
+	 * `status = 'pending'` betekent precies één ding: de powerup is toegekend maar
+	 * de speler heeft er nog geen keuze over gemaakt. materializeAward() zet elke
+	 * toekenning op 'pending' (powerups.ts), waarna alleen twee dingen die status
+	 * verlaten: resolvePowerupChoice() (bewaren -> 'held', laten gaan -> 'lost') en
+	 * de auto-activatie van een immediate_use-type, die direct doorschuift naar
+	 * 'active'/'consumed'. Een rij die hier nog op 'pending' staat is dus per
+	 * definitie een kaart die nooit is weggetikt.
+	 *
+	 * Daarmee overleeft de flow het wegleggen van de telefoon zonder nieuwe kolom
+	 * en zonder migratie: sluit de speler af tijdens het puntenscherm of halverwege
+	 * de onthullingen, dan staan de resterende powerups er bij de volgende load nog
+	 * precies zo. Zie de faseschakelaar in +page.svelte voor waar hij dan landt.
+	 *
+	 * `granted_from_challenge_id` bakent het af tot deze challenge, zodat een
+	 * openstaande kaart van een ANDERE challenge niet in dit scherm binnenvalt.
+	 *
+	 * Alleen holdable types kunnen hier staan (een immediate_use-type is al
+	 * geactiveerd), en die hebben aan hun id + type genoeg voor de kaart — de
+	 * `activation` die de submit-action meegeeft is voor hen leeg.
+	 */
+	let pendingEarnedPowerups: Array<{
+		teamPowerupId: string;
+		type: {
+			id: string;
+			name: string;
+			icon: string | null;
+			description: string | null;
+			holdable: boolean;
+			immediate_use: boolean;
+			category: string | null;
+		};
+	}> = [];
+	if (activeSetId && locals.teamId) {
+		const { data: pendingRows } = await admin
+			.from('team_powerups')
+			.select(
+				'id, powerup_type_id, powerup_types(id, name, icon, description, holdable, immediate_use, category)'
+			)
+			.eq('team_id', locals.teamId)
+			.eq('set_id', activeSetId)
+			.eq('granted_from_challenge_id', params.id)
+			.eq('status', 'pending')
+			.order('granted_at');
+		pendingEarnedPowerups = (pendingRows ?? [])
+			.map((r) => ({
+				teamPowerupId: r.id,
+				type: (
+					r as unknown as {
+						powerup_types: {
+							id: string;
+							name: string;
+							icon: string | null;
+							description: string | null;
+							holdable: boolean;
+							immediate_use: boolean;
+							category: string | null;
+						} | null;
+					}
+				).powerup_types
+			}))
+			.filter((e): e is { teamPowerupId: string; type: NonNullable<typeof e.type> } => !!e.type);
+	}
+
 	// Teams in this set — the target list for offensive-powerup activation (stuk 1).
 	// hasActiveTimedAttempt (stuk 2) lets the picker grey teams a timer attack
 	// (freeze/time_drain) can't hit right now; give_a_shot ignores it.
@@ -694,6 +761,7 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		hintUsed,
 		tutorialText,
 		heldPowerups,
+		pendingEarnedPowerups,
 		activeEffects,
 		freeAnswerReveal,
 		lifelineHints,

@@ -1,12 +1,13 @@
 import { redirect } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
-import { getTeamIdFromCookie } from '$lib/server/team';
 
-export const GET: RequestHandler = async ({ params, cookies }) => {
+export const GET: RequestHandler = async ({ params, locals }) => {
 	const { challenge_id } = params;
 
-	const teamId = getTeamIdFromCookie(cookies);
+	// locals.teamId, niet de cookie rechtstreeks: alleen dat veld is door de
+	// sessie-epoch-controle in hooks.server.ts heen.
+	const teamId = locals.teamId;
 	if (!teamId) {
 		redirect(302, `/join?redirect=/challenge/${challenge_id}?hint=1`);
 	}
@@ -14,10 +15,12 @@ export const GET: RequestHandler = async ({ params, cookies }) => {
 	const admin = createAdminClient();
 
 	// Upsert hint-used record (idempotent — second scan is fine)
-	await admin.from('challenge_hints_used').upsert(
-		{ challenge_id, team_id: teamId },
-		{ onConflict: 'challenge_id,team_id', ignoreDuplicates: true }
-	);
+	await admin
+		.from('challenge_hints_used')
+		.upsert(
+			{ challenge_id, team_id: teamId },
+			{ onConflict: 'challenge_id,team_id', ignoreDuplicates: true }
+		);
 
 	redirect(302, `/challenge/${challenge_id}?hint=1`);
 };

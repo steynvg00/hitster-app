@@ -1,7 +1,7 @@
 import { redirect } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
-import { setTeamCookie, getTeamIdFromCookie } from '$lib/server/team';
+import { setTeamCookie } from '$lib/server/team';
 import type { Database } from '$lib/types/database';
 
 type TeamColor = Database['public']['Tables']['teams']['Row']['color'];
@@ -16,7 +16,7 @@ function snakeColorAt(position: number): TeamColor {
 	return pos < TEAM_COLORS.length ? TEAM_COLORS[pos] : TEAM_COLORS[period - pos];
 }
 
-export const GET: RequestHandler = async ({ params, cookies }) => {
+export const GET: RequestHandler = async ({ params, cookies, locals }) => {
 	const { tag } = params;
 	const admin = createAdminClient();
 
@@ -60,7 +60,8 @@ export const GET: RequestHandler = async ({ params, cookies }) => {
 
 	// ── Challenge station ──────────────────────────────────────────────────────
 	if (nfcTag.purpose === 'challenge') {
-		if (!getTeamIdFromCookie(cookies)) {
+		// locals.teamId: door de sessie-epoch-controle heen (hooks.server.ts).
+		if (!locals.teamId) {
 			redirect(302, `/join?redirect=/challenge/${nfcTag.challenge_id}`);
 		}
 		redirect(302, `/challenge/${nfcTag.challenge_id}`);

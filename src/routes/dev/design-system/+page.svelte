@@ -46,7 +46,7 @@
 	];
 
 	const ASSETS = [
-		{ src: MIXUP_LOGO, label: 'mixup_spin_clean.png' },
+		{ src: MIXUP_LOGO, label: 'mixup_spin_clean-v2.webp' },
 		{ src: RANK_ASSETS.crown, label: 'Kroon-v2.webp' },
 		{ src: RANK_ASSETS.silver, label: 'rank2_silver' },
 		{ src: RANK_ASSETS.bronze, label: 'rank3_bronze' },
