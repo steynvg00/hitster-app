@@ -24,6 +24,8 @@
 
 	let phase = $state<'rolling' | 'reveal' | 'done'>('rolling');
 	let splashEl = $state<HTMLVideoElement | null>(null);
+	/** Opruimer van startSplash(): stopt de herhaalpogingen bij unmount. */
+	let stopSplash: (() => void) | null = null;
 
 	/**
 	 * "Deze speler heeft de reveal van DIT team al gezien."
@@ -86,7 +88,7 @@
 		const t1 = setTimeout(() => {
 			phase = 'reveal';
 			markSeen();
-			startSplash();
+			stopSplash = startSplash();
 		}, 1800);
 		const t2 = setTimeout(() => (phase = 'done'), 3600);
 
@@ -100,32 +102,75 @@
 		return () => {
 			clearTimeout(t1);
 			clearTimeout(t2);
+			stopSplash?.();
 			window.removeEventListener('pageshow', onPageShow);
 		};
 	});
 
 	/**
-	 * autoplay+muted+loop+playsinline alleen is niet genoeg: zonder expliciete
-	 * play() blijft de video op frame 0 staan.
+	 * De splash starten, en blijven proberen tot het lukt.
 	 *
-	 * En play() alleen was óók niet genoeg. De video (406 kB) hing tot nu toe
-	 * achter `{#if}`: hij kwam pas in de DOM op t=1800 ms — precies het moment
-	 * dat hij moest spelen. Op een warme cache lukte dat, op een koude was het
-	 * reveal-venster voorbij voordat het eerste frame binnen was. Dát was het
-	 * "soms wel, soms niet".
+	 * Waarom een herhaalpoging en niet één `canplay`-listener: gemeten in WebKit
+	 * op iPhone-formaat vuurt `canplay` op ~170 ms, terwijl deze functie pas op
+	 * ~2266 ms draait (onMount + de 1800 ms rol-fase). De oude terugval
 	 *
-	 * Nu staat het element er vanaf t=0 met preload="auto" (verborgen tijdens
-	 * het rollen), zodat het bufferen 1,8 s de tijd heeft. Wordt play() alsnog
-	 * afgewezen omdat er nog geen data is, dan pakt de canplay-listener hem op.
+	 *     el.play().catch(() => el.addEventListener('canplay', …, { once: true }))
+	 *
+	 * hing dus aan een gebeurtenis die al 2,1 s eerder was gevallen en nooit meer
+	 * komt — een element vuurt `canplay` alleen opnieuw als readyState eerst
+	 * onder HAVE_FUTURE_DATA zakt. Eén geweigerde play() maakte de video daarmee
+	 * permanent dood: hij bleef zichtbaar op frame 0 staan. Dát is de reden dat
+	 * de splash "soms niet speelde" en dat de bandbreedtefix er niets aan
+	 * veranderde — de video was allang binnen, hij mocht alleen niet starten.
+	 *
+	 * iOS weigert play() zonder gebruikersgebaar onder andere in
+	 * energiebesparingsmodus en bij Safari > Autoplay: Nooit. Daar helpt geen
+	 * enkele hoeveelheid buffer tegen; alleen opnieuw proberen, en meeliften op
+	 * het eerste echte aanraakgebaar, dat élke blokkade opheft.
+	 *
+	 * muted/loop/playsInline worden hier nog eens als PROPERTY gezet: de
+	 * attributen staan in de HTML, maar iOS beoordeelt de autoplay-voorwaarden
+	 * op de property-stand op het moment van play().
 	 */
-	function startSplash() {
-		const el = splashEl;
-		if (!el) return;
+	function startSplash(): () => void {
+		if (!splashEl) return () => {};
+		// Vaste, niet-nullbare verwijzing: de closures hieronder overleven latere
+		// wijzigingen van de $state-binding niet als ze splashEl blijven lezen.
+		const el: HTMLVideoElement = splashEl;
+
 		el.muted = true;
 		el.loop = true;
-		el.play().catch(() => {
-			el.addEventListener('canplay', () => void el.play().catch(() => {}), { once: true });
-		});
+		el.playsInline = true;
+
+		let done = false;
+
+		function attempt() {
+			if (done) return;
+			if (!el.paused && el.currentTime > 0) return stop();
+			void el.play().then(() => {
+				if (!el.paused) stop();
+			}, ignoreRejection);
+		}
+
+		// De afwijzing is verwacht (zie boven) en wordt door de volgende poging
+		// afgehandeld; hem opslokken voorkomt een unhandled rejection in de console.
+		function ignoreRejection() {}
+
+		const retry = setInterval(attempt, 250);
+		// Na de reveal-animatie heeft doorproberen geen zin meer: het scherm is dan
+		// weg of de speler heeft allang doorgeklikt.
+		const giveUp = setTimeout(() => stop(), 8000);
+
+		function stop() {
+			done = true;
+			clearInterval(retry);
+			clearTimeout(giveUp);
+			window.removeEventListener('pointerdown', attempt);
+		}
+
+		window.addEventListener('pointerdown', attempt);
+		attempt();
+		return stop;
 	}
 </script>
 

@@ -1043,12 +1043,59 @@
 		);
 	}
 
+	/**
+	 * Onthullingen wachten tot de speler zijn resultaat gezien heeft.
+	 *
+	 * PowerupRevealModal dekt scherm 8 volledig af. Bij het inleveren worden
+	 * `result` en `earnedPowerups` in dezelfde flush gezet, dus de modal ging
+	 * open in dezelfde frame waarin het resultatenscherm verscheen: de speler
+	 * kreeg eerst zijn powerup en pas na het wegtikken hoeveel hij goed had.
+	 * Omgekeerd hoort het. Vandaar deze wachtkamer tussen het binnenkomen van
+	 * een onthulling en het openen van de kaart.
+	 */
+	let pendingEarned = $state<EarnedPowerup[]>([]);
+
 	$effect(() => {
 		const earned = f?.earnedPowerups;
 		if (earned && earned.length && earned !== handledEarnRef) {
 			handledEarnRef = earned;
-			earnedQueue = [...earnedQueue, ...withSpun(earned as EarnedPowerup[])];
+			pendingEarned = [...pendingEarned, ...withSpun(earned as EarnedPowerup[])];
 		}
+	});
+
+	/**
+	 * "Het resultaat is gezien" = de count-up op TOTAAL staat op zijn eindwaarde.
+	 *
+	 * Dat is de laatste beweging van scherm 8; staat die stil op de eindscore,
+	 * dan heeft de speler zijn x/y-goed-rijen en zijn punten voor zich gehad.
+	 * De count-up zet die eindwaarde letterlijk in zijn laatste frame, dus de
+	 * gelijkheidstest is exact en niet op een marge gebaseerd.
+	 *
+	 * Het vangnet erachter is er voor het geval de count-up nooit landt — rAF
+	 * ligt stil zodra de speler naar een andere tab of app wegschakelt. Zonder
+	 * dat vangnet zou een verdiende powerup in de wachtkamer blijven hangen.
+	 * De timer wordt bij elke stap van de count-up opnieuw gezet, dus hij vuurt
+	 * pas 2,5 s nadat de teller écht stil is komen te liggen.
+	 */
+	let resultSeen = $state(false);
+
+	$effect(() => {
+		if (!result || resultSeen) return;
+		if (liveScore !== null && animatedScore === liveScore) {
+			resultSeen = true;
+			return;
+		}
+		const t = setTimeout(() => (resultSeen = true), 2500);
+		return () => clearTimeout(t);
+	});
+
+	$effect(() => {
+		if (!pendingEarned.length) return;
+		// Geen resultatenscherm in beeld — Power Spin activeert vanaf het
+		// antwoordformulier — dan is er niets om op te wachten.
+		if (result && !resultSeen) return;
+		earnedQueue = [...untrack(() => earnedQueue), ...pendingEarned];
+		pendingEarned = [];
 	});
 
 	// ── Validation ────────────────────────────────────────────────────────────

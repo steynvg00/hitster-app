@@ -399,7 +399,11 @@
 	<!-- ══ 5 · TEAM-HUB CONSOLE ═══════════════════════════════════════════ -->
 {:else}
 	<PlayerScreen class="hub">
-		<div class="hub-banner" style="background: {banner}; box-shadow: 0 8px 30px {hex}44;">
+		<div
+			class="hub-banner"
+			class:hub-banner--crowned={showsCrown}
+			style="background: {banner}; box-shadow: 0 8px 30px {hex}44;"
+		>
 			<div class="flex items-center gap-2.5">
 				<div class="min-w-0">
 					<div class="hub-banner__eyebrow" style="color: {onColor}; opacity: 0.75;">JOUW TEAM</div>
@@ -543,8 +547,21 @@
 	}
 
 	.hub-banner {
+		/* Positioneringsanker voor .hub-crown: die staat buiten de flow, zodat de
+		   bannerhoogte door de TEKST bepaald blijft en niet door de kroon. */
+		position: relative;
 		padding: 16px 20px;
 		flex: 0 0 auto;
+		/* Mocht de kroon ooit toch groter uitvallen dan de banner, dan wordt hij
+		   afgeknipt in plaats van dat hij eroverheen steekt. */
+		overflow: hidden;
+	}
+
+	/* Alleen bij een kroon: rechts ruimte vrijhouden zodat de teamnaam niet
+	   onder het (uit de flow gehaalde) plaatje doorloopt. 80px = 12px offset +
+	   ~60px kroonbreedte op 87px bannerhoogte + wat lucht. */
+	.hub-banner--crowned {
+		padding-right: 80px;
 	}
 
 	.hub-banner__eyebrow {
@@ -576,11 +593,29 @@
 	}
 
 	.hub-crown {
-		width: 96px;
-		height: 140px;
-		margin-left: auto;
-		flex: 0 0 auto;
+		/* De kroon VOLGT de banner, de banner volgt de kroon niet.
+		
+		   Hij stond op een vaste 96x140 als gewone flex-regel-item; die 140px was
+		   ruim hoger dan het tekstblok (87px), dus de banner rekte mee tot 172px
+		   zodra het team op plek 1 kwam. Buiten de flow kán hij de hoogte niet
+		   meer sturen.
+		
+		   `height: 100%` en niet top/bottom-uitrekken: bij een REPLACED element
+		   (img) negeert de layout `bottom` en valt de hoogte terug op de
+		   intrinsieke maat. 100% lost op tegen de padding-box van .hub-banner en
+		   is dus exact de bannerhoogte, wat die ook is.
+		
+		   `max-width` + `object-fit: contain` is het aanpassings-vangnet: wordt
+		   de kroon op een smal scherm te breed, dan schaalt het plaatje binnen
+		   zijn vak mee omlaag in plaats van te vervormen of de naam te verdringen. */
+		position: absolute;
+		top: 0;
+		right: 12px;
+		height: 100%;
+		width: auto;
+		max-width: 28%;
 		object-fit: contain;
+		pointer-events: none;
 		/* Alleen de gouden gloed. De zwarte drop-shadow die hier stond
 		   (0 6px 20px rgba(0,0,0,0.5)) is ontworpen voor de kroon op een DONKERE
 		   ondergrond (podium); op het felle teamkleur-vlak van deze banner werd

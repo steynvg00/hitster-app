@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/types/database';
 import { TEAM_COLOR_ORDER } from '$lib/server/randomize';
+import { bumpSessionEpoch } from '$lib/server/session-epoch';
 
 type AdminClient = SupabaseClient<Database>;
 
@@ -242,6 +243,14 @@ export async function resetGameState(
 		'players detach',
 		db.from('players').update({ set_id: null, team_id: null }).eq('set_id', setId)
 	);
+
+	// Spelers- en teamcookies laten vervallen. Het losmaken hierboven haalt de
+	// speler wel uit de set, maar zijn hitster_player- en hitster_team-cookie
+	// blijven op zijn telefoon staan en zijn nog geldig ondertekend — hij zou dus
+	// in een halve oude sessie doorlopen. Deze grens maakt elke cookie van vóór
+	// nu ongeldig; hooks.server.ts wist hem bij het eerstvolgende verzoek van dat
+	// toestel. Zie $lib/server/session-epoch.ts voor de afweging.
+	errors.push(...(await bumpSessionEpoch(db, setId)));
 
 	await run(
 		'game_sets reset',
