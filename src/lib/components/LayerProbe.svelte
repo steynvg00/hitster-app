@@ -152,7 +152,9 @@
 		// schermrand waar hij aan hangt, de gerenderde maat, en de natuurlijke
 		// maat van het bestand. Vervorming is meteen zichtbaar — als de
 		// gerenderde verhouding afwijkt van de natuurlijke, staat er een `!`.
-		const hoeken = [...document.querySelectorAll('img.player-screen__corner')] as HTMLImageElement[];
+		const hoeken = [
+			...document.querySelectorAll('img.player-screen__corner')
+		] as HTMLImageElement[];
 		L.push('');
 		if (hoeken.length === 0) {
 			L.push('hoeken     geen (corners={false} op dit scherm)');
@@ -160,7 +162,11 @@
 			L.push(`hoeken     ${hoeken.length} stuks   naam  natuurlijk -> gerenderd   inzet`);
 			for (const el of hoeken) {
 				const r = el.getBoundingClientRect();
-				const naam = (el.currentSrc || el.src).split('/').pop()?.replace(/^frame-hoek-|-v2\.webp$/g, '') ?? '?';
+				const naam =
+					(el.currentSrc || el.src)
+						.split('/')
+						.pop()
+						?.replace(/^frame-hoek-|-v2\.webp$/g, '') ?? '?';
 				const rw = Math.round(r.width);
 				const rh = Math.round(r.height);
 				// Verankerd aan links of rechts, boven of onder: toon de kleinste

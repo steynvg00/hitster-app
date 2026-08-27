@@ -68,7 +68,41 @@
 	--spacing-mixup-hit: 44px; /* minimale hit target */
 
 	/* ── Gradients ────────────────────────────────────────────── */
-	--gradient-mixup-page: radial-gradient(120% 70% at 50% 0%, #221546 0%, #0b0b1f 62%);
+	/* Twee radialen, één achtergrond. De onderste laag is de oorspronkelijke
+	   gradient en is ongewijzigd: plum bovenin, uitgedoofd naar #0b0b1f op 62%
+	   van een straal van 70% schermhoogte — dus vanaf ongeveer 43% van het
+	   scherm effen #0b0b1f.
+
+	   GEMETEN, waarom er een tweede laag bij moest (WebKit 402x754, kale
+	   achtergrondlaag, inhoud en hoeken verborgen):
+
+	     /team        boven 40px  #1a1238  lum 22,4
+	                  onder 40px  #0b0b1f  lum 12,4   ← gelijk aan het midden
+	     /challenge   boven 40px  #1c133b  lum 23,8
+	                  onder 40px  #0d0c22  lum 13,8   ← code-regen voegt +1,4 toe
+
+	   De onderste strook was dus exact de effen middenkleur, en tegen de donkere
+	   balkzone van Safari valt die niet te onderscheiden. Bovenaan is dat wél
+	   zichtbaar: daar staat lum 22,4 tegen de zwarte statusbalkzone.
+
+	   De tweede radiaal zet dezelfde plum terug onderaan, als smalle band. De
+	   kleur is de bestaande --color-mixup-violet (#7c4dff) op alfa 0,17; over
+	   #0b0b1f levert dat rgb(30,22,69) op — lum 27,3, precies de piek van de
+	   gradient bovenaan (#221546, lum 27,3). Geen nieuwe kleur, geen nieuwe
+	   lichtbron: het scherm keert onderaan terug naar de tint waar het bovenaan
+	   mee begint.
+
+	   De band is bewust SMALLER dan die bovenaan — 62% van een straal van 40%
+	   schermhoogte = de onderste ~25%, tegen ~43% bovenaan. Bovenin blijft de
+	   hoofdlichtbron, onderin is het een zoom. Het midden van het scherm blijft
+	   onaangeroerd #0b0b1f.
+
+	   De transparante stop houdt dezelfde RGB als de zichtbare (alleen alfa naar
+	   0). Interpoleren naar `transparent` loopt via zwart en geeft een grauwe
+	   band halverwege; met gelijke RGB blijft het verloop zuiver plum. */
+	--gradient-mixup-page:
+		radial-gradient(130% 40% at 50% 100%, rgba(124, 77, 255, 0.17) 0%, rgba(124, 77, 255, 0) 62%),
+		radial-gradient(120% 70% at 50% 0%, #221546 0%, #0b0b1f 62%);
 	--gradient-mixup-brand: linear-gradient(90deg, #00e5ff, #7c4dff 50%, #ff2daa);
 
 	/* ── Glas ─────────────────────────────────────────────────── */
