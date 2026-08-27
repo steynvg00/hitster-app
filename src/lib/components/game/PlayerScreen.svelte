@@ -197,7 +197,7 @@
 		   100lvh — maar de paginagradient bleef achter op .player-screen, via
 		   de utility `mixup-page`. Die doos is min-height:100svh.
 
-		   Laagprobe op de echte pagina's (WebKit, viewport 402x754, met
+		   Laagmeting op de echte pagina's (WebKit, viewport 402x754, met
 		   100svh opgelegd op 714 — de toestelmaten uit #106):
 
 		     .player-screen__backdrop  fixed, 0→754, background rgba(0,0,0,0)

@@ -68,41 +68,7 @@
 	--spacing-mixup-hit: 44px; /* minimale hit target */
 
 	/* ── Gradients ────────────────────────────────────────────── */
-	/* Twee radialen, één achtergrond. De onderste laag is de oorspronkelijke
-	   gradient en is ongewijzigd: plum bovenin, uitgedoofd naar #0b0b1f op 62%
-	   van een straal van 70% schermhoogte — dus vanaf ongeveer 43% van het
-	   scherm effen #0b0b1f.
-
-	   GEMETEN, waarom er een tweede laag bij moest (WebKit 402x754, kale
-	   achtergrondlaag, inhoud en hoeken verborgen):
-
-	     /team        boven 40px  #1a1238  lum 22,4
-	                  onder 40px  #0b0b1f  lum 12,4   ← gelijk aan het midden
-	     /challenge   boven 40px  #1c133b  lum 23,8
-	                  onder 40px  #0d0c22  lum 13,8   ← code-regen voegt +1,4 toe
-
-	   De onderste strook was dus exact de effen middenkleur, en tegen de donkere
-	   balkzone van Safari valt die niet te onderscheiden. Bovenaan is dat wél
-	   zichtbaar: daar staat lum 22,4 tegen de zwarte statusbalkzone.
-
-	   De tweede radiaal zet dezelfde plum terug onderaan, als smalle band. De
-	   kleur is de bestaande --color-mixup-violet (#7c4dff) op alfa 0,17; over
-	   #0b0b1f levert dat rgb(30,22,69) op — lum 27,3, precies de piek van de
-	   gradient bovenaan (#221546, lum 27,3). Geen nieuwe kleur, geen nieuwe
-	   lichtbron: het scherm keert onderaan terug naar de tint waar het bovenaan
-	   mee begint.
-
-	   De band is bewust SMALLER dan die bovenaan — 62% van een straal van 40%
-	   schermhoogte = de onderste ~25%, tegen ~43% bovenaan. Bovenin blijft de
-	   hoofdlichtbron, onderin is het een zoom. Het midden van het scherm blijft
-	   onaangeroerd #0b0b1f.
-
-	   De transparante stop houdt dezelfde RGB als de zichtbare (alleen alfa naar
-	   0). Interpoleren naar `transparent` loopt via zwart en geeft een grauwe
-	   band halverwege; met gelijke RGB blijft het verloop zuiver plum. */
-	--gradient-mixup-page:
-		radial-gradient(130% 40% at 50% 100%, rgba(124, 77, 255, 0.17) 0%, rgba(124, 77, 255, 0) 62%),
-		radial-gradient(120% 70% at 50% 0%, #221546 0%, #0b0b1f 62%);
+	--gradient-mixup-page: radial-gradient(120% 70% at 50% 0%, #221546 0%, #0b0b1f 62%);
 	--gradient-mixup-brand: linear-gradient(90deg, #00e5ff, #7c4dff 50%, #ff2daa);
 
 	/* ── Glas ─────────────────────────────────────────────────── */
@@ -184,45 +150,10 @@
    De inhoud zelf wordt met env(safe-area-inset-*) weggehouden bij de
    island en de balk — zie .mixup-page en PlayerScreen.
 ══════════════════════════════════════════════════════════════════ */
-/* ── HET VENSTER SCROLT NIET ────────────────────────────────────────────────
-   Toestelmeting op /join (iPhone, 402x754) die dit afdwong:
-
-     niet gescrold   laag: fixed, top 0,    bottom 754
-     gescrold (141)  laag: fixed, top -141, bottom 613
-
-   `position: fixed` volgens de berekende CSS, geen voorouder die knipt — en
-   toch schoof de laag exact -scrollY mee. Dat is bekend iOS-Safari-gedrag:
-   tijdens overscroll en tijdens de krimpende adresbalk verliest een fixed
-   element zijn verankering aan de viewport. Er is geen CSS die dat op een
-   scrollend venster betrouwbaar tegenhoudt.
-
-   Dus scrolt het venster niet meer. html en body staan vast op de
-   viewporthoogte en het scrollen gebeurt in .app-scroll (zie +layout.svelte).
-   Een fixed laag kan dan per constructie niet meer meeschuiven: er ís geen
-   vensterscroll om aan mee te geven.
-
-   Twee gevolgen die de moeite waard zijn om te weten:
-   · Safari klapt zijn adresbalk alleen in bij het scrollen van de PAGINA. Die
-     blijft nu staan, dus 100svh == 100lvh == 100dvh en het gat van 40px dat
-     #106 najoeg bestaat niet meer. De prijs is die 40px schermhoogte.
-   · De scrollpositie herstelt niet meer bij terugnavigeren; SvelteKit doet dat
-     via window.scrollTo. Voor deze flows (korte schermen, één kolom) is dat
-     geen verlies.
-
-   overscroll-behavior: none houdt de rubber-band en pull-to-refresh weg — die
-   zijn nu toch zinloos en waren op iOS juist het moment waarop de laag losliet.
-   ────────────────────────────────────────────────────────────────────────── */
-html,
-body {
-	height: 100%;
-	overflow: hidden;
-	overscroll-behavior: none;
-}
-
 html {
 	background-color: var(--color-mixup-ink);
-	/* Vult de zone achter island en balk met de plum-top van de gradient in
-	   plaats van met browserzwart. */
+	/* Vult de overscroll-zone (boven/onder) met de plum-top van de gradient
+	   in plaats van met browserzwart. */
 	background-image: var(--gradient-mixup-page);
 	background-repeat: no-repeat;
 	background-attachment: fixed;
@@ -235,15 +166,11 @@ body {
 		system-ui,
 		-apple-system,
 		sans-serif;
-}
-
-/* De enige scroller van de app. Zie het blok hierboven voor het waarom. */
-.app-scroll {
-	height: 100%;
-	overflow-y: auto;
-	overflow-x: hidden;
-	-webkit-overflow-scrolling: touch;
-	overscroll-behavior: contain;
+	/* dvh, NIET vh: op iOS is 100vh de GROTE viewport (adresbalk ingeklapt).
+	   Met de balk in beeld is de body dan precies een balkhoogte hoger dan het
+	   zichtbare venster, en scrolt elke pagina terwijl er niets te scrollen
+	   valt. dvh volgt de balk, dus die restscroll verdwijnt. */
+	min-height: 100dvh;
 }
 
 /* Tailwind forms plugin resets — override for dark selects */
