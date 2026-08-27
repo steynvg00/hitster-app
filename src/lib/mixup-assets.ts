@@ -21,8 +21,28 @@
 
 const BASE = '/uploads';
 
-/** Het ENIGE toegestane M!XUP-logo — vervangt drip/shatter overal. */
-export const MIXUP_LOGO = `${BASE}/mixup_spin_clean.png`;
+/**
+ * Het ENIGE toegestane M!XUP-logo — vervangt drip/shatter overal.
+ *
+ * ── Waarom -v2.webp en niet meer de PNG ─────────────────────────────────────
+ * #99 haalde een exportartefact uit dit asset: een film van alfa 1-4 over het
+ * hele canvas van 818x297, die tegen de donkere paginagradient las als een
+ * lichte rechthoek achter het logo. Die fix zit nog gewoon in het bestand
+ * (gemeten op static/uploads/mixup_spin_clean.png: alfa 1-4 = 0,00%), maar de
+ * BESTANDSNAAM bleef gelijk — en #104 zette daarna
+ * `cache-control: public, max-age=604800` op /uploads/* (vercel.json).
+ *
+ * Een browser of CDN-edge die de PNG van vóór #99 had, houdt die dus tot een
+ * week vast zonder te hervalideren, en dan is de rechthoek terug. Dat is exact
+ * de reden die #104 zelf noemt voor de `-v2`-naamgeving: een nieuwe naam
+ * omzeilt elke cache. Dit asset had er alleen nog geen gekregen.
+ *
+ * Dus dezelfde behandeling als batch A: WebP, kwaliteit 88, alphaQuality 100,
+ * native pixelmaat behouden (818x297 is op een 402px-scherm bij 3x DPR nog
+ * steeds kleiner dan de weergave, dus verkleinen zou hem juist zachter maken).
+ * 331.769 -> 123.324 bytes (62,8% minder), en alfa 1-4 blijft 0,00%.
+ */
+export const MIXUP_LOGO = `${BASE}/mixup_spin_clean-v2.webp`;
 
 /** Rang-assets voor de eindstand-schermen (11H) en het podium. */
 export const RANK_ASSETS = {
