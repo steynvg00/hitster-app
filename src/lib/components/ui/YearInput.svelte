@@ -33,7 +33,14 @@
 		name,
 		mode = 'slider',
 		teamHex = '#2E7BFF',
-		min = 2000,
+		// 1990, was 2000. De ondergrens is HARDCODED en wordt nergens uit de tracks
+		// afgeleid: geen enkele callsite geeft `min` mee, dus dit getal is de enige
+		// ondergrens die de speler te zien krijgt. Er stond een track van 1995 in de
+		// bibliotheek (Paul Elstak — Rainbow in the Sky) die daardoor niet te kiezen
+		// was; de admin-kant liet hem wél toe (min="1950" op /admin/tracks).
+		//
+		// 1990 met vijf jaar marge onder het werkelijke minimum van de bibliotheek.
+		min = 1990,
 		max = 2026,
 		value = $bindable(2013),
 		ontouched

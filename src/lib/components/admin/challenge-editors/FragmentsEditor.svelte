@@ -74,7 +74,6 @@
 			playingClipId = null;
 		}
 	}
-
 </script>
 
 <!-- ── Tabs ── -->
@@ -196,6 +195,39 @@
 												onended={() => (playingClipId = null)}
 											></audio>
 										{/if}
+										<!-- Volgorde verzetten. Bij fragments is sort_order niet alleen
+										     de leesvolgorde: de nummers in het bolletje links zijn de
+										     fragmentnummers die de speler moet groeperen, en
+										     getSourceTracksForTab() leidt de bron-tracks van de tab AF uit
+										     deze clips op sort_order. Verschuiven verandert dus zowel de
+										     nummering als de slotvolgorde van de trackkiezer.
+
+										     Zelfde ?/moveTabClip als StandardEditor en EffectsEditor —
+										     die actie herschrijft na de wissel alle sort_orders van de tab
+										     naar 0..n-1, dus er ontstaan geen gaten. Alleen de knoppen
+										     ontbraken hier. -->
+										<form method="POST" action="?/moveTabClip" use:enhance class="inline">
+											<input type="hidden" name="tab_id" value={tab.id} />
+											<input type="hidden" name="tc_id" value={tc.id} />
+											<input type="hidden" name="direction" value="up" />
+											<button
+												type="submit"
+												disabled={fragIdx === 0}
+												class="text-zinc-500 hover:text-white disabled:opacity-30 disabled:hover:text-zinc-500"
+												title="Move up">▲</button
+											>
+										</form>
+										<form method="POST" action="?/moveTabClip" use:enhance class="inline">
+											<input type="hidden" name="tab_id" value={tab.id} />
+											<input type="hidden" name="tc_id" value={tc.id} />
+											<input type="hidden" name="direction" value="down" />
+											<button
+												type="submit"
+												disabled={fragIdx === tabClips.length - 1}
+												class="text-zinc-500 hover:text-white disabled:opacity-30 disabled:hover:text-zinc-500"
+												title="Move down">▼</button
+											>
+										</form>
 										<form method="POST" action="?/removeTabClip" use:enhance class="inline">
 											<input type="hidden" name="tc_id" value={tc.id} />
 											<button type="submit" class="ml-1 text-red-700 hover:text-red-400">✕</button>
@@ -241,9 +273,7 @@
 							/>
 							<!-- Step 2: clip (only once track is chosen; keyed so it remounts on track change) -->
 							{#if selectedAddTrack[tab.id]}
-								{@const trackClips = clips.filter(
-									(c) => c.track_id === selectedAddTrack[tab.id]
-								)}
+								{@const trackClips = clips.filter((c) => c.track_id === selectedAddTrack[tab.id])}
 								{#key selectedAddTrack[tab.id]}
 									{#if trackClips.length > 0}
 										<SearchablePicker
@@ -252,7 +282,9 @@
 												const dur = formatDur(c.duration);
 												return {
 													id: c.id,
-													label: dur ? `${c.storage_path.split('/').pop() ?? 'Clip'} · ${dur}` : (c.storage_path.split('/').pop() ?? 'Clip'),
+													label: dur
+														? `${c.storage_path.split('/').pop() ?? 'Clip'} · ${dur}`
+														: (c.storage_path.split('/').pop() ?? 'Clip'),
 													subtitle: ''
 												};
 											})}

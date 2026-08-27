@@ -161,7 +161,39 @@ export function powerupIcon(typeId: string): string {
 
 /**
  * De iconen waar de slotmachine (scherm 5) doorheen rolt vóór hij landt.
+ *
  * Puur decor: welke powerup je wint is al door de server bepaald voordat dit
- * scherm opent. Dezelfde vijf als in de designbron.
+ * scherm opent. De rol laat alleen zien DAT er getrokken wordt.
+ *
+ * Dit waren er vijf — de reeks uit de designbron. Met twintig iconen in
+ * static/uploads/Powerups/ betekende dat: bij elke onthulling dezelfde vijf
+ * plaatjes in dezelfde volgorde. De rol is nu de VOLLEDIGE set, en het
+ * onthulscherm trekt er willekeurig uit, zodat twee onthullingen naast elkaar
+ * niet hetzelfde filmpje zijn.
+ *
+ * Eén rij per bestand in static/uploads/Powerups/, en tegelijk exact de
+ * `powerup_types.id`-verzameling — `powerupIcon()` vertaalt de enige naam die
+ * afwijkt (power_spin -> powerspin.png) via POWERUP_ICON_ALIAS hierboven.
  */
-export const SLOT_REEL_ICON_IDS = ['freeze', 'x_ray', 'shield', 'power_spin', 'lifeline'] as const;
+export const SLOT_REEL_ICON_IDS = [
+	'all_seeing_eye',
+	'bonus_points',
+	'double_down',
+	'free_answer',
+	'free_tab',
+	'freeze',
+	'give_a_shot',
+	'hard_gaan',
+	'insurance',
+	'lifeline',
+	'lucky_dice',
+	'penalty_shot',
+	'power_spin',
+	'resurrection',
+	'shield',
+	'single_event_mult',
+	'tap_to_break',
+	'time_boost',
+	'time_drain',
+	'x_ray'
+] as const;

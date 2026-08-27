@@ -2,6 +2,7 @@
 	import { enhance } from '$app/forms';
 	import type { PageData, ActionData } from './$types';
 	import { getTypeIcon, getTypeColor, CHALLENGE_TYPES } from '$lib/variants';
+	import { splitTimer, TIMER_MAX_SECONDS } from '$lib/challenge-timer';
 	import StandardEditor from '$lib/components/admin/challenge-editors/StandardEditor.svelte';
 	import MashupEditor from '$lib/components/admin/challenge-editors/MashupEditor.svelte';
 	import FragmentsEditor from '$lib/components/admin/challenge-editors/FragmentsEditor.svelte';
@@ -33,6 +34,10 @@
 
 	// No-timer toggle
 	let noTimer = $state(data.challenge.timer_seconds == null);
+	// $derived, niet een kale const: het oude enkele veld las `data.challenge` in
+	// de template en volgde dus de herladen data na "Opslaan". Met een gewone
+	// const zou het veld op de waarde van bij het laden blijven staan.
+	const timerParts = $derived(splitTimer(data.challenge.timer_seconds ?? 60));
 
 	// NFC lock override tri-state
 	type NfcOverride = 'inherit' | 'true' | 'false';
@@ -117,7 +122,9 @@
 		<form
 			method="POST"
 			action="?/updateMeta"
-			use:enhance={() => async ({ update }) => update({ reset: false })}
+			use:enhance={() =>
+				async ({ update }) =>
+					update({ reset: false })}
 			class="space-y-3"
 		>
 			<div class="grid grid-cols-2 gap-3">
@@ -140,20 +147,50 @@
 					</select>
 				</div>
 				<div>
-					<label class="mb-1 block text-xs text-zinc-400">Timer (seconds)</label>
+					<!-- Minuten + seconden, twee losse velden. Het oude veld was één
+					     secondengetal met max="600"; dat plafond stond alleen HIER (de
+					     kolom heeft geen CHECK — zie $lib/challenge-timer), en 12 minuten
+					     intikken als "720" is bovendien rekenwerk voor de host.
+
+					     Geen verborgen veld dat de twee optelt: dit formulier draait op
+					     use:enhance, en dat leest de FormData uit de DOM. Een `$derived`
+					     waarde in een hidden input is op dat moment nog niet doorgezet
+					     (Svelte 5 stelt signal-naar-DOM uit tot een microtask) — precies
+					     de val die in SearchablePicker al eens is gelopen. Daarom gaan de
+					     twee velden apart mee en telt de serveractie ze op. -->
+					<label class="mb-1 block text-xs text-zinc-400">Timer (min : sec)</label>
 					<div class="flex items-center gap-2">
 						{#if noTimer}
-							<input type="text" disabled value="–" class="input-field flex-1 disabled:opacity-40" />
-						{:else}
 							<input
-								name="timer_seconds"
-								type="number"
-								value={data.challenge.timer_seconds ?? 60}
-								min="10"
-								max="600"
-								placeholder="60"
-								class="input-field flex-1"
+								type="text"
+								disabled
+								value="–"
+								class="input-field flex-1 disabled:opacity-40"
 							/>
+						{:else}
+							<div class="flex flex-1 items-center gap-1">
+								<input
+									name="timer_minutes"
+									type="number"
+									value={timerParts.minutes}
+									min="0"
+									max={Math.floor(TIMER_MAX_SECONDS / 60)}
+									placeholder="1"
+									aria-label="Timer minuten"
+									class="input-field w-full min-w-0"
+								/>
+								<span class="shrink-0 text-xs text-zinc-500">:</span>
+								<input
+									name="timer_seconds_rest"
+									type="number"
+									value={timerParts.seconds}
+									min="0"
+									max="59"
+									placeholder="00"
+									aria-label="Timer seconden"
+									class="input-field w-full min-w-0"
+								/>
+							</div>
 						{/if}
 						<label class="flex shrink-0 cursor-pointer items-center gap-1.5 text-xs text-zinc-400">
 							<input
@@ -270,7 +307,12 @@
 				clips={data.clips}
 			/>
 		{:else if isFragments}
-			<FragmentsEditor tabs={data.tabs} clipsByTab={data.clipsByTab} allTracks={data.allTracks} clips={data.clips} />
+			<FragmentsEditor
+				tabs={data.tabs}
+				clipsByTab={data.clipsByTab}
+				allTracks={data.allTracks}
+				clips={data.clips}
+			/>
 		{:else if isEffects}
 			<EffectsEditor
 				tabs={data.tabs}
@@ -278,7 +320,9 @@
 				clipsByTab={data.clipsByTab}
 				allTracks={data.allTracks}
 				clips={data.clips}
-				userPresets={(data as unknown as { userPresets?: import('$lib/types/index.js').EffectPreset[] }).userPresets ?? []}
+				userPresets={(
+					data as unknown as { userPresets?: import('$lib/types/index.js').EffectPreset[] }
+				).userPresets ?? []}
 			/>
 		{/if}
 	</div>

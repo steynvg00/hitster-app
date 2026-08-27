@@ -163,7 +163,11 @@
 
 	// At rest a spin shows its OWN icon (het wiel, nog niet gedraaid) — never the
 	// prize: nothing about the outcome may exist on screen before the pull.
-	let displayIcon = $state(autoRoll ? ICONS[0] : powerupIcon(typeId));
+	let displayIcon = $state(
+		// Ook het EERSTE beeld van de rol is willekeurig; met een vaste startindex
+		// begint elke onthulling met hetzelfde plaatje.
+		autoRoll ? ICONS[Math.floor(Math.random() * ICONS.length)] : powerupIcon(typeId)
+	);
 	let settled = $state(!animate);
 	let rollStarted = $state(autoRoll);
 	let resolving = $state(false);
@@ -176,23 +180,105 @@
 	let animFrame: number;
 	let startTime = 0;
 	const DURATION_MS = 1800;
+	/** Van deze stapduur naar STEP_END_MS, met een ease die achteraan uitloopt. */
+	const STEP_START_MS = 45;
+	const STEP_END_MS = 320;
+
+	/**
+	 * De bobbel onder het icoon loopt mee met de stapduur, zodat het afremmen ook
+	 * in de BEWEGING zit en niet alleen in het wisseltempo. In seconden, want dat
+	 * is wat een CSS animation-duration leest.
+	 */
+	let reelStepSec = $state(STEP_START_MS / 1000);
+
+	/**
+	 * Wanneer het volgende icoon aan de beurt is. Absolute tijdstempel, niet een
+	 * teller: dat is precies wat er eerder misging.
+	 *
+	 * DE OUDE FOUT. De index werd elke frame opnieuw berekend als
+	 * `Math.floor(elapsed / interval)`, met een `interval` die zelf met `elapsed`
+	 * meegroeide (60ms -> 260ms). Die deling is geen teller maar een quotiënt van
+	 * twee groeiende getallen, en die loopt vast: over de volle 1800ms komt hij
+	 * niet verder dan 6. Nagerekend over de oude formule: ZEVEN wisselingen in
+	 * 1800ms, de laatste op 1080ms, en daarna 720ms stilstand op één plaatje
+	 * terwijl de CSS-bobbel eronder doorliep. Met vijf iconen was de hele reeks
+	 * 0,1,2,3,4,0,1 — dus ook nog elke keer dezelfde vijf in dezelfde volgorde.
+	 * Dat is het "steeds hetzelfde icoon dat blijft schudden".
+	 *
+	 * Een tijdstempel die per stap vooruit wordt gezet kan dat niet: elke stap
+	 * gebeurt precies één keer. Dezelfde som over het nieuwe profiel geeft 21
+	 * wisselingen met stapduren 45,45,46,47,48,49,52,54,58,62,67,73,80,90,101,
+	 * 116,135,161,195,242,309 ms — vooraan flitsen, achteraan uitlopen.
+	 */
+	let nextStepAt = 0;
+
+	/**
+	 * Stapduur bij een voortgang van 0..1. Kwadratische ease-out, dus de eerste
+	 * helft flitst en het uitlopen zit achterin — het profiel van een slotmachine
+	 * die uitrolt.
+	 */
+	function stepDuration(progress: number): number {
+		const eased = progress * progress;
+		return STEP_START_MS + (STEP_END_MS - STEP_START_MS) * eased;
+	}
+
+	/**
+	 * Een WILLEKEURIG icoon uit de volle set, nooit twee keer hetzelfde achter
+	 * elkaar — een herhaling leest als een haperende animatie in plaats van als
+	 * een rol. Het gaat om de suggestie van rollen; de uitkomst ligt allang vast
+	 * en staat in `settleIcon`.
+	 */
+	function randomIcon(current: string): string {
+		if (ICONS.length < 2) return ICONS[0];
+		let pick = current;
+		while (pick === current) pick = ICONS[Math.floor(Math.random() * ICONS.length)];
+		return pick;
+	}
+
+	/**
+	 * De landing. Het laatste beeld IS de gewonnen powerup — bij een spin de prijs,
+	 * anders de powerup zelf. Pas hier verschijnt de naam eronder.
+	 */
+	function settle() {
+		displayIcon = settleIcon;
+		settled = true;
+	}
 
 	function runAnimation(ts: number) {
-		if (!startTime) startTime = ts;
-		const elapsed = ts - startTime;
+		if (!startTime) {
+			startTime = ts;
+			nextStepAt = ts;
+		}
+		const eind = startTime + DURATION_MS;
 
-		if (elapsed < DURATION_MS) {
-			// Cycle speed slows down as we approach the end
-			const progress = elapsed / DURATION_MS;
-			const interval = 60 + progress * 200; // 60ms → 260ms
-			const idx = Math.floor(elapsed / interval) % ICONS.length;
-			displayIcon = ICONS[idx];
+		if (ts < eind) {
+			// Inhalen als het tabblad even weg was: doorstappen tot de wisseltijd
+			// weer in de toekomst ligt, zodat een gemiste frame geen achterstand
+			// wordt die de rol na afloop nog laat natrillen.
+			while (ts >= nextStepAt) {
+				const progress = Math.min((nextStepAt - startTime) / DURATION_MS, 1);
+				const step = stepDuration(progress);
+
+				// Loopt deze stap over de eindstreep? Dan is dit de LAATSTE, en die
+				// hoort meteen het prijsicoon te zijn.
+				//
+				// GEMETEN waarom dit er staat: zonder deze tak werd op ~1780ms nog een
+				// willekeurig icoon neergezet dat op 1800ms alweer werd overschreven.
+				// Drie runs achter elkaar gaven als laatste stap 55ms, 69ms en 24ms —
+				// een flits van één of twee frames, precies op het moment dat de rol
+				// juist tot stilstand hoort te komen. Nu is de langste stap de landing.
+				if (nextStepAt + step >= eind) {
+					settle();
+					return;
+				}
+
+				displayIcon = randomIcon(displayIcon);
+				reelStepSec = step / 1000;
+				nextStepAt += step;
+			}
 			animFrame = requestAnimationFrame(runAnimation);
 		} else {
-			// The settle. For a spin this is the reveal moment: the wheel stops on the
-			// powerup that was won, and only then does the name below appear.
-			displayIcon = settleIcon;
-			settled = true;
+			settle();
 		}
 	}
 
@@ -261,6 +347,7 @@
 					alt=""
 					class="slot-img"
 					class:slot-img--rolling={rollStarted && !settled}
+					style="--reel-step: {reelStepSec}s;"
 					onerror={(e) => ((e.currentTarget as HTMLImageElement).style.visibility = 'hidden')}
 				/>
 			</div>
@@ -463,8 +550,12 @@
 		object-fit: contain;
 	}
 
+	/* De bobbel volgt de stapduur van de rol (--reel-step, gezet door
+	   runAnimation), zodat het afremmen ook zichtbaar is in de beweging zelf en
+	   niet alleen in het wisseltempo. De terugval van 0.12s geldt alleen als er
+	   geen inline waarde staat. */
 	.slot-img--rolling {
-		animation: reel 0.4s linear infinite;
+		animation: reel var(--reel-step, 0.12s) linear infinite;
 	}
 
 	.slot-name {

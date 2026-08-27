@@ -118,6 +118,28 @@
 	const isEffects = data.challenge.variant === 'effects';
 	const isMultiSource = isFragments || isMashup;
 
+	/**
+	 * Hoe één tab heet op het scherm.
+	 *
+	 * De pagina heeft TWEE kiezers en die stonden allebei op "Track":
+	 *
+	 *   activeTabIndex   de segmentbalk bovenaan  — kiest een TAB
+	 *   activeSlotIndex  de knoppenrij 1/2/3 bij het antwoordveld — kiest een
+	 *                    BRON-TRACK binnen die tab
+	 *
+	 * Bij normal/anthem/label/effects/kick houdt een tab precies één bron-track,
+	 * dus daar is "Track" voor de bovenbalk gewoon waar en verandert er niets.
+	 * Bij mashup en fragments niet: gemeten op "Vrienden Weekend 2026 Fragments"
+	 * zijn dat 3 tabs van elk 9 clips over 3 unieke tracks — negen te raden
+	 * tracks, terwijl de bovenbalk "Track 1/3" zei. Het echte trackkiezertje
+	 * eronder had helemaal geen opschrift, dus dat las als sier.
+	 *
+	 * Daarom heet een tab bij die twee varianten een BEURT, en draagt de
+	 * knoppenrij het woord Track. De kiezers zelf zijn niet verhangen — die
+	 * stuurden altijd al het juiste ding aan.
+	 */
+	const tabUnit = $derived(isMultiSource ? 'Beurt' : 'Track');
+
 	// ── Field state: per-tab, per-slot ───────────────────────────────────────
 	// allDrafts[tabIdx][slotIdx].fieldValues[field]
 	let allDrafts = $state<SlotDraft[][]>(
@@ -140,13 +162,18 @@
 
 	// The value allYearValues holds for a tab/slot the team has never touched.
 	//
-	// Deliberately OUT of YearInput's own range (min 2000) so an untouched year can
-	// never accidentally score. That also means it must never be used to decide
-	// "did the team answer this?": the browser clamps an out-of-range value to `min`
-	// and Svelte's input binding writes that clamped number straight back into state
-	// during hydration, so the seed is already gone by the time anything can read it.
-	// Answeredness is tracked explicitly in yearTouched instead.
-	const YEAR_SEED = 1990;
+	// Deliberately OUT of YearInput's own range so an untouched year can never
+	// accidentally score. That also means it must never be used to decide "did the
+	// team answer this?": the browser clamps an out-of-range value to `min` and
+	// Svelte's input binding writes that clamped number straight back into state
+	// during hydration, so the seed is already gone by the time anything can read
+	// it. Answeredness is tracked explicitly in yearTouched instead.
+	//
+	// Was 1990, want dat lag toen onder de ondergrens van de slider (2000). Die
+	// ondergrens is nu zelf 1990, zodat de track uit 1995 gekozen kan worden — dus
+	// 1990 is voortaan een GELDIG antwoord en deugt niet meer als kiemwaarde. Het
+	// hele punt van dit getal is dat het buiten bereik ligt; vandaar 1900.
+	const YEAR_SEED = 1900;
 
 	// Year values: per-tab, per-slot
 	let allYearValues = $state<number[][]>(
@@ -2320,6 +2347,7 @@
 						doubt={doubtTabs}
 						hex={teamHex}
 						onColor={teamOn}
+						unit={tabUnit}
 						onselect={goToTab}
 						ontoggledoubt={toggleDoubt}
 					/>
@@ -2477,9 +2505,13 @@
 		>
 			<input type="hidden" name="team_id" value={data.team.id} />
 
-			<!-- Eyebrow: welke track je nu invult, plus de variant-uitleg eronder. -->
+			<!-- Eyebrow: welke TAB je nu invult (bij mashup/fragments een beurt, zie
+			     tabUnit), plus de variant-uitleg eronder. Welke TRACK je invult staat
+			     op de rij eronder — dat zijn twee verschillende dingen zodra een tab
+			     meer dan één bron-track heeft. -->
 			<div class="text-[11px] font-bold tracking-[0.14em] text-mixup-yellow uppercase">
-				Track {activeTabIndex + 1}{#if isMultiTab}<span class="text-mixup-yellow/60">
+				{tabUnit}
+				{activeTabIndex + 1}{#if isMultiTab}<span class="text-mixup-yellow/60">
 						/ {data.tabs.length}</span
 					>{/if}
 				{#if isMashup && activeTab}
@@ -2493,12 +2525,29 @@
 
 			{#key activeTabIndex}
 				{#if isMultiSource && activeTab}
-					<!-- Answer slot tabs (one per source track: mashup + fragments) -->
+					<!-- DE TRACKKIEZER. Eén knop per bron-track van deze tab (mashup +
+					     fragments). Hij schakelde altijd al correct — gemeten: de
+					     veldnamen lopen mee van title_0 naar title_1 naar title_2 en de
+					     ingevulde waardes blijven per track bewaard — maar hij stond er
+					     zonder één woord uitleg boven, terwijl de balk bovenaan wél
+					     "Track" zei. Vandaar het opschrift: dit is de rij die de track
+					     kiest. -->
 					{#if activeTab.sourceTracks.length > 1}
-						<div class="flex gap-1.5 overflow-x-auto pb-1">
+						<div class="text-[11px] font-extrabold tracking-[0.14em] text-mixup-paper/70 uppercase">
+							Track <span class="text-mixup-paper">{activeSlotEffective + 1}</span><span
+								class="text-mixup-paper/45">/{activeTab.sourceTracks.length}</span
+							>
+						</div>
+						<div
+							class="flex gap-1.5 overflow-x-auto pb-1"
+							role="tablist"
+							aria-label="Track binnen deze {tabUnit.toLowerCase()}"
+						>
 							{#each Array.from({ length: activeTab.sourceTracks.length }, (_, i) => i) as si}
 								<button
 									type="button"
+									role="tab"
+									aria-selected={activeSlotEffective === si}
 									onclick={() => (activeSlotIndex = si)}
 									class="shrink-0 rounded-mixup-chip px-3.5 py-1.5 text-sm font-bold transition-colors squircle"
 									style={activeSlotIndex === si
@@ -2506,6 +2555,7 @@
 										: 'background: rgba(229,242,255,0.05); color: #9FB1D9; border: 1px solid rgba(229,242,255,0.16);'}
 								>
 									{si + 1}
+									<span class="sr-only">Track {si + 1} beantwoorden</span>
 								</button>
 							{/each}
 						</div>

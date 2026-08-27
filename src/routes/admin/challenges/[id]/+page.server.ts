@@ -2,6 +2,7 @@ import { error, fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
 import { CHALLENGE_TYPES } from '$lib/variants';
+import { joinTimer } from '$lib/challenge-timer';
 import {
 	resolveChallengeFields,
 	resolveArtistBonus,
@@ -156,8 +157,25 @@ export const actions: Actions = {
 
 		const title = (data.get('title') as string)?.trim();
 		const stage_label = (data.get('stage_label') as string)?.trim() || null;
-		const timerRaw = (data.get('timer_seconds') as string | null)?.trim();
-		const timer_seconds = timerRaw ? parseInt(timerRaw, 10) || 60 : null;
+		// De timer komt als twee velden binnen (minuten + seconden) en wordt hier
+		// opgeteld en geklemd. Waarom hier en niet in een verborgen veld: het
+		// formulier draait op use:enhance, dat de FormData uit de DOM leest, en een
+		// $derived waarde staat op dat moment nog niet in de DOM.
+		//
+		// Beide velden afwezig = "No timer" aangevinkt (het blok rendert dan niet),
+		// en dat betekent NULL — geen timer. Dat was al zo toen het één veld was.
+		//
+		// `timer_seconds` wordt nog gelezen als terugval, zodat een POST naar deze
+		// actie met het oude enkele veld blijft werken.
+		const minutesRaw = (data.get('timer_minutes') as string | null)?.trim();
+		const secondsRaw = (data.get('timer_seconds_rest') as string | null)?.trim();
+		const legacyRaw = (data.get('timer_seconds') as string | null)?.trim();
+		const timer_seconds =
+			minutesRaw != null || secondsRaw != null
+				? joinTimer(minutesRaw ?? 0, secondsRaw ?? 0)
+				: legacyRaw
+					? joinTimer(0, legacyRaw)
+					: null;
 		const variant = data.get('variant') as string;
 		const difficultyRaw = parseInt(data.get('difficulty_rating') as string, 10);
 		const difficulty_rating = difficultyRaw >= 1 && difficultyRaw <= 5 ? difficultyRaw : 3;

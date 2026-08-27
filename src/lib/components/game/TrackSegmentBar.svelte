@@ -53,6 +53,18 @@
 		onColor: string;
 		/** Label per segment; standaard het tracknummer (index + 1). */
 		labels?: string[];
+		/**
+		 * Hoe één segment heet in voorleestekst en tooltips: "Track" of "Beurt".
+		 *
+		 * Deze balk selecteert een TAB. Bij de meeste varianten valt een tab samen
+		 * met één track, en dan is "Track" ook de eerlijke naam. Bij mashup en
+		 * fragments niet: daar zitten er meerdere bron-tracks IN één tab, en die
+		 * kies je met de knoppenrij bij het antwoordveld. Dan heet een segment hier
+		 * een beurt, zodat de twee kiezers niet allebei "Track" heten.
+		 *
+		 * Standaard "Track", dus voor elke andere variant verandert er niets.
+		 */
+		unit?: string;
 		onselect: (i: number) => void;
 		ontoggledoubt: (i: number) => void;
 	};
@@ -65,6 +77,7 @@
 		hex,
 		onColor,
 		labels,
+		unit = 'Track',
 		onselect,
 		ontoggledoubt
 	}: Props = $props();
@@ -94,7 +107,7 @@
 	}
 </script>
 
-<div class="seg-row squircle" role="tablist" aria-label="Tracks">
+<div class="seg-row squircle" role="tablist" aria-label="Kies een {unit.toLowerCase()}">
 	{#each indices as i (i)}
 		{@const status = fillStatus[i] ?? 'empty'}
 		{@const active = activeIndex === i}
@@ -114,7 +127,8 @@
 				<span class={dotClass(status)} aria-hidden="true"></span>
 				<span>{labelFor(i)}</span>
 				<span class="sr-only">
-					Track {labelFor(i)} — {statusLabel(status)}{unsure ? ', gemarkeerd als twijfel' : ''}
+					{unit}
+					{labelFor(i)} — {statusLabel(status)}{unsure ? ', gemarkeerd als twijfel' : ''}
 				</span>
 			</button>
 			<button
@@ -122,8 +136,8 @@
 				class="seg-doubt squircle"
 				aria-pressed={unsure}
 				title={unsure
-					? `Track ${labelFor(i)}: twijfel — tik om te wissen`
-					: `Track ${labelFor(i)} als twijfel markeren`}
+					? `${unit} ${labelFor(i)}: twijfel — tik om te wissen`
+					: `${unit} ${labelFor(i)} als twijfel markeren`}
 				onclick={() => ontoggledoubt(i)}
 				style="color: {unsure ? '#1A1400' : active ? onColor : '#5A648C'};"
 			>
