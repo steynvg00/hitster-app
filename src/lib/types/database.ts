@@ -466,6 +466,8 @@ export type Database = {
 					preset_slug: string | null;
 					crown_holder_team_id: string | null;
 					crown_payout_applied: boolean;
+					/** Speler-/teamcookies van vóór dit moment zijn ongeldig (migratie 0079). */
+					player_epoch: string;
 					hard_gaan_window_minutes: number;
 					created_by: string | null;
 					created_at: string;
@@ -497,6 +499,7 @@ export type Database = {
 					preset_slug?: string | null;
 					crown_holder_team_id?: string | null;
 					crown_payout_applied?: boolean;
+					player_epoch?: string;
 					hard_gaan_window_minutes?: number;
 					created_by?: string | null;
 					created_at?: string;
@@ -528,6 +531,7 @@ export type Database = {
 					preset_slug?: string | null;
 					crown_holder_team_id?: string | null;
 					crown_payout_applied?: boolean;
+					player_epoch?: string;
 					hard_gaan_window_minutes?: number;
 					created_by?: string | null;
 					created_at?: string;

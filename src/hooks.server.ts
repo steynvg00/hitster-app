@@ -1,11 +1,44 @@
 import type { Handle } from '@sveltejs/kit';
-import { getTeamIdFromCookie } from '$lib/server/team';
-import { getPlayerIdFromCookie } from '$lib/server/player';
+import { readTeamSession, clearTeamCookie } from '$lib/server/team';
+import { readPlayerSession, clearPlayerCookie } from '$lib/server/player';
+import { getSessionEpoch } from '$lib/server/session-epoch';
 import { createPublicClient } from '$lib/server/supabase';
 
 export const handle: Handle = async ({ event, resolve }) => {
-	event.locals.teamId = getTeamIdFromCookie(event.cookies);
-	event.locals.playerId = getPlayerIdFromCookie(event.cookies);
+	const teamSession = readTeamSession(event.cookies);
+	const playerSession = readPlayerSession(event.cookies);
+
+	// Sessies van vóór de laatste set-reset laten vervallen.
+	//
+	// De reset draait op de host-console en komt niet bij de cookies van 28
+	// andere telefoons. Die cookies blijven dus staan; ze tellen alleen niet
+	// meer. Dit is het moment waarop dat blijkt: het eerstvolgende verzoek van
+	// zo'n toestel. De cookie wordt hier ook echt gewist, zodat de browser hem
+	// niet elk verzoek opnieuw meestuurt en de speler netjes in de join-flow
+	// terechtkomt in plaats van in een halve oude sessie.
+	//
+	// De opzoeking gebeurt alleen als er überhaupt een cookie is (dus niet voor
+	// de host-console, /leaderboard of assets) en is achter een cache van 10 s
+	// gezet — zie $lib/server/session-epoch.ts.
+	let teamId = teamSession?.id ?? null;
+	let playerId = playerSession?.id ?? null;
+
+	if (teamSession || playerSession) {
+		const epoch = await getSessionEpoch();
+		if (epoch > 0) {
+			if (teamSession && teamSession.issuedAt < epoch) {
+				clearTeamCookie(event.cookies);
+				teamId = null;
+			}
+			if (playerSession && playerSession.issuedAt < epoch) {
+				clearPlayerCookie(event.cookies);
+				playerId = null;
+			}
+		}
+	}
+
+	event.locals.teamId = teamId;
+	event.locals.playerId = playerId;
 
 	// Supabase Auth — getUser() does a server-round-trip to verify the JWT,
 	// so the result is trustworthy (unlike getSession() which trusts the cookie as-is).
