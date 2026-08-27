@@ -47,7 +47,7 @@
 
 	const ASSETS = [
 		{ src: MIXUP_LOGO, label: 'mixup_spin_clean.png' },
-		{ src: RANK_ASSETS.crown, label: 'Kroon-v1.2.png' },
+		{ src: RANK_ASSETS.crown, label: 'Kroon-v2.webp' },
 		{ src: RANK_ASSETS.silver, label: 'rank2_silver' },
 		{ src: RANK_ASSETS.bronze, label: 'rank3_bronze' },
 		{ src: RANK_ASSETS.dark, label: 'rank4plus_dark' },
