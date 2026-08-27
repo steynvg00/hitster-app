@@ -40,7 +40,30 @@ const BASE = '/uploads';
  * Dus dezelfde behandeling als batch A: WebP, kwaliteit 88, alphaQuality 100,
  * native pixelmaat behouden (818x297 is op een 402px-scherm bij 3x DPR nog
  * steeds kleiner dan de weergave, dus verkleinen zou hem juist zachter maken).
- * 331.769 -> 123.324 bytes (62,8% minder), en alfa 1-4 blijft 0,00%.
+ * 331.769 -> 123.324 bytes (62,8% minder).
+ *
+ * GEMETEN op de drie bestanden (canvas getImageData, alfahistogram over alle
+ * 242.946 pixels van 818x297):
+ *
+ *                                              alfa 0    alfa 1-4    alfa 5-20
+ *   design_handoff/.../mixup_spin_clean.png     7,13%     42,30%       11,73%
+ *   static/uploads/mixup_spin_clean.png        49,42%      0,00%       11,73%
+ *   static/uploads/mixup_spin_clean-v2.webp    49,42%      0,00%       11,73%
+ *
+ * De film is die 42,30%: 102.756 pixels op alfa 1-4, over het HELE canvas tot
+ * in de hoeken. #99 duwde precies die pixels naar alfa 0 (7,13% + 42,30% =
+ * 49,42%, tot op de pixel). De WebP-hercodering is daarin identiek aan de
+ * gerepareerde PNG — de conversie heeft de fix niet aangetast.
+ *
+ * De resterende 11,73% op alfa 5-20 is GEEN tweede film maar de antialiasing
+ * om de letters heen; een 40x15-raster over het canvas laat in -v2.webp overal
+ * buiten de letterzone exact 0 zien, waar het handoff-origineel daar juist
+ * overal 2-8 heeft.
+ *
+ * Alle plekken die het logo tonen gaan via deze constante — NfcTapSplash,
+ * /leaderboard, /sets/[id]/podium, /play/[mode], /play/waiting en de
+ * design-systeempagina. Er staat nergens een los pad naar /uploads/ in de
+ * codebase, en app.html heeft geen og:image of manifest die het logo noemt.
  */
 export const MIXUP_LOGO = `${BASE}/mixup_spin_clean-v2.webp`;
 
