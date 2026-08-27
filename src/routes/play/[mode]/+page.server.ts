@@ -1,7 +1,7 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
-import { setPlayerCookie } from '$lib/server/player';
+import { PLAYER_SESSION_MAX_AGE_SECONDS, setPlayerCookie } from '$lib/server/player';
 
 const VALID_MODES = ['solo', 'teams'] as const;
 type PlayMode = (typeof VALID_MODES)[number];
@@ -57,7 +57,9 @@ export const actions: Actions = {
 
 		const db = createAdminClient();
 		const session_token = crypto.randomUUID();
-		const session_expires_at = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+		const session_expires_at = new Date(
+			Date.now() + PLAYER_SESSION_MAX_AGE_SECONDS * 1000
+		).toISOString();
 
 		let photo_url: string | null = null;
 

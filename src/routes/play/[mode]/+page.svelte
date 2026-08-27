@@ -200,7 +200,7 @@
 		</form>
 
 		<div class="mt-3 text-center text-xs font-medium text-mixup-dim">
-			Geen account nodig · je sessie blijft 12 uur geldig
+			Geen account nodig · je sessie blijft 48 uur geldig
 		</div>
 	</PlayerScreen>
 </div>

@@ -50,7 +50,7 @@ Host auth uses **Supabase Auth** (email magic link + Google OAuth). The admin la
 Player and team identity still use custom HMAC-SHA256 signed cookies:
 
 - **`hitster_team`** (7 days) — team identity. Set by `/nfc/[tag]` or `/join`. Read by `hooks.server.ts` → `locals.teamId`.
-- **`hitster_player`** (12h) — player session. Set by `/play/[mode]` form action. Decoded into `locals.playerId`. `$lib/server/player.ts` owns sign/verify.
+- **`hitster_player`** (48h) — player session. Set by `/play/[mode]` form action. Decoded into `locals.playerId`. `$lib/server/player.ts` owns sign/verify.
 
 `hooks.server.ts` populates `locals.teamId`, `locals.isAdmin`, `locals.user`, and `locals.playerId` on every request.
 
@@ -206,7 +206,7 @@ If `play_state = playing` → redirect `/sets/[id]/in-progress`. If `recap` → 
 
 - `hitster_team` — player team identity, 7 days
 - `hitster_admin` — host session, 24 hours
-- `hitster_player` — solo/team onboarding identity (player.id, HMAC-signed), 12 hours. Set by `/play/[mode]` form action. Decoded by `hooks.server.ts` into `locals.playerId`. `$lib/server/player.ts` owns the sign/verify logic.
+- `hitster_player` — solo/team onboarding identity (player.id, HMAC-signed), 48 hours (`PLAYER_SESSION_MAX_AGE_SECONDS` in `$lib/server/player.ts` is the single source; `players.session_expires_at` derives from it). Set by `/play/[mode]` form action. Decoded by `hooks.server.ts` into `locals.playerId`. `$lib/server/player.ts` owns the sign/verify logic.
 
 ## Session log
 
