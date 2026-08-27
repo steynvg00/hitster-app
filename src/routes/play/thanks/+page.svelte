@@ -176,14 +176,15 @@
 </div>
 
 <style>
+	/* De paginagrond van dit scherm wint van de standaard paginagradient. Hij
+	   gaat via --screen-bg: die property erft door tot in de vaste
+	   achtergrondlaag van PlayerScreen, en dat is de laag die tot de schermrand
+	   reikt. Stond hij op .player-screen, dan hield de grond op bij 100svh —
+	   zie de laagprobe in PlayerScreen.svelte. De code-regen erbovenop krijgt
+	   dezelfde grond via --cr-backdrop. */
 	.finale {
 		background: var(--page-bg);
-	}
-
-	/* De paginagrond van dit scherm wint van de standaard mixup-page-gradient;
-	   de code-regen erbovenop krijgt dezelfde grond via --cr-backdrop. */
-	.finale :global(.player-screen) {
-		background: var(--page-bg);
+		--screen-bg: var(--page-bg);
 	}
 
 	.hero {

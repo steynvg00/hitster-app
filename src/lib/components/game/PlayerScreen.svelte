@@ -66,7 +66,7 @@
 </script>
 
 <div
-	class="player-screen mixup-page"
+	class="player-screen"
 	class:player-screen--fit={fitViewport}
 	class:player-screen--page-scroll={pageScroll}
 >
@@ -171,6 +171,33 @@
 		z-index: 0;
 		overflow: hidden;
 		pointer-events: none;
+
+		/* ── De GROND hoort hier, niet op .player-screen ────────────────────
+		   Dit is wat er na #106 nog ontbrak. Die commit verhuisde de OVERLAYS
+		   (regen, kleurtint, kristal-hoeken) naar deze laag en gaf hem
+		   100lvh — maar de paginagradient bleef achter op .player-screen, via
+		   de utility `mixup-page`. Die doos is min-height:100svh.
+
+		   Laagprobe op de echte pagina's (WebKit, viewport 402x754, met
+		   100svh opgelegd op 714 — de toestelmaten uit #106):
+
+		     .player-screen__backdrop  fixed, 0→754, background rgba(0,0,0,0)
+		     .player-screen            0→714, gradient
+		     schildert op y=740:       ALLEEN html
+
+		   De laag die tot de rand reikt was dus leeg, en de laag met de
+		   gradient reikte 40px te kort. In de strook ertussen bleef alleen
+		   het html-achtergrondje over — een ANDERE doos, met
+		   background-attachment: fixed, precies de eigenschap waar iOS Safari
+		   het slechtst mee omgaat. Dat is de strook die zwart bleef.
+
+		   Dat verklaart ook waarom de diagnosepagina wél werkte: daar wás de
+		   geteste laag de achtergrond. Hier was hij doorzichtig.
+
+		   --screen-bg laat een scherm zijn eigen grond meegeven; die custom
+		   property erft gewoon door vanaf een wrapper om <PlayerScreen> heen
+		   (zie /play/thanks). Zonder override: de standaard paginagradient. */
+		background: var(--screen-bg, var(--gradient-mixup-page));
 	}
 
 	.player-screen__tint {
