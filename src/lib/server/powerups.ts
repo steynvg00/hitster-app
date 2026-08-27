@@ -14,6 +14,7 @@ import {
 	artistTargets,
 	computeSetMaxScore,
 	correctValueForField,
+	groupingAnswerForTrack,
 	fieldIsFullyCorrect,
 	fieldMapsFromResolved,
 	getSourceTracksForTab,
@@ -2226,10 +2227,16 @@ export async function resolveFreeAnswerValue(
 	const tab = tabId === null ? tabs[0] : tabs.find((t) => t.id === tabId);
 	if (!tab) return { error: 'That tab is no longer part of this challenge' };
 
-	// grouping is scored across the whole tab by scoreTabGrouping, not per track —
-	// there is no single value to hand back.
-	if (field === 'grouping')
-		return { error: 'Grouping has no single answer to reveal — pick another field' };
+	// `grouping` WORDT hier wel opgelost, anders dan voorheen. De oude weigering
+	// ("scored across the whole tab, no single value") klopte niet: scoreTab scoort
+	// grouping PER SLOT, tegen de fragmentnummers van de track die aan dat slot
+	// gematcht wordt. Er is dus wel degelijk één antwoord per (tab, slot), en dat
+	// is precies wat een team dat Gratis Tab of Gratis Antwoord op een
+	// fragments-challenge inzet nodig heeft — zonder de clipnummers is het
+	// antwoord voor die track niet compleet. Het antwoord zelf komt uit
+	// groupingAnswerForTrack (scoring.ts), dezelfde functie die het resultaatscherm
+	// vult, dus de onthulling kan niet afwijken van wat er gescoord wordt.
+	// De oplossing staat verderop, na het laden van de clips en de bron-tracks.
 
 	const { data: vdRow } = await supabase
 		.from('variant_defaults')
@@ -2312,6 +2319,14 @@ export async function resolveFreeAnswerValue(
 
 	const slot = sources[slotIndex];
 	if (!slot) return { error: 'That answer slot no longer exists on this tab' };
+
+	if (field === 'grouping') {
+		// Geen correctValueForField: die krijgt alleen een track mee en het antwoord
+		// hangt af van de clips van DEZE tab. Zie groupingAnswerForTrack.
+		const nums = groupingAnswerForTrack(tabClipData, slot.trackId);
+		if (!nums) return { error: 'Deze track heeft geen genummerde fragmenten — niets te onthullen' };
+		return { value: nums, tabId: tab.id, slotIndex };
+	}
 
 	const value = correctValueForField(field as AnswerField, slot.track);
 	// A misconfigured track (empty column) would otherwise reveal '' and still burn
@@ -3377,14 +3392,24 @@ export async function activatePowerup(
 			if (!targets.length)
 				return { success: false, error: `${powerupType.name} needs at least one answer selected` };
 
-			// The target list comes from the client, so the rule is enforced here rather
-			// than trusted: every address must sit inside ONE tab (a second tab would be
-			// a second Free Tab), with a sanity bound on the list length.
+			// The target list comes from the client, so the rules are enforced here
+			// rather than trusted. Two of them:
+			//
+			//   één tab    een tweede tab zou een tweede Gratis Tab zijn.
+			//   één track  Gratis Tab onthulde ELKE track van de gekozen tab. Op een
+			//              fragments-beurt van drie tracks was dat in één klap de hele
+			//              beurt. De kiezer in de modal stuurt sinds die wijziging nog
+			//              maar één slot mee; dit is de regel die dat afdwingt in plaats
+			//              van erop te vertrouwen — een geknutselde post mag de oude,
+			//              te sterke uitkomst niet alsnog kunnen halen.
 			const distinctTabs = new Set(targets.map((t) => t.tabId ?? ''));
 			if (distinctTabs.size > 1)
 				return { success: false, error: 'Free Tab reveals one tab, not several' };
+			const distinctSlots = new Set(targets.map((t) => t.slotIndex ?? 0));
+			if (distinctSlots.size > 1)
+				return { success: false, error: 'Free Tab reveals one track, not several' };
 			if (targets.length > FREE_TAB_MAX_REVEALS)
-				return { success: false, error: 'That is more answers than one tab can have' };
+				return { success: false, error: 'That is more answers than one track can have' };
 
 			// Resolve each address through free_answer's resolver — the only place that
 			// knows how a (tab, slot, field) becomes an answer.

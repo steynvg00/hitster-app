@@ -210,7 +210,10 @@ async function cellsForTab(
 	const cells: Array<{ slotIndex: number; field: string }> = [];
 	for (let si = 0; si < slotCount; si++) {
 		for (const f of fields) {
-			if (f === 'grouping') continue; // never offered, same as free_answer
+			// `grouping` werd hier overgeslagen omdat de resolver het weigerde. Sinds
+			// het antwoord per (tab, slot) oplosbaar is — de fragmentnummers van de
+			// track achter dat slot, via groupingAnswerForTrack — hoort het gewoon in
+			// deze probe: het is het veld dat bij fragments de meeste punten draagt.
 			cells.push({ slotIndex: si, field: f as string });
 		}
 	}

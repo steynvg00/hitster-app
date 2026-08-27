@@ -118,10 +118,11 @@ export function isRevealPowerup(id: string): boolean {
 export const X_RAY_DEFAULT_BUDGET = 5;
 
 /**
- * free_tab: sanity bound on how many cells one tab may hand over. Not a game
- * rule — a real tab has at most a handful of slots × fields — but the target list
- * arrives from the client, so the server needs an upper bound it can refuse
- * beyond.
+ * free_tab: sanity bound on how many cells één onthulling mag opleveren. Geen
+ * spelregel — sinds Gratis Tab op één track begrensd is (zie de 'free_tab'-tak in
+ * $lib/server/powerups.ts) gaat het om een handvol velden — maar de doellijst komt
+ * van de client, dus de server heeft een bovengrens nodig waarboven hij kan
+ * weigeren. De WERKELIJKE begrenzing zijn de twee regels daar: één tab, één track.
  */
 export const FREE_TAB_MAX_REVEALS = 40;
 

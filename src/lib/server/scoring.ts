@@ -486,7 +486,12 @@ function assignGreedyFallback(
 			if (!(availableMask & (1 << gi))) continue;
 			const f = artistPairFraction(tags[gi], targets[ti].name, mode);
 			if (f > 0) {
-				pairs.push({ ti, gi, sim: strSimilarity(tags[gi], targets[ti].name), value: f * targets[ti].weight });
+				pairs.push({
+					ti,
+					gi,
+					sim: strSimilarity(tags[gi], targets[ti].name),
+					value: f * targets[ti].weight
+				});
 			}
 		}
 	}
@@ -728,7 +733,7 @@ export function scoreField(
 		const targets = rawTargets.filter((t) => normalizeAnswer(t) !== '');
 		if (targets.length === 0) return { score: 0, fuzzyScore: 0 };
 		const bestSim = Math.max(...targets.map((t) => strSimilarity(submitted, t)));
-		if (bestSim >= 0.80) return { score: maxPoints, fuzzyScore: bestSim };
+		if (bestSim >= 0.8) return { score: maxPoints, fuzzyScore: bestSim };
 		if (bestSim >= 0.65) return { score: Math.round(maxPoints * 0.5), fuzzyScore: bestSim };
 		return { score: 0, fuzzyScore: bestSim };
 	}
@@ -876,6 +881,32 @@ export function scoreGrouping(
 	const p = sorted(playerFragments).join(',');
 	const a = sorted(actualFragmentNumbers).join(',');
 	return p === a ? maxPoints : 0;
+}
+
+/**
+ * HET antwoord op grouping voor één bron-track: de fragmentnummers van de clips
+ * van die track binnen deze tab, oplopend en als komma-lijst.
+ *
+ * Dit is exact de string die scoreTab in `FieldResult.correct` zet — het groene
+ * antwoord op het resultaatscherm. Hij stond twee keer letterlijk uitgeschreven
+ * in scoreTab (één keer voor de score, één keer voor de weergave) en is nu één
+ * functie, omdat er sinds de onthul-powerups een DERDE lezer bij is: free_answer
+ * en Gratis Tab moeten hetzelfde antwoord geven als het resultaatscherm.
+ *
+ * correctValueForField kan dit NIET: die krijgt alleen een track mee, en het
+ * antwoord hangt af van de clips van de tab. Vandaar een eigen functie met een
+ * eigen signatuur in plaats van een tak daarbinnen.
+ */
+export function groupingNumbersForTrack(tabClips: TabClipData[], trackId: string): number[] {
+	return tabClips
+		.filter((tc) => tc.fragmentNumber !== null && tc.trackId === trackId)
+		.map((tc) => tc.fragmentNumber as number)
+		.sort((a, b) => a - b);
+}
+
+/** Diezelfde nummers als weergavestring: '1, 4, 7'. Leeg als er geen zijn. */
+export function groupingAnswerForTrack(tabClips: TabClipData[], trackId: string): string {
+	return groupingNumbersForTrack(tabClips, trackId).join(', ');
 }
 
 // ─── Tab scorer ───────────────────────────────────────────────────────────────
@@ -1067,10 +1098,10 @@ export function scoreTab(
 		// Grouping field scoring for fragments type
 		let groupingScore = 0;
 		if (hasGrouping && draft.fragments !== undefined) {
-			// Actual fragment numbers: clips whose parent track_id matches this source track
-			const actualNums = tabClips
-				.filter((tc) => tc.fragmentNumber !== null && tc.trackId === matchedSrc.trackId)
-				.map((tc) => tc.fragmentNumber as number);
+			// Actual fragment numbers: clips whose parent track_id matches this source
+			// track — via de gedeelde helper, dezelfde die de weergave en de
+			// onthul-powerups lezen.
+			const actualNums = groupingNumbersForTrack(tabClips, matchedSrc.trackId);
 			groupingScore = scoreGrouping(draft.fragments, actualNums, groupingMax);
 			slotTotal += groupingScore;
 		}
@@ -1085,11 +1116,7 @@ export function scoreTab(
 			displayFields.push({
 				field: 'grouping',
 				submitted: (draft.fragments ?? []).join(', '),
-				correct: tabClips
-					.filter((tc) => tc.fragmentNumber !== null && tc.trackId === matchedSrc.trackId)
-					.map((tc) => tc.fragmentNumber)
-					.sort((a, b) => (a ?? 0) - (b ?? 0))
-					.join(', '),
+				correct: groupingAnswerForTrack(tabClips, matchedSrc.trackId),
 				score: groupingScore,
 				maxScore: groupingMax,
 				isBonus: groupingIsBonus
@@ -1142,7 +1169,8 @@ export function scoreTab(
 		);
 		const maxTotal = maxPerField + (hasGrouping ? groupingMax : 0);
 		// Mirrors maxTotal: unmatched slots DO include groupingMax (unlike overflow).
-		tabThresholdMax += nonBonusFieldMax(nonGroupingFields) + (hasGrouping && !groupingIsBonus ? groupingMax : 0);
+		tabThresholdMax +=
+			nonBonusFieldMax(nonGroupingFields) + (hasGrouping && !groupingIsBonus ? groupingMax : 0);
 		// Same asymmetry for the 0077 count: an unmatched source track is a slot the
 		// player LEFT EMPTY, not one that could never be answered, so its fields are
 		// countable and all wrong — denominator only. This is what makes a wholly
@@ -1420,15 +1448,15 @@ export function scoreSubmission(
 			tabFieldsTotal,
 			sourceAnswers
 		} = scoreTab(
-				tf?.fields ?? variantFields,
-				tf?.fieldModes ?? fieldModes,
-				tf?.fieldPoints ?? fieldPoints,
-				tab.sourceTracks,
-				tab.clips,
-				tab.playerDraft,
-				tf?.bonusFields ?? bonusFields,
-				artistBonus
-			);
+			tf?.fields ?? variantFields,
+			tf?.fieldModes ?? fieldModes,
+			tf?.fieldPoints ?? fieldPoints,
+			tab.sourceTracks,
+			tab.clips,
+			tab.playerDraft,
+			tf?.bonusFields ?? bonusFields,
+			artistBonus
+		);
 		thresholdTotal += tabThresholdTotal;
 		thresholdMax += tabThresholdMax;
 		fieldsCorrect += tabFieldsCorrect;
@@ -1619,10 +1647,14 @@ export async function computeSetMaxScore(
 			// C3b: resolve PER TAB via the single source of truth so a tab override
 			// changes this tab's denominator contribution — and bonus fields are
 			// still excluded. NULL tab → challenge-wide, bit-identical to pre-C3b.
-			const { fields: variantFields, fieldModes, fieldPoints, bonusFields } =
-				fieldMapsFromResolved(
-					resolveTabFields(tab, { variant, points_config: ch.points_config }, vdPoints)
-				);
+			const {
+				fields: variantFields,
+				fieldModes,
+				fieldPoints,
+				bonusFields
+			} = fieldMapsFromResolved(
+				resolveTabFields(tab, { variant, points_config: ch.points_config }, vdPoints)
+			);
 			const resolvedSrcs = getSourceTracksForTab(
 				variant,
 				tab,

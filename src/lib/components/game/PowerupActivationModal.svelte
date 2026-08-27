@@ -232,6 +232,7 @@
 	});
 	const needsFieldPicker = $derived(powerupType.id === 'free_answer');
 
+
 	// ── free_tab tab picker ───────────────────────────────────────────────────
 	//
 	// Builds a list of (tab, slot, field) addresses — the SAME address free_answer's
@@ -243,27 +244,47 @@
 	// choosing happens later, one field at a time, on the challenge page itself.
 	const needsTabPicker = $derived(powerupType.id === 'free_tab');
 
-	// `grouping` is scored across a whole tab rather than per track, so it has no
-	// single answer — excluded from every picker, exactly as free_answer excludes it.
-	const revealable = (fields: string[]) => fields.filter((f) => f !== 'grouping');
-
 	let selectedTabId = $state('');
 	$effect(() => {
 		if (needsTabPicker && !selectedTabId) selectedTabId = tabId ?? revealTabs[0]?.id ?? '';
 	});
 	const selectedTab = $derived(revealTabs.find((t) => t.id === selectedTabId));
 
+	// ── Welke TRACK binnen die tab ────────────────────────────────────────────
+	//
+	// Gratis Tab onthulde de antwoorden van ÉLKE track op de gekozen tab. Op een
+	// fragments-beurt van drie tracks was dat in één klap de hele beurt — te sterk
+	// voor één powerup. Nu is het één track.
+	//
+	// WAAROM EEN EIGEN KIEZER en niet "de track die je nu open hebt": deze powerup
+	// mag een tab kiezen waar je NIET op staat (dat is zijn hele bestaansreden —
+	// vooruitkijken naar een beurt die nog moet komen). Voor zo'n tab bestaat "de
+	// track die je open hebt" niet. Een impliciete keuze zou dus alleen kloppen
+	// zolang je de huidige tab kiest, en stilletjes op track 1 uitkomen zodra je
+	// dat niet doet. Expliciet kiezen is het enige dat op elke tab hetzelfde
+	// betekent — en het past bij het karakter van deze powerup, die al om een
+	// keuze vraagt.
+	//
+	// De kiezer verschijnt alleen als er iets te kiezen valt (slotCount > 1); een
+	// tab met één track heeft er geen.
+	let selectedSlot = $state(0);
+	const slotCount = $derived(Math.max(selectedTab?.slotCount ?? 1, 1));
+	// Van tab wisselen zet de trackkeuze terug: slot 3 van een tab met drie tracks
+	// bestaat niet op een tab met één.
+	$effect(() => {
+		void selectedTabId;
+		selectedSlot = 0;
+	});
+
 	// What actually gets posted. Built here so the "how many answers will this
 	// reveal" preview below and the hidden input can never disagree.
 	const revealTargets = $derived<RevealTarget[]>(
 		needsTabPicker && selectedTab
-			? Array.from({ length: Math.max(selectedTab.slotCount, 1) }, (_, si) =>
-					revealable(selectedTab.fields).map((f) => ({
-						tabId: selectedTab.id,
-						slotIndex: si,
-						field: f
-					}))
-				).flat()
+			? selectedTab.fields.map((f) => ({
+					tabId: selectedTab.id,
+					slotIndex: Math.min(selectedSlot, slotCount - 1),
+					field: f
+				}))
 			: []
 	);
 	const targetsMissing = $derived(needsTabPicker && revealTargets.length === 0);
@@ -636,9 +657,29 @@
 								</button>
 							{/each}
 						</div>
+						{#if slotCount > 1}
+							<!-- Alleen als er iets te kiezen valt. Zie de toelichting bij
+							     `selectedSlot`: deze powerup mag een tab kiezen waar je niet op
+							     staat, dus "de track die je open hebt" bestaat hier niet. -->
+							<span class="section-label">WELKE TRACK OP DIE TAB</span>
+							<div class="flex gap-2 overflow-x-auto">
+								{#each Array.from({ length: slotCount }, (_, i) => i) as si (si)}
+									<button
+										type="button"
+										class="pick pick--violet squircle"
+										class:pick--on={selectedSlot === si}
+										onclick={() => (selectedSlot = si)}
+									>
+										Track {si + 1}
+									</button>
+								{/each}
+							</div>
+						{/if}
 						{#if revealTargets.length > 0}
 							<div class="preview squircle">
-								» {selectedTab?.label ?? ''} · {revealTargets.length}
+								» {selectedTab?.label ?? ''}{#if slotCount > 1}
+									· Track {selectedSlot + 1}{/if} ·
+								{revealTargets.length}
 								{revealTargets.length === 1 ? 'antwoord' : 'antwoorden'} onthuld
 							</div>
 						{/if}

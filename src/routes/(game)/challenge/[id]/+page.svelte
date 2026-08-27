@@ -468,7 +468,10 @@
 	const revealTabs = $derived(
 		data.tabs.map((t, i) => ({
 			id: t.id,
-			label: `Tab ${i + 1}`,
+			// `tabUnit`, niet het vaste woord "Tab": de tabbalk erboven zegt bij
+			// mashup en fragments "Beurt", en de kiezer hoort hetzelfde ding hetzelfde
+			// te noemen.
+			label: `${tabUnit} ${i + 1}`,
 			fields: t.fields,
 			slotCount: Math.max(t.sourceTracks.length, 1)
 		}))
@@ -717,10 +720,25 @@
 			return true;
 		}
 
-		// grouping is the one field with no revealable answer — it is a per-slot
-		// fragment assignment, not a track property. The server refuses to reveal it
-		// at all, so this is a guard, not a path anyone reaches.
-		if (field === 'grouping') return false;
+		// grouping → de fragmentchips van dit slot. De server levert het antwoord als
+		// '1, 4, 7' (groupingAnswerForTrack, dezelfde string die het resultaatscherm
+		// als correct toont); hier wordt dat weer een getallenlijst, precies de vorm
+		// die toggleFragment en de scorer gebruiken.
+		//
+		// Dit was voorheen een `return false`-wacht: de server weigerde grouping
+		// helemaal. Zonder de clipnummers is een onthuld antwoord op een
+		// fragments-track niet compleet — je weet dan welke track het is maar niet
+		// welke fragmenten erbij horen, en dat is precies het deel dat punten kost.
+		if (field === 'grouping') {
+			if (!allDrafts[ti]?.[si]) return false;
+			const nums = value
+				.split(',')
+				.map((n) => parseInt(n.trim(), 10))
+				.filter((n) => Number.isFinite(n));
+			if (!nums.length) return false;
+			allDrafts[ti][si].fragments = nums;
+			return true;
+		}
 
 		// open_text / combobox / multiple_choice all bind straight to the draft's
 		// fieldValues, so one write serves all three. A multiple_choice value that
@@ -2720,10 +2738,36 @@
 							{#if field === 'grouping'}
 								{#if hasGrouping && activeTab}
 									<div class="flex flex-col gap-2">
-										<span
-											class="text-[11px] font-extrabold tracking-[0.14em] text-mixup-paper uppercase"
-											>Welke fragmenten horen bij deze track?</span
-										>
+										<!-- Dezelfde labelrij als elk ander veld: opschrift links, de
+										     X-Ray-onthulknop rechts. Grouping was hier tot nu toe van
+										     uitgesloten omdat de server het antwoord niet kon oplossen;
+										     dat kan hij nu wel (groupingAnswerForTrack), dus hoort dit
+										     veld ook gewoon in de onthulfamilie. -->
+										<div class="flex items-center justify-between gap-2">
+											<span
+												class="text-[11px] font-extrabold tracking-[0.14em] text-mixup-paper uppercase"
+												>Welke fragmenten horen bij deze track?</span
+											>
+											{#if xrayRemaining > 0 && !revealFor('grouping', slotIdx)}
+												<button
+													type="button"
+													onclick={() => spendXrayReveal('grouping', slotIdx)}
+													disabled={!!xraySpending}
+													class="shrink-0 rounded-mixup-chip border border-mixup-amber/50 bg-mixup-amber/10 px-2 py-0.5 text-[11px] font-bold text-mixup-amber transition-colors squircle disabled:opacity-40"
+												>
+													{xraySpending ===
+													freeAnswerRevealKey(activeTab?.id ?? '', slotIdx, 'grouping')
+														? '…'
+														: `🔎 Onthul (${xrayRemaining})`}
+												</button>
+											{/if}
+										</div>
+										{#if revealFor('grouping', slotIdx)}
+											<div class="flex items-center gap-1.5 text-xs font-semibold text-mixup-amber">
+												<span>💡</span>
+												<span>Onthuld: {revealFor('grouping', slotIdx)}</span>
+											</div>
+										{/if}
 										<div class="flex flex-wrap gap-2">
 											{#each activeTab.clips as clipItem, ci}
 												{@const fragNum = clipItem.fragmentNumber ?? ci + 1}

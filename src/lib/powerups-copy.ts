@@ -123,7 +123,7 @@ export const POWERUP_COPY_NL: Record<string, PowerupCopy> = {
 	},
 	free_tab: {
 		name: 'GRATIS TAB',
-		desc: 'Kies één tab — elk veld van elke track op die tab wordt onthuld en ingevuld.',
+		desc: 'Kies één tab en één track daarop — elk veld van die track wordt onthuld en ingevuld, clipnummers inbegrepen.',
 		warn: 'Werkt alleen tijdens een challenge die jullie gestart zijn'
 	},
 	power_spin: {

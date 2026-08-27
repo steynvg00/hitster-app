@@ -604,11 +604,23 @@ async function verifyFreeTab() {
 		});
 		assert('targets spanning two tabs refused', twoTabs.success === false && twoTabs.error, 'Free Tab reveals one tab, not several');
 
+		// Gratis Tab onthult sinds de begrenzing één TRACK, niet de hele tab: een
+		// fragments-beurt van drie tracks was anders in één klap weg. De kiezer
+		// stuurt nog maar één slot mee; dit pint dat de server het ook afdwingt.
+		const twoSlots = await activatePowerup(db, 'tp1', {
+			currentChallengeId: 'ch1',
+			revealTargets: [
+				{ tabId: 'tab1', slotIndex: 0, field: 'artist' },
+				{ tabId: 'tab1', slotIndex: 1, field: 'artist' }
+			]
+		});
+		assert('targets spanning two tracks refused', twoSlots.success === false && twoSlots.error, 'Free Tab reveals one track, not several');
+
 		const tooMany = await activatePowerup(db, 'tp1', {
 			currentChallengeId: 'ch1',
 			revealTargets: Array.from({ length: 41 }, (_, i) => ({ tabId: 'tab1', slotIndex: 0, field: `f${i}` }))
 		});
-		assert('over the 40-reveal cap refused', tooMany.success === false && tooMany.error, 'That is more answers than one tab can have');
+		assert('over the 40-reveal cap refused', tooMany.success === false && tooMany.error, 'That is more answers than one track can have');
 	}
 
 	{
