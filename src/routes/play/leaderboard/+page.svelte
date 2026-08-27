@@ -107,7 +107,7 @@
 	<title>Live stand — M!XUP</title>
 </svelte:head>
 
-<PlayerScreen rain corners={0.35} fitViewport class="px-5">
+<PlayerScreen rain fitViewport class="px-5">
 	<a href="/team" class="back-link">← TEAM</a>
 
 	<h1 class="lb-title">Live stand</h1>

@@ -96,7 +96,7 @@
 	de iOS-adresbalk; svh/vh niet.
 -->
 <div class="onb-viewport">
-	<PlayerScreen rain corners={0.4} class="px-5">
+	<PlayerScreen rain class="px-5">
 		{#if data.gamesetLogo}
 			<!-- State (a): gameset-logo bovenaan -->
 			<img

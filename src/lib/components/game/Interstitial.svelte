@@ -32,7 +32,7 @@
 	let { icon, glow, eyebrow = null, title, lede, children }: Props = $props();
 </script>
 
-<PlayerScreen corners={0.4} class="items-center justify-center px-7 text-center">
+<PlayerScreen class="items-center justify-center px-7 text-center">
 	<div class="tussen">
 		<img src={icon} alt="" aria-hidden="true" class="tussen__icon" style="--glow: {glow};" />
 

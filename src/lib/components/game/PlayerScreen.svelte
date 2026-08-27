@@ -16,8 +16,13 @@
 		/** Code-regen tonen (alleen onboarding + pre-game poort in de designbron). */
 		rain?: boolean;
 		layers?: 2 | 3;
-		/** Opacity van de kristal-hoeken: 0.4 op onboarding, 0.35 elders. */
-		corners?: number;
+		/**
+		 * Kristal-hoeken tonen. Was een opacity (0.35-0.5, en 0 om ze uit te
+		 * zetten); dat is nu een aan/uit-schakelaar, want de doorzichtigheid
+		 * hoort in het asset te zitten en niet in een tweede laag eroverheen.
+		 * Zie .player-screen__corners hieronder.
+		 */
+		corners?: boolean;
 		/** Extra achtergrond ONDER de gradient-laag, bijv. de teamkleur-radial. */
 		backdrop?: string | null;
 		/**
@@ -51,7 +56,7 @@
 	let {
 		rain = false,
 		layers = 3,
-		corners = 0.35,
+		corners = true,
 		backdrop = null,
 		fitViewport = false,
 		pageScroll = false,
@@ -65,21 +70,23 @@
 	class:player-screen--fit={fitViewport}
 	class:player-screen--page-scroll={pageScroll}
 >
-	{#if rain}
-		<CodeRain {layers} />
-	{/if}
-	{#if backdrop}
-		<div class="absolute inset-0" style="background: {backdrop};"></div>
-	{/if}
-	<img
-		src={OVERLAY_ASSETS.frameCorners}
-		alt=""
-		aria-hidden="true"
-		class="pointer-events-none {pageScroll
-			? 'fixed'
-			: 'absolute'} inset-0 h-full w-full object-cover"
-		style="opacity: {corners};"
-	/>
+	<!--
+		Alle achtergrondlagen zitten in ÉÉN vaste laag, buiten de doos van
+		.player-screen. Zie de CSS hieronder voor het waarom; de volgorde binnen
+		de laag is ongewijzigd: regen onderop, dan de optionele kleurtint, dan de
+		kristal-hoeken.
+	-->
+	<div class="player-screen__backdrop" aria-hidden="true">
+		{#if rain}
+			<CodeRain {layers} />
+		{/if}
+		{#if backdrop}
+			<div class="player-screen__tint" style="background: {backdrop};"></div>
+		{/if}
+		{#if corners}
+			<img src={OVERLAY_ASSETS.frameCorners} alt="" class="player-screen__corners" />
+		{/if}
+	</div>
 	<div class="player-screen__body {className}">
 		{@render children?.()}
 	</div>
@@ -123,6 +130,70 @@
 	.player-screen--page-scroll {
 		overflow-x: clip;
 		overflow-y: visible;
+	}
+
+	/* ── De vaste achtergrondlaag ───────────────────────────────────────────
+	   De regen en de hoeken stonden als `absolute; inset: 0` BINNEN
+	   .player-screen. Ze konden daardoor per constructie nooit buiten die doos
+	   schilderen — en die doos is min-height:100svh.
+
+	   Toestelmeting (iOS Safari 18.7, iPhone 402px breed):
+	     100svh = 714px      klein  — browserbalk uitgeklapt
+	     100lvh = 754px      groot  — browserbalk ingeklapt
+	   Verschil 40px, en dat is exact de strook die zwart bleef.
+
+	   `position: fixed` haalt de laag uit .player-screen: hij maat tegen het
+	   initial containing block en wordt niet geknipt door de overflow:hidden
+	   hierboven, en hij SCHUIFT NIET MEE bij scrollen. Dat laatste was het
+	   tweede deel van de klacht: naar beneden scrollen haalde wel de onderkant
+	   maar verloor de bovenkant, omdat de laag met de pagina meebewoog.
+
+	   Maar fixed alleen is NIET genoeg. Het initial containing block is per
+	   specificatie zo hoog als de KLEINE viewport — dus `inset: 0` levert
+	   opnieuw 714px en dezelfde strook van 40px. Vandaar de expliciete
+	   `height: 100lvh`: de grootste stand die de viewport ooit aanneemt, zodat
+	   de laag in beide standen van de browserbalk tot de rand loopt.
+
+	   Geen negatieve env(safe-area-inset-*)-offsets: op dit toestel zijn alle
+	   vier de insets gemeten op 0px, dus die zouden hier niets doen. Niet
+	   toegevoegd omdat het niet te verifiëren is.
+
+	   `100vh` staat ervoor als terugval voor browsers zonder lvh-ondersteuning;
+	   op iOS is 100vh van oudsher al de grote viewport, dus dat is precies de
+	   juiste terugval. */
+	.player-screen__backdrop {
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		height: 100vh;
+		height: 100lvh;
+		z-index: 0;
+		overflow: hidden;
+		pointer-events: none;
+	}
+
+	.player-screen__tint {
+		position: absolute;
+		inset: 0;
+	}
+
+	/* De hoeken vullen de vaste laag, dus ze landen in de hoeken van het SCHERM
+	   in plaats van in die van .player-screen.
+
+	   GEEN opacity meer. Die stond op 0.35-0.5 en zette de hele afbeelding door,
+	   inclusief de volledig dekkende delen — daardoor was de code-regen dwars
+	   door het kristal heen te zien. Gemeten op het asset
+	   (frame-hoeken_kristal_alpha.png, 768x1376): 10,01% van de pixels heeft
+	   alfa 255 en 86,40% heeft alfa 0. De doorzichtigheid zit dus al ín het
+	   bestand; een tweede laag opacity eroverheen maakte ook het dekkende deel
+	   doorzichtig. Het asset is nooit naar WebP omgezet en is ongeschonden. */
+	.player-screen__corners {
+		position: absolute;
+		inset: 0;
+		height: 100%;
+		width: 100%;
+		object-fit: cover;
 	}
 
 	.player-screen__body {
