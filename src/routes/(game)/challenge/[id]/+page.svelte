@@ -2462,35 +2462,50 @@
 		</form>
 
 		<!--
-			Powerup-rij — buiten de antwoord-<form>, zie de noot bovenaan.
+			Powerup-balk — buiten de antwoord-<form>, zie de noot bovenaan.
 
-			STICKY ONDERAAN (harde eis): de balk moet altijd zichtbaar en klikbaar
-			blijven terwijl de pagina scrolt. `bottom: var(--kb-inset)` houdt hem op
-			iOS bóven het toetsenbord in plaats van erachter — zie het
-			visualViewport-effect in het script. Onderaan de pagina zakt hij vanzelf
-			terug op zijn eigen plek, net boven de knoppenrij.
+			ZWEVEND (harde eis): de balk moet altijd zichtbaar en klikbaar blijven
+			terwijl de pagina scrolt. Hij is daarom `position: sticky` met een
+			bodemafstand, en hij raakt de schermranden niet: marge links, rechts en
+			onder, afgeronde hoeken, glas. Niet meer de volle-breedte strook in
+			effen #0b0b1f.
+
+			`bottom` telt de toetsenbord-inzet mee, zodat hij op iOS bóven het
+			toetsenbord staat in plaats van erachter — zie het visualViewport-effect
+			in het script. Onderaan de pagina zakt hij vanzelf terug op zijn eigen
+			plek, net boven de knoppenrij.
+
+			De eyebrow "POWERUPS" staat alleen bij gevulde balk. In de lege stand
+			zegt de zin zelf al "Nog geen powerups"; het label ernaast is dan
+			dubbelop en kost breedte die de zin nodig heeft om op één regel te
+			passen.
 		-->
 		{#if data.activeSetId && data.heldPowerups}
-			<div class="pu-bar flex items-center gap-2 px-5">
-				<span
-					class="shrink-0 text-[9px] font-extrabold tracking-[0.18em] text-mixup-yellow uppercase"
-					>Powerups</span
-				>
-				<div class="min-w-0 flex-1">
-					<HeldPowerups
-						teamId={data.team.id}
-						setId={data.activeSetId}
-						powerups={data.heldPowerups}
-						currentChallengeId={data.challenge.id}
-						variantFields={activeTab?.fields ?? variantFields.map((f) => String(f))}
-						tabId={activeTab?.id}
-						slotIndex={activeSlotEffective}
-						{revealTabs}
-						setTeams={data.setTeams}
-						draftSnapshot={() => JSON.stringify(buildAnswersForSubmit())}
-						onactivated={onPowerupActivated}
-						onlifeline={onLifelineHints}
-					/>
+			<div class="pu-bar">
+				<div class="pu-panel flex items-center gap-2.5 squircle">
+					{#if data.heldPowerups.length > 0}
+						<span
+							class="shrink-0 text-[9px] font-extrabold tracking-[0.18em] text-mixup-yellow uppercase"
+							>Powerups</span
+						>
+					{/if}
+					<div class="min-w-0 flex-1">
+						<HeldPowerups
+							compact
+							teamId={data.team.id}
+							setId={data.activeSetId}
+							powerups={data.heldPowerups}
+							currentChallengeId={data.challenge.id}
+							variantFields={activeTab?.fields ?? variantFields.map((f) => String(f))}
+							tabId={activeTab?.id}
+							slotIndex={activeSlotEffective}
+							{revealTabs}
+							setTeams={data.setTeams}
+							draftSnapshot={() => JSON.stringify(buildAnswersForSubmit())}
+							onactivated={onPowerupActivated}
+							onlifeline={onLifelineHints}
+						/>
+					</div>
 				</div>
 			</div>
 			{#if xrayError}
@@ -2578,22 +2593,45 @@
 		box-shadow: 0 10px 22px rgba(11, 11, 31, 0.55);
 	}
 
-	/* Powerup-balk. Hoger z-index dan de bovenzone: ze raken elkaar ruimtelijk
-	   nooit (boven vs. onder), en zo kan de bovenzone nooit over iets heen
-	   schilderen dat vanuit deze balk opengaat. `bottom: var(--kb-inset)` tilt
-	   hem op iOS boven het toetsenbord — zie het visualViewport-effect. Aan het
-	   eind van de pagina zakt hij vanzelf terug op zijn eigen plek, net boven de
-	   knoppenrij. */
+	/* Powerup-balk — de zwevende schil. Hoger z-index dan de bovenzone: ze raken
+	   elkaar ruimtelijk nooit (boven vs. onder), en zo kan de bovenzone nooit
+	   over iets heen schilderen dat vanuit deze balk opengaat.
+
+	   De schil is doorzichtig en draagt alleen de POSITIE. `bottom` telt de
+	   toetsenbord-inzet mee (zie het visualViewport-effect) plus de eigen
+	   zweefmarge; sticky-offsets tellen vanaf de VENSTERrand, dus de
+	   home-indicator hoort in diezelfde som en niet in de padding van de schil.
+
+	   Geen `overflow` en geen `backdrop-filter` op DEZE laag: een sticky voorouder
+	   met backdrop-filter zou het bevattende blok kapen van alles wat er fixed in
+	   staat. De sheet en de activatiemodal hangen via `use:portal` onder <body>
+	   en zijn daar ongevoelig voor, maar de regel geldt hier evengoed — het glas
+	   zit één niveau lager, op het paneel, dat niets fixed bevat. */
 	.pu-bar {
 		position: sticky;
-		bottom: var(--kb-inset, 0px);
+		bottom: calc(var(--kb-inset, 0px) + max(10px, env(safe-area-inset-bottom, 0px)));
 		z-index: 40;
-		padding-top: 8px;
-		/* Sticky-offsets tellen vanaf de VENSTERrand, niet vanaf de padding van de
-		   schil. De home-indicator-marge moet daarom hier zitten: achtergrond tot
-		   de rand, inhoud erboven. */
-		padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
-		background: linear-gradient(0deg, #0b0b1f 78%, rgba(11, 11, 31, 0.94) 100%);
-		box-shadow: 0 -10px 22px rgba(11, 11, 31, 0.55);
+		padding: 8px 14px 0;
+		pointer-events: none;
+	}
+
+	/* Het zwevende paneel zelf: glas uit het bestaande systeem
+	   (--color-mixup-glass + --blur-mixup-glass, dezelfde waarden als de
+	   `mixup-glass`-utility), rondom vrij van de schermranden.
+
+	   De slagschaduw is er om hem van de inhoud eronder te tillen, niet om een
+	   strook te maskeren: de pagina scrolt zichtbaar-maar-onscherp door het glas
+	   heen, en dat is precies wat glas hoort te doen. */
+	.pu-panel {
+		pointer-events: auto;
+		padding: 7px 12px;
+		border-radius: 20px;
+		background: var(--color-mixup-glass);
+		border: 1px solid var(--color-mixup-glass-border);
+		backdrop-filter: blur(var(--blur-mixup-glass));
+		-webkit-backdrop-filter: blur(var(--blur-mixup-glass));
+		box-shadow:
+			0 10px 28px rgba(11, 11, 31, 0.55),
+			0 2px 8px rgba(11, 11, 31, 0.4);
 	}
 </style>
