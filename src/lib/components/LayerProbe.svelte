@@ -146,6 +146,56 @@
 			node = node.parentElement;
 		}
 
+		// ── Hoekmeting ───────────────────────────────────────────────────────
+		// De laagmeting hierboven zegt waar de LAAG staat; dit zegt waar de vier
+		// kristal-hoeken IN die laag terechtkomen. Per hoek: de afstand tot de
+		// schermrand waar hij aan hangt, de gerenderde maat, en de natuurlijke
+		// maat van het bestand. Vervorming is meteen zichtbaar — als de
+		// gerenderde verhouding afwijkt van de natuurlijke, staat er een `!`.
+		const hoeken = [...document.querySelectorAll('img.player-screen__corner')] as HTMLImageElement[];
+		L.push('');
+		if (hoeken.length === 0) {
+			L.push('hoeken     geen (corners={false} op dit scherm)');
+		} else {
+			L.push(`hoeken     ${hoeken.length} stuks   naam  natuurlijk -> gerenderd   inzet`);
+			for (const el of hoeken) {
+				const r = el.getBoundingClientRect();
+				const naam = (el.currentSrc || el.src).split('/').pop()?.replace(/^frame-hoek-|-v2\.webp$/g, '') ?? '?';
+				const rw = Math.round(r.width);
+				const rh = Math.round(r.height);
+				// Verankerd aan links of rechts, boven of onder: toon de kleinste
+				// van de twee, dat is de rand waar hij aan hangt.
+				const l = Math.round(r.left);
+				const rr = Math.round(innerWidth - r.right);
+				const t = Math.round(r.top);
+				const bo = Math.round(innerHeight - r.bottom);
+				const zijkant = l <= rr ? `l${l}` : `r${rr}`;
+				const verticaal = t <= bo ? `b${t}` : `o${bo}`;
+				// Vervormingscontrole: gerenderde ratio tegen de natuurlijke ratio.
+				const nat = el.naturalWidth && el.naturalHeight;
+				const scheef =
+					nat && Math.abs(rw / rh - el.naturalWidth / el.naturalHeight) > 0.02 ? ' !VERVORMD' : '';
+				L.push(
+					`  ${naam.padEnd(12)}${el.naturalWidth}x${el.naturalHeight} -> ${rw}x${rh}` +
+						`  ${zijkant} ${verticaal}` +
+						`  ${((rw / innerWidth) * 100).toFixed(0)}%br ${((rh / innerHeight) * 100).toFixed(0)}%hg${scheef}`
+				);
+			}
+			// Samenvatting: de twee getallen waar het bij "lopen ze door" om gaat.
+			const rects = hoeken.map((el) => el.getBoundingClientRect());
+			const onder = rects.filter((r) => innerHeight - r.bottom < 4);
+			const bandBreedte = onder.reduce((a, r) => a + r.width, 0);
+			const schoonMidden =
+				Math.min(...rects.filter((r) => r.top > innerHeight / 2).map((r) => r.top)) -
+				Math.max(...rects.filter((r) => r.top < innerHeight / 2).map((r) => r.bottom));
+			L.push(
+				`  onderband  ${Math.round(bandBreedte)}px van ${innerWidth} = ${((bandBreedte / innerWidth) * 100).toFixed(0)}% van de breedte`
+			);
+			L.push(
+				`  schoon midden  ${Math.round(schoonMidden)}px = ${((schoonMidden / innerHeight) * 100).toFixed(0)}% van de hoogte`
+			);
+		}
+
 		L.push('');
 		// De kern van de toestelmeting: schuift de laag mee met de scroll?
 		// Een verankerde laag houdt top 0, ongeacht hoe ver er gescrold is.
