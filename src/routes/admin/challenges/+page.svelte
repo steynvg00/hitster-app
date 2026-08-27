@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { formatTimer } from '$lib/challenge-timer';
 	import { goto } from '$app/navigation';
 	import type { PageData, ActionData } from './$types';
 	import { CHALLENGE_TYPES, getTypeIcon, getTypeColor, getTypeDescription } from '$lib/variants';
@@ -181,7 +182,7 @@
 									: ''}</span
 							>
 							<span>·</span>
-							<span>{challenge.timer_seconds}s timer</span>
+							<span>{formatTimer(challenge.timer_seconds)} timer</span>
 						</div>
 					</div>
 
@@ -248,7 +249,9 @@
 					</div>
 					<div>
 						<div class="font-semibold text-white">Instrument</div>
-						<div class="mt-0.5 text-xs text-zinc-500">Identify the artist from a sound · Artist</div>
+						<div class="mt-0.5 text-xs text-zinc-500">
+							Identify the artist from a sound · Artist
+						</div>
 					</div>
 				</button>
 			</form>
