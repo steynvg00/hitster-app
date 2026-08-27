@@ -19,6 +19,7 @@
 		track_id: string;
 		storage_path: string;
 		storage_object_path: string | null;
+		duration: number | null;
 	};
 	type Tab = { id: string; position: number; effects?: unknown };
 	type Src = { id: string; tab_id: string; track_id: string; sort_order: number };
@@ -58,6 +59,46 @@
 
 	function clipsForTrack(trackId: string): Clip[] {
 		return clips.filter((c) => c.track_id === trackId);
+	}
+
+	function formatDur(dur: number | null): string | null {
+		if (dur == null) return null;
+		return `${Math.floor(dur / 60)}:${String(Math.round(dur % 60)).padStart(2, '0')}`;
+	}
+
+	/**
+	 * Welke clip van de tab in de dry/wet-preview staat, per tab-id.
+	 *
+	 * Een tab draagt nu 1-N clips maar houdt ÉÉN effectketen, dus één Waveform
+	 * per tab volstaat; deze index bepaalt alleen welke clip daar doorheen gaat.
+	 * Buiten bereik (clip verwijderd) wordt bij het renderen geklemd.
+	 */
+	let previewIdx = $state<Record<string, number>>({});
+
+	/**
+	 * Losse afspeelknopjes in de cliplijst — één tegelijk, precies zoals de
+	 * lijst in StandardEditor en FragmentsEditor. Dit staat naast de
+	 * Waveform-previews: die horen bij de effectketen, deze bij het opbouwen
+	 * van de lijst.
+	 */
+	let playingClipId = $state<string | null>(null);
+	const audioEls: Record<string, HTMLAudioElement> = {};
+
+	function playPreview(clipId: string) {
+		if (playingClipId && playingClipId !== clipId && audioEls[playingClipId]) {
+			audioEls[playingClipId].pause();
+			audioEls[playingClipId].currentTime = 0;
+		}
+		const el = audioEls[clipId];
+		if (!el) return;
+		if (playingClipId === clipId) {
+			el.pause();
+			el.currentTime = 0;
+			playingClipId = null;
+		} else {
+			void el.play();
+			playingClipId = clipId;
+		}
 	}
 
 	// ── Accessor functions — return cfg value or full-default object ──────────────
@@ -349,8 +390,9 @@
 				{@const srcs = srcsForTab(tab.id)}
 				{@const tabClips = clipsForTab(tab.id)}
 				{@const src = srcs[0]}
-				{@const tabClip = tabClips[0]}
-				{@const previewClip = tabClip?.clip_id ? clips.find((c) => c.id === tabClip.clip_id) : null}
+				{@const pIdx = Math.min(previewIdx[tab.id] ?? 0, Math.max(0, tabClips.length - 1))}
+				{@const previewTc = tabClips[pIdx]}
+				{@const previewClip = previewTc ? (clips.find((c) => c.id === previewTc.clip_id) ?? null) : null}
 				{@const anyEnabled = EFFECT_KEYS.some(
 					(k) => !!(cfg[k] as { enabled?: boolean } | undefined)?.enabled
 				)}
@@ -420,40 +462,143 @@
 						</form>
 					</div>
 
-					<!-- 2. Clip picker -->
+					<!-- 2. Clips (1-N per tab, geordend) — zelfde rij als StandardEditor.
+					     De effectketen hieronder hoort bij de TAB, niet bij een losse clip:
+					     de loader geeft elke clip van de tab dezelfde `effects` mee, dus wat
+					     hier staat ingesteld geldt voor alles in deze lijst. -->
 					<div class="mb-3">
-						<label class="mb-1 block text-xs text-zinc-400">Clip</label>
-						{#if src?.track_id}
-							<form method="POST" action="?/setTabClip" use:enhance>
-								<input type="hidden" name="tab_id" value={tab.id} />
-								<input type="hidden" name="existing_clip_id" value={tabClip?.id ?? ''} />
-								<SearchablePicker
-									name="clip_id"
-									items={clipsForTrack(src.track_id).map((c) => ({
-										id: c.id,
-										label: c.storage_path.split('/').pop() ?? 'Clip',
-										subtitle: ''
-									}))}
-									value={tabClip?.clip_id ?? ''}
-									placeholder="Search clips…"
-									emptyLabel="— no clip —"
-								/>
-							</form>
-						{:else}
+						<span class="mb-2 block text-xs font-semibold text-zinc-400"
+							>Clips ({tabClips.length})</span
+						>
+						{#if !src?.track_id}
 							<p class="text-xs text-zinc-600 italic">Pick a track first</p>
+						{:else}
+							{#if tabClips.length === 0}
+								<p class="mb-2 text-xs text-zinc-600 italic">No clips yet.</p>
+							{:else}
+								<div class="mb-2 space-y-1.5">
+									{#each tabClips as tc, ci (tc.id)}
+										{@const c = clips.find((cc) => cc.id === tc.clip_id)}
+										<div class="flex items-center gap-2 rounded bg-zinc-800 px-3 py-2 text-xs">
+											<span
+												class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-400 text-[10px] font-black text-zinc-950"
+											>
+												{ci + 1}
+											</span>
+											<span class="flex-1 text-zinc-300">
+												{c ? (c.storage_path.split('/').pop() ?? 'clip') : 'unknown clip'}
+												{#if c?.duration}
+													<span class="ml-1 text-zinc-500">{formatDur(c.duration)}</span>
+												{/if}
+											</span>
+											<!-- Welke clip door de effectketen hieronder gaat. Eén Waveform per
+											     tab: de keten is tab-breed, dus dit kiest alleen wat je hoort. -->
+											<button
+												type="button"
+												onclick={() => (previewIdx[tab.id] = ci)}
+												class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold transition-colors
+													{pIdx === ci
+													? 'bg-cyan-400 text-zinc-950'
+													: 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'}"
+												title="Use this clip in the dry/wet preview">FX</button
+											>
+											{#if c?.storage_path}
+												<button
+													type="button"
+													onclick={() => playPreview(tc.clip_id)}
+													class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold transition-colors
+														{playingClipId === tc.clip_id
+														? 'bg-amber-400 text-zinc-950'
+														: 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'}"
+													title={playingClipId === tc.clip_id ? 'Stop' : 'Play'}
+												>
+													{playingClipId === tc.clip_id ? '■' : '▶'}
+												</button>
+												<audio
+													bind:this={audioEls[tc.clip_id]}
+													src={c.storage_path}
+													crossorigin="anonymous"
+													onended={() => (playingClipId = null)}
+												></audio>
+											{/if}
+											<form method="POST" action="?/moveTabClip" use:enhance class="inline">
+												<input type="hidden" name="tab_id" value={tab.id} />
+												<input type="hidden" name="tc_id" value={tc.id} />
+												<input type="hidden" name="direction" value="up" />
+												<button
+													type="submit"
+													disabled={ci === 0}
+													class="text-zinc-500 hover:text-white disabled:opacity-30 disabled:hover:text-zinc-500"
+													title="Move up">▲</button
+												>
+											</form>
+											<form method="POST" action="?/moveTabClip" use:enhance class="inline">
+												<input type="hidden" name="tab_id" value={tab.id} />
+												<input type="hidden" name="tc_id" value={tc.id} />
+												<input type="hidden" name="direction" value="down" />
+												<button
+													type="submit"
+													disabled={ci === tabClips.length - 1}
+													class="text-zinc-500 hover:text-white disabled:opacity-30 disabled:hover:text-zinc-500"
+													title="Move down">▼</button
+												>
+											</form>
+											<form method="POST" action="?/removeTabClip" use:enhance class="inline">
+												<input type="hidden" name="tc_id" value={tc.id} />
+												<button type="submit" class="text-red-700 hover:text-red-400">✕</button>
+											</form>
+										</div>
+									{/each}
+								</div>
+							{/if}
+
+							<!-- Toevoegen — beperkt tot de brontrack van deze tab, en clips die er al
+							     in zitten vallen weg zodat dezelfde clip niet twee keer in de lijst
+							     belandt. Gekeyed op het aantal zodat de picker na elke toevoeging
+							     leeg terugkomt, net als in StandardEditor en FragmentsEditor. -->
+							{#key tabClips.length}
+								{@const addableClips = clipsForTrack(src.track_id).filter(
+									(c) => !tabClips.some((tc) => tc.clip_id === c.id)
+								)}
+								{#if addableClips.length > 0}
+									<form method="POST" action="?/addTabClip" use:enhance>
+										<input type="hidden" name="tab_id" value={tab.id} />
+										<SearchablePicker
+											name="clip_id"
+											items={addableClips.map((c) => ({
+												id: c.id,
+												label: c.storage_path.split('/').pop() ?? 'Clip',
+												subtitle: formatDur(c.duration) ?? ''
+											}))}
+											placeholder={`Add clip ${tabClips.length + 1}…`}
+											emptyLabel="— cancel —"
+										/>
+									</form>
+								{:else if tabClips.length > 0}
+									<p class="text-xs text-zinc-600 italic">
+										All clips for this track are already added.
+									</p>
+								{/if}
+							{/key}
 						{/if}
 					</div>
 
-					<!-- 3. DRY preview -->
+					<!-- 3. DRY preview van de clip die op FX staat -->
 					{#if previewClip}
 						<div class="mb-4">
-							<span class="text-xs text-zinc-600">Original (dry)</span>
-							<audio
-								controls
-								crossorigin="anonymous"
-								src={previewClip.storage_path}
-								class="mt-1 h-8 w-full rounded"
-							></audio>
+							<span class="text-xs text-zinc-600">
+								Original (dry){#if tabClips.length > 1}
+									<span class="text-zinc-500"> — clip {pIdx + 1} of {tabClips.length}</span>
+								{/if}
+							</span>
+							{#key previewClip.id}
+								<audio
+									controls
+									crossorigin="anonymous"
+									src={previewClip.storage_path}
+									class="mt-1 h-8 w-full rounded"
+								></audio>
+							{/key}
 						</div>
 					{/if}
 
@@ -1373,17 +1518,23 @@
 									{wetPlaying[tab.id] ? '⏸ Pause' : '▶ Play'}
 								</button>
 							</div>
-							<Waveform
-								bind:this={wetRefs[tab.id]}
-								src={previewClip.storage_path}
-								effects={tabEffects[tab.id]}
-								waveColor="#1e3a3a"
-								progressColor="#00e5ff"
-								height={40}
-								onPlayStateChange={(playing) => {
-									wetPlaying[tab.id] = playing;
-								}}
-							/>
+							<!-- Gekeyed op de clip: Waveform geeft `url` alleen bij initialisatie
+							     aan wavesurfer door, dus een gewijzigde src laadt niet vanzelf.
+							     Remounten geeft ook een vers <audio>-element, wat past bij de
+							     WeakMap-cache voor createMediaElementSource in Waveform. -->
+							{#key previewClip.id}
+								<Waveform
+									bind:this={wetRefs[tab.id]}
+									src={previewClip.storage_path}
+									effects={tabEffects[tab.id]}
+									waveColor="#1e3a3a"
+									progressColor="#00e5ff"
+									height={40}
+									onPlayStateChange={(playing) => {
+										wetPlaying[tab.id] = playing;
+									}}
+								/>
+							{/key}
 						</div>
 					{/if}
 				</div>
