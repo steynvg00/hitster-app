@@ -168,7 +168,18 @@
 				<div class="own-reveal__mates">
 					{#each data.teammates as p (p.id)}
 						{#if p.photo_url}
-							<img src={p.photo_url} alt={p.display_name} class="own-reveal__mate" />
+							<!-- Geen loading="lazy": deze kaart is het onthullingsmoment zelf en
+							     staat er ofwel meteen, ofwel hij klapt open bij een
+							     realtime-overgang. In beide gevallen moeten de gezichten er op
+							     dát moment staan, niet een tel later. Hoogstens een handvol. -->
+							<img
+								src={p.photo_url}
+								alt={p.display_name}
+								class="own-reveal__mate"
+								width="34"
+								height="34"
+								decoding="async"
+							/>
 						{:else}
 							<span class="own-reveal__mate own-reveal__mate--initial">
 								{p.display_name.charAt(0).toUpperCase()}

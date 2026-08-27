@@ -36,7 +36,17 @@
 	<div class="flex min-h-0 flex-1 flex-col items-center justify-center gap-6">
 		<div class="flex flex-col items-center gap-3">
 			{#if data.player.photo_url}
-				<img src={data.player.photo_url} alt={data.player.display_name} class="player-av" />
+				<!-- Geen loading="lazy": dit is de enige afbeelding op de pagina, staat
+				     gecentreerd in beeld en is waar de speler naar kijkt. Lazy zou hem
+				     hier alleen vertragen. -->
+				<img
+					src={data.player.photo_url}
+					alt={data.player.display_name}
+					class="player-av"
+					width="96"
+					height="96"
+					decoding="async"
+				/>
 			{:else}
 				<div class="player-av player-av--empty">
 					{data.player.display_name.charAt(0).toUpperCase()}
