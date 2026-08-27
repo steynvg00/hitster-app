@@ -169,6 +169,26 @@
 							play_state?: string;
 							recap_state?: string;
 						};
+						// ── Terug naar `joining` = de host heeft gereset ──────────────
+						// Alleen bijwerken van livePlayState is hier NIET genoeg: het
+						// lobbyblok hieronder rendert uit `data.lobbyTeams`, en de
+						// load-functie vult die array alleen als de set bij het LADEN al
+						// op `joining` stond (+page.server.ts). Wie tijdens `playing` op
+						// deze pagina stond kreeg dus de lobby te zien met een lege
+						// teamlijst — banner, settitel, "WACHTEN TOT DE HOST START" en de
+						// teamfoto-kaart, en daartussen niets. Het lobby-abonnement
+						// ontbrak om dezelfde reden, dus binnenkomende spelers vulden hem
+						// ook niet alsnog.
+						//
+						// Een volledige herlaadslag lost dat op EN laat de reset zijn werk
+						// doen: dit is het enige moment waarop de telefoon de server weer
+						// spreekt, en pas dan kan hooks.server.ts de cookies van vóór de
+						// sessie-epoch wissen en de speler netjes naar /join sturen. Zonder
+						// deze herlaadslag bleef hij op een spookscherm staan.
+						if (p.play_state === 'joining' && livePlayState !== 'joining') {
+							window.location.reload();
+							return;
+						}
 						if (p.play_state) livePlayState = p.play_state;
 						if (p.play_state === 'recap' && data.activeSet) {
 							window.location.href = `/play/waiting?set_id=${data.activeSet.id}`;

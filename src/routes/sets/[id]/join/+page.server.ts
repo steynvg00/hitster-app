@@ -1,11 +1,11 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
-import { getPlayerIdFromCookie } from '$lib/server/player';
 import { setTeamCookie } from '$lib/server/team';
+import { resumeSession } from '$lib/server/session';
 import { assignTeam, TEAM_COLOR_ORDER } from '$lib/server/randomize';
 
-export const load: PageServerLoad = async ({ params, cookies }) => {
+export const load: PageServerLoad = async ({ params, cookies, locals }) => {
 	const { id: set_id } = params;
 	const db = createAdminClient();
 
@@ -17,24 +17,42 @@ export const load: PageServerLoad = async ({ params, cookies }) => {
 
 	if (!gameSet || gameSet.status !== 'active') redirect(302, '/nfc/no-game');
 
+	// ── Terugkerende speler EERST, poorten daarna ────────────────────────────
+	// Deze URL is het instappunt van de QR-code: het is ook de pagina waar een
+	// telefoon op terugkomt als de speler de app verlaat en er later weer in
+	// veegt. Stond de play_state-poort hierboven, dan kreeg een speler die AL
+	// in deze set zit tijdens `playing` het scherm "Het spel is al bezig" —
+	// een doodlopende pagina die alleen naar /leaderboard en / linkt, geen van
+	// beide terug naar /team. Voor die speler zag dat eruit alsof hij zijn
+	// sessie kwijt was, terwijl zijn cookies gewoon geldig waren.
+	//
+	// De poort blijft staan voor wie NIET in de set zit — dat is waar hij voor
+	// bedoeld is: laat-instappen bestaat niet.
+	//
+	// locals.playerId in plaats van de cookie rechtstreeks lezen: alleen dat
+	// veld is door de sessie-epoch heen gegaan (hooks.server.ts), dus alleen
+	// dat veld weet of de host ondertussen heeft gereset.
+	const playerId = locals.playerId;
+
+	if (playerId) {
+		const { data: player } = await db
+			.from('players')
+			.select('id, set_id, team_id')
+			.eq('id', playerId)
+			.maybeSingle();
+
+		// Al toegewezen aan deze set — beide cookies verversen en doorlopen.
+		if (player?.set_id === set_id && player?.team_id) {
+			await resumeSession(db, cookies, playerId, player.team_id);
+			redirect(302, '/team');
+		}
+	}
+
 	if (gameSet.play_state === 'playing') redirect(302, `/sets/${set_id}/in-progress`);
 	if (gameSet.play_state === 'recap') redirect(302, `/sets/${set_id}/over`);
 
 	// Require player session
-	const playerId = getPlayerIdFromCookie(cookies);
 	if (!playerId) redirect(302, `/play/teams?next=/sets/${set_id}/join`);
-
-	const { data: player } = await db
-		.from('players')
-		.select('id, set_id, team_id')
-		.eq('id', playerId)
-		.maybeSingle();
-
-	// Already assigned to this set — restore cookie and continue
-	if (player?.set_id === set_id && player?.team_id) {
-		setTeamCookie(cookies, player.team_id);
-		redirect(302, '/team');
-	}
 
 	if (gameSet.team_selection_mode === 'random') {
 		// assignTeam writes players.set_id/team_id itself (advisory-locked on the
@@ -88,7 +106,7 @@ export const load: PageServerLoad = async ({ params, cookies }) => {
 };
 
 export const actions: Actions = {
-	joinTeam: async ({ request, params, cookies }) => {
+	joinTeam: async ({ request, params, cookies, locals }) => {
 		const { id: set_id } = params;
 		const db = createAdminClient();
 
@@ -96,7 +114,7 @@ export const actions: Actions = {
 		let team_id = (formData.get('team_id') as string | null)?.trim();
 		if (!team_id) return fail(400, { error: 'No team selected' });
 
-		const playerId = getPlayerIdFromCookie(cookies);
+		const playerId = locals.playerId;
 		if (!playerId) redirect(303, `/play/teams?next=/sets/${set_id}/join`);
 
 		const { data: gameSet } = await db
