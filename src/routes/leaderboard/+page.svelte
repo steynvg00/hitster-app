@@ -162,6 +162,16 @@
 	   anders screenen de lagen op de (andere) body-achtergrond. */
 	.tv :global(.tv-rain) {
 		--cr-backdrop: radial-gradient(110% 90% at 50% 10%, #221546 0%, #0b0b1f 60%);
+		/* Zelfde behandeling als .player-screen__backdrop en .podium-rain. Op een
+		   beamer verandert er niets (daar is 100svh gelijk aan 100lvh); het houdt
+		   de drie achtergrondlagen van de app op één regel als dit scherm op een
+		   telefoon wordt geopend. */
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		height: 100vh;
+		height: 100lvh;
 	}
 
 	.tv__inner {

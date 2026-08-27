@@ -70,7 +70,7 @@
 	       --page-bg: {pageBackdrop};
 	       --cr-backdrop: {pageBackdrop};"
 >
-	<PlayerScreen rain corners={0.35} class="px-6">
+	<PlayerScreen rain class="px-6">
 		<!-- ─── De eindstandkaart ─── -->
 		<section class="hero">
 			<div class="card squircle">

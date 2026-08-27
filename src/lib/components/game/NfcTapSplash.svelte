@@ -16,7 +16,7 @@
 	 *
 	 * De schil is PlayerScreen met de teamkleur-radial als `backdrop` — precies
 	 * de use case die daar gedocumenteerd staat. Geen kristal-hoeken: de
-	 * designbron geeft dit scherm er geen (corners=0), en geen code-regen.
+	 * designbron geeft dit scherm er geen (corners={false}), en geen code-regen.
 	 */
 	import PlayerScreen from '$lib/components/game/PlayerScreen.svelte';
 	import { MIXUP_LOGO } from '$lib/mixup-assets';
@@ -36,7 +36,7 @@
 </script>
 
 <PlayerScreen
-	corners={0}
+	corners={false}
 	backdrop="radial-gradient(120% 90% at 50% 45%, {hex}4D 0%, #0B0B1F 70%)"
 	class="items-center justify-center text-center"
 >

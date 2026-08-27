@@ -398,9 +398,21 @@
 	}
 
 	/* De regen-wrapper is niet transparant: hij draagt de podium-gradient zelf,
-	   anders screenen de lagen op de (andere) body-achtergrond. */
+	   anders screenen de lagen op de (andere) body-achtergrond.
+
+	   Vast en op 100lvh, om dezelfde reden als .player-screen__backdrop: .podium
+	   is 100svh (714px op het toestel) terwijl de viewport tot 754px groeit als
+	   de browserbalk inklapt. Als kind van die doos hield de regen op bij 714 en
+	   bleef er onderaan 40px staan. Fixed haalt hem uit de doos en uit de
+	   overflow:hidden erboven; 100lvh dekt de grootste stand. */
 	.podium :global(.podium-rain) {
 		--cr-backdrop: radial-gradient(110% 90% at 50% 10%, #221546 0%, #0b0b1f 60%);
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		height: 100vh;
+		height: 100lvh;
 	}
 
 	.podium__inner {

@@ -201,7 +201,7 @@
 {/if}
 
 <!-- ─── Wachtscherm ─── -->
-<PlayerScreen rain corners={0.5} fitViewport class="items-center px-5 text-center">
+<PlayerScreen rain fitViewport class="items-center px-5 text-center">
 	<div class="wait">
 		<div class="wait__badge">
 			<img src={MIXUP_LOGO} alt="M!XUP" />

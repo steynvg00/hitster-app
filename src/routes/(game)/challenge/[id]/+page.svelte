@@ -1812,7 +1812,7 @@
 		bij succes, die de volle mount forceert waar onMount de countdown uit
 		timerEndsAt opzet.
 	-->
-	<PlayerScreen rain corners={0.4}>
+	<PlayerScreen rain>
 		<!--
 			Geen teampil en geen banner op dit scherm: het artboard laat de poort
 			bewust leeg op één gecentreerde kaart na. De speler heeft zijn team al
