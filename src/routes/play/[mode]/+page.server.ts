@@ -74,6 +74,12 @@ export const actions: Actions = {
 				.from(PHOTO_BUCKET)
 				.upload(objectPath, await photoFile.arrayBuffer(), {
 					contentType: photoFile.type || 'image/jpeg',
+					// Zonder deze optie zet Supabase Storage `cache-control: no-cache`, en
+					// dan haalt elke navigatie naar /team elke spelersfoto opnieuw op. Het
+					// objectpad bevat het session_token en wordt nooit hergebruikt
+					// (upsert: false), dus een week vasthouden kan geen verouderde foto
+					// opleveren.
+					cacheControl: '604800',
 					upsert: false
 				});
 
