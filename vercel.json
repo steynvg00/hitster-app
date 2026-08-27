@@ -1,0 +1,14 @@
+{
+	"regions": ["dub1"],
+	"headers": [
+		{
+			"source": "/uploads/(.*)",
+			"headers": [
+				{
+					"key": "cache-control",
+					"value": "public, max-age=604800"
+				}
+			]
+		}
+	]
+}

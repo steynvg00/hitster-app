@@ -146,6 +146,13 @@
 
 		// Game set state realtime (transitions joining → playing → recap)
 		let setChannel: ReturnType<typeof supabaseBrowser.channel> | undefined;
+		// Lobbykanaal. Staat hier, náást setChannel, om dezelfde reden: de cleanup
+		// hieronder kan alleen opruimen wat hij bij naam kent. Het stond eerder als
+		// losse expressie in het `joining`-blok en werd daardoor nooit verwijderd —
+		// elk bezoek aan /team tijdens de joining-fase liet een permanent
+		// abonnement achter, dat bij elk players-event opnieuw de volledige
+		// lobbyTeams-map draaide.
+		let lobbyChannel: ReturnType<typeof supabaseBrowser.channel> | undefined;
 		if (data.activeSet?.id) {
 			setChannel = supabaseBrowser
 				.channel(`team-set-state-${data.activeSet.id}`)
@@ -175,7 +182,7 @@
 
 			// Lobby: players joining realtime
 			if (data.activeSet.play_state === 'joining') {
-				supabaseBrowser
+				lobbyChannel = supabaseBrowser
 					.channel(`team-lobby-players-${data.activeSet.id}`)
 					.on(
 						'postgres_changes',
@@ -207,6 +214,7 @@
 		return () => {
 			supabaseBrowser.removeChannel(teamChannel);
 			if (setChannel) supabaseBrowser.removeChannel(setChannel);
+			if (lobbyChannel) supabaseBrowser.removeChannel(lobbyChannel);
 			clearPreview();
 		};
 	});
@@ -255,7 +263,19 @@
 						       box-shadow: 0 0 12px {teamGlow(t.color)};"
 					>
 						{#if bubbleSrc}
-							<img src={bubbleSrc} alt="Teamfoto {t.display_name}" class="lobby-bubble__img" />
+							<!-- Geen loading="lazy": er zijn er hoogstens zes en op een
+							     telefoonscherm staan ze allemaal direct in beeld, dus lazy zou
+							     ze alleen buiten de preload-scan houden. width/height is de
+							     intrinsieke maat (CSS zet 40x40), zodat de rij niet verspringt
+							     als de foto binnenkomt. -->
+							<img
+								src={bubbleSrc}
+								alt="Teamfoto {t.display_name}"
+								class="lobby-bubble__img"
+								width="40"
+								height="40"
+								decoding="async"
+							/>
 						{:else}
 							<img src={ICON_ASSETS.camera} alt="" class="h-[18px] w-[18px] object-contain" />
 						{/if}
@@ -266,7 +286,19 @@
 					<span class="flex">
 						{#each t.players as p (p.id)}
 							{#if p.photo_url}
-								<img src={p.photo_url} alt={p.display_name} class="lobby-av" />
+								<!-- Wel loading="lazy": bij 28 spelers hangen hier tot 28 foto's,
+								     verdeeld over alle teamrijen, en het merendeel staat buiten
+								     beeld. De enkele die wél in de viewport valt, laadt gewoon
+								     direct — lazy stelt alleen uit wat er niet staat. -->
+								<img
+									src={p.photo_url}
+									alt={p.display_name}
+									class="lobby-av"
+									width="30"
+									height="30"
+									loading="lazy"
+									decoding="async"
+								/>
 							{:else}
 								<span class="lobby-av" style="background: {tHex}; color: {teamOnColor(t.color)};">
 									{p.display_name.slice(0, 2).toUpperCase()}

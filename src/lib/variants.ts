@@ -1,4 +1,4 @@
-import * as LucideIcons from 'lucide-svelte';
+import { Music, Flag, Tag, Blend, Puzzle, Sliders, HelpCircle } from 'lucide-svelte';
 import type { ChallengeType } from '$lib/types/index.js';
 import { CHALLENGE_LOGOS } from '$lib/mixup-assets';
 
@@ -16,13 +16,26 @@ export const VARIANTS = CHALLENGE_TYPES;
 
 export type { ChallengeType };
 
-const TYPE_ICON: Record<ChallengeType, string> = {
-	standard: 'Music',
-	anthem: 'Flag',
-	label: 'Tag',
-	mashup: 'Blend',
-	fragments: 'Puzzle',
-	effects: 'Sliders'
+/**
+ * Het icoon per challenge-type, als DIRECTE componentverwijzing.
+ *
+ * Dit was een `Record<ChallengeType, string>` met een dynamische lookup in een
+ * `import * as LucideIcons`-namespace. Rollup kan een namespace waar met een
+ * variabele in geïndexeerd wordt niet tree-shaken, dus belandde de HELE
+ * lucide-bibliotheek in de bundel: 857.636 bytes met 1.686 iconen voor de 21 die
+ * deze app gebruikt. Die chunk hing aan de root-layout, dus élke pagina — ook de
+ * eerste die een speler ziet — laadde en parseerde hem.
+ *
+ * Named imports met een letterlijke map zijn statisch te volgen: alleen deze
+ * zeven iconen overleven de build.
+ */
+const TYPE_ICON: Record<ChallengeType, typeof Music> = {
+	standard: Music,
+	anthem: Flag,
+	label: Tag,
+	mashup: Blend,
+	fragments: Puzzle,
+	effects: Sliders
 };
 
 const TYPE_COLOR: Record<ChallengeType, string> = {
@@ -43,9 +56,8 @@ const TYPE_DESCRIPTION: Record<ChallengeType, string> = {
 	effects: 'Audio FX chain per tab — artist · title · year'
 };
 
-export function getTypeIcon(type: string): typeof LucideIcons.Music {
-	const name = TYPE_ICON[type as ChallengeType] ?? 'HelpCircle';
-	return (LucideIcons as Record<string, unknown>)[name] as typeof LucideIcons.Music;
+export function getTypeIcon(type: string): typeof Music {
+	return TYPE_ICON[type as ChallengeType] ?? HelpCircle;
 }
 
 export function getTypeColor(type: string): string {

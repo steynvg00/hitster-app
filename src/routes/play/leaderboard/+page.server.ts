@@ -38,7 +38,7 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 	}
 
 	// De poort hierboven is het team-cookie (7 dagen), maar de set-resolutie hangt aan
-	// het speler-cookie (12 uur). Een speler met een verlopen sessie — of een rij waar
+	// het speler-cookie (48 uur). Een speler met een verlopen sessie — of een rij waar
 	// set_id nog niet gezet is — komt dus wel binnen zonder set, en viel daardoor terug
 	// op scoresHidden: false (geen suspense) én activeSetId: null (geen realtime).
 	// Zelfde patroon als /admin/live: pak dan gewoon de actieve set.

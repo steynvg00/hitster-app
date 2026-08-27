@@ -12,6 +12,7 @@
 	 */
 	import { enhance } from '$app/forms';
 	import PlayerScreen from '$lib/components/game/PlayerScreen.svelte';
+	import { cropToSquareJpeg } from '$lib/image-crop';
 	import { MIXUP_LOGO } from '$lib/mixup-assets';
 	import type { PageData, ActionData } from './$types';
 
@@ -41,14 +42,47 @@
 				: 'TIK VOOR EEN PROFIELFOTO'
 	);
 
-	function handleFileChange(e: Event) {
+	/**
+	 * Volgnummer van de laatste fotokeuze. Het verkleinen hieronder is async, dus
+	 * twee keuzes vlak na elkaar kunnen in omgekeerde volgorde terugkomen; alleen
+	 * de nieuwste mag zijn resultaat nog wegschrijven.
+	 */
+	let photoPick = 0;
+
+	/**
+	 * Een telefoonfoto is 3–8 MB en wordt hier een avatar van enkele tientallen
+	 * pixels. De foto die in de database stond was 3.247.088 bytes; bij 28 spelers
+	 * hangt daar ~90 MB aan in de lobby van /team.
+	 *
+	 * cropToSquareJpeg is dezelfde helper die de teamfoto al gebruikt (zie
+	 * (game)/team/+page.svelte) — één implementatie, hier alleen op 512 px in
+	 * plaats van de standaard 1080, want deze foto wordt nergens groter dan 96 px
+	 * getoond.
+	 *
+	 * De ORIGINELE file wordt meteen gezet, vóór het await. Tikt iemand op VERDER
+	 * terwijl het verkleinen nog loopt, dan gaat de originele foto mee — groter,
+	 * maar nooit leeg. Faalt de decode, dan geeft de helper het origineel terug;
+	 * dat gedrag zit al in de helper zelf.
+	 */
+	async function handleFileChange(e: Event) {
 		const input = e.target as HTMLInputElement;
 		const file = input.files?.[0] ?? null;
 		if (!file) return;
+		const pick = ++photoPick;
+
 		if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
 		photoFile = file;
 		photoPreviewUrl = URL.createObjectURL(file);
 		photoOpen = false;
+
+		const resized = await cropToSquareJpeg(file, 512);
+		if (pick !== photoPick || resized === file) return;
+
+		photoFile = resized;
+		// De preview meeschakelen naar wat er daadwerkelijk geüpload wordt: de
+		// vierkante uitsnede, niet het origineel.
+		if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
+		photoPreviewUrl = URL.createObjectURL(resized);
 	}
 </script>
 
@@ -166,7 +200,7 @@
 		</form>
 
 		<div class="mt-3 text-center text-xs font-medium text-mixup-dim">
-			Geen account nodig · je sessie blijft 12 uur geldig
+			Geen account nodig · je sessie blijft 48 uur geldig
 		</div>
 	</PlayerScreen>
 </div>
