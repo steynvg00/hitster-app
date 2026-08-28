@@ -8,9 +8,33 @@
  * werkelijke weergavemaat op 3x DPR en hergecodeerd als WebP met alpha —
  * samen 10.673.548 -> 565.564 bytes.
  *
- * De NIEUWE bestandsnaam is opzettelijk: hij omzeilt elke cache die de oude PNG
- * nog vasthoudt, en maakt daarmee een lange `max-age` op /uploads/* veilig (zie
- * vercel.json). De PNG-originelen blijven voorlopig staan als terugvalpad.
+ * De `-v2`-naam was destijds óók bedoeld als cache-omzeiling. Dat deel is niet
+ * langer de manier waarop dit werkt — zie het blok hieronder.
+ *
+ * ── HERNOEMEN IS GEEN CACHESTRATEGIE ────────────────────────────────────────
+ * De lichte rechthoek achter het M!XUP-logo is drie keer teruggekomen, en elke
+ * keer met dezelfde vorm: het BESTAND werd gerepareerd, de NAAM bleef staan, en
+ * #104 zette er `cache-control: public, max-age=604800` op. Een telefoon of
+ * CDN-edge die de kapotte versie had, hervalideerde daarna een week lang niet.
+ * De vierde ronde zou `-v3` zijn, en die lost precies niets op: het patroon is
+ * niet "deze naam is verbruikt" maar "een MUTABEL pad draagt een cachetermijn
+ * die alleen bij een ONVERANDERLIJK pad hoort".
+ *
+ * Er zijn twee manieren om dat waar te maken. Content-hashing (het pad verandert
+ * mee met de inhoud, dus een lange max-age is per definitie veilig) is de
+ * sterkste, maar past hier niet: `/uploads/` is niet één soort bestand. Er staan
+ * ook door de HOST geüploade gamesetlogo's — die vervangt hij tijdens het
+ * opzetten, en dan is een week cache dezelfde bug in een ander jasje. En
+ * `powerupIcon()` hieronder bouwt zijn pad tijdens het draaien op uit een
+ * database-waarde; die komt zonder `import.meta.glob` niet in Vite's
+ * fingerprinting terecht.
+ *
+ * Dus de andere kant: de lange termijn is van het niet-gehashte pad AF
+ * (vercel.json → `public, max-age=300, must-revalidate`). De bytes blijven
+ * gewoon in de browsercache staan; alleen hervalideert hij na vijf minuten met
+ * een If-None-Match, en dat kost bij een ongewijzigd bestand een 304 zonder
+ * body. Een gerepareerd asset is daarmee binnen vijf minuten overal weg in
+ * plaats van na een week — zonder dat er ooit nog iets hernoemd hoeft te worden.
  *
  * Eén bron van waarheid voor alle paden naar `static/uploads/`. Gebruik deze
  * constanten i.p.v. losse strings, zodat een hernoemd bestand op één plek
@@ -36,6 +60,20 @@ const BASE = '/uploads';
  * week vast zonder te hervalideren, en dan is de rechthoek terug. Dat is exact
  * de reden die #104 zelf noemt voor de `-v2`-naamgeving: een nieuwe naam
  * omzeilt elke cache. Dit asset had er alleen nog geen gekregen.
+ *
+ * De cachetermijn zelf is inmiddels weg (zie het blok bovenaan dit bestand), en
+ * dat is wat de herhaling stopt. NAGEMETEN op wat er werkelijk geserveerd wordt,
+ * niet op de repo-versie — https://hitster-app.vercel.app/uploads/
+ * mixup_spin_clean-v2.webp, 28-08-2026:
+ *
+ *   content-length  123.324 bytes, gelijk aan de repo-versie
+ *   sha256          identiek aan static/uploads/mixup_spin_clean-v2.webp
+ *   alfa 1-4        0,00%
+ *   vier hoeken     alfa 0
+ *
+ * Het asset dat de spelers krijgen is dus schoon. Zie ook het rapport bij deze
+ * fix voor de meting waarmee een achtergebleven kopie op één toestel van een
+ * echt assetprobleem te onderscheiden is.
  *
  * Dus dezelfde behandeling als batch A: WebP, kwaliteit 88, alphaQuality 100,
  * native pixelmaat behouden (818x297 is op een 402px-scherm bij 3x DPR nog
