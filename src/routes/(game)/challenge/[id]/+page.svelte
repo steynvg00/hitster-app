@@ -1563,38 +1563,27 @@
 		};
 	});
 
-	// ── Tutorial overlay ──────────────────────────────────────────────────────
+	/* ── Uitleg-sheet ─────────────────────────────────────────────────────────
+	   ALLEEN NOG OP AANVRAAG, via de ⓘ-knop in de bovenzone.
+
+	   De sheet ging vroeger vanzelf open zodra de challenge startte. Dat was een
+	   herhaling geworden: de pre-game-poort (scherm 6) toont dezelfde
+	   `tutorialText` al onder de kop HOE WERKT HET, met daaronder het overzicht
+	   van wat er te raden valt. De speler las de tekst, drukte op "Start de
+	   challenge", en kreeg hem meteen daarna nog een keer — nu als bottom-sheet
+	   met een tweede startknop.
+
+	   Er stond wel een onderdrukking, maar die werkte niet meer: het effect dat op
+	   de poort "gezien" wegschreef gebruikte de VARIANT als sleutel, terwijl het
+	   openen op de challenge-id keek. Sinds migratie 0080 (uitleg per challenge)
+	   zijn dat twee verschillende sleutels, dus de sheet zag nooit dat de poort de
+	   tekst al getoond had. Beide localStorage-sleutels zijn met deze wijziging
+	   overbodig en weg — de poort is de plek waar de uitleg staat, en de ⓘ-knop is
+	   hoe je hem tijdens het spelen terughaalt. */
 	let showTutorial = $state(false);
 	const tutorialEntry = $derived(
 		data.tutorialText ? [{ variant: data.challenge.variant, tutorial_text: data.tutorialText }] : []
 	);
-
-	onMount(() => {
-		if (data.tutorialText && data.team?.id && data.attempt) {
-			// Gesleuteld op de CHALLENGE, niet op de variant. Sinds migratie 0080 kan
-			// elke challenge een eigen uitlegtekst hebben, en Hitster en Icons zijn
-			// allebei variant 'standard' — met de oude sleutel zou het lezen van
-			// Hitster de uitleg van Icons voorgoed onderdrukken.
-			const key = `tutorial_seen_${data.team.id}_${data.challenge.id}`;
-			if (!localStorage.getItem(key)) {
-				showTutorial = true;
-				localStorage.setItem(key, '1');
-			}
-		}
-	});
-
-	$effect(() => {
-		if (
-			!data.attempt &&
-			!result &&
-			data.challenge.status === 'active' &&
-			data.tutorialText &&
-			data.team?.id &&
-			typeof localStorage !== 'undefined'
-		) {
-			localStorage.setItem(`tutorial_seen_${data.team.id}_${data.challenge.variant}`, '1');
-		}
-	});
 
 	// ── Field labels ──────────────────────────────────────────────────────────
 	// Speler-facing labels zijn Nederlands, net als de rest van de speler-flow
@@ -1731,12 +1720,14 @@
 	});
 </script>
 
+<!--
+	De uitleg-sheet, alleen nog via de ⓘ-knop. Geen `primaryLabel="Start"` meer:
+	die knop hoorde bij het automatisch openen vlak na de poort, en de challenge
+	is op dat moment allang begonnen. De standaardtekst ("Begrepen") is wat een
+	sheet die je zelf opent hoort te zeggen.
+-->
 {#if showTutorial && tutorialEntry.length > 0}
-	<TutorialOverlay
-		tutorials={tutorialEntry}
-		onclose={() => (showTutorial = false)}
-		primaryLabel="Start"
-	/>
+	<TutorialOverlay tutorials={tutorialEntry} onclose={() => (showTutorial = false)} />
 {/if}
 
 <!--
