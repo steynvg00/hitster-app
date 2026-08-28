@@ -41,6 +41,7 @@
 	import { stripSetNameFromTitle } from '$lib/challenge-title';
 	import {
 		freshPhase,
+		isPunishment,
 		nextPhase,
 		pointsButton,
 		promisedCount,
@@ -1209,6 +1210,42 @@
 		if (seed.length) pendingEarned = [...untrack(() => pendingEarned), ...seed];
 	});
 
+	/**
+	 * NOOIT WEGGETIKTE STRAFFEN — de tweede resume-bron.
+	 *
+	 * Deze gaan NIET door de wachtkamer hierboven, maar rechtstreeks in de
+	 * strafwachtrij. De wachtkamer bestaat om een verse toekenning niet over het
+	 * puntenscherm heen te laten vallen; een straf die hier binnenkomt is per
+	 * definitie niet vers — hij is bij een eerdere inzending toegekend en toen niet
+	 * in beeld geweest. `resultPhase` hieronder start dan al op 'penalty'.
+	 *
+	 * Dit is het pad dat de straf na een AUTO-SUBMIT alsnog laat verschijnen: daar
+	 * bestaat geen submit-response om hem uit te halen, alleen de rij in de
+	 * database met acknowledged_at IS NULL.
+	 */
+	let seededPenalties = false;
+	$effect(() => {
+		if (seededPenalties) return;
+		seededPenalties = true;
+		const straffen = (data.unseenPenalties ?? []) as EarnedPowerup[];
+		if (straffen.length) penaltyQueue = [...untrack(() => penaltyQueue), ...straffen];
+	});
+
+	/**
+	 * De kaart is weggetikt: leg dat vast, zodat hij niet nog een keer opkomt.
+	 *
+	 * Best-effort en zonder te wachten — de kaart is al van het scherm en de speler
+	 * hoeft niet op het netwerk te wachten om verder te kunnen. Mislukt de POST,
+	 * dan blijft acknowledged_at leeg en verschijnt de straf bij de volgende load
+	 * opnieuw. Dat is de goede kant om op te falen: liever een keer te veel getoond
+	 * dan een straf die stilletjes verdwijnt.
+	 */
+	function tikStrafAf(teamPowerupId: string) {
+		const body = new FormData();
+		body.set('team_powerup_id', teamPowerupId);
+		fetch('?/acknowledgePowerup', { method: 'POST', body }).catch(() => {});
+	}
+
 	$effect(() => {
 		if (!pendingEarned.length) return;
 		const binnen = pendingEarned;
@@ -1257,6 +1294,7 @@
 	 * `priorResult` gevuld. Waar hij dan landt, hangt af van wat er nog
 	 * openstaat — en dat weet de server al vóór de eerste frame:
 	 *
+	 *   nog een straf onaangetikt ->  'penalty', vóór alles
 	 *   nog openstaande powerups  ->  'points', met de belofte er weer bij
 	 *   niets meer open           ->  'details', het resultatenscherm zelf
 	 *
@@ -1266,18 +1304,25 @@
 	 * bestaan — daar stond het antwoordformulier nog in beeld — dus daar mag de
 	 * overgang wél uit een effect komen.
 	 *
-	 * Een strafshot komt hier niet terug. Hij is immediate_use: bij het toekennen
-	 * meteen geactiveerd, status 'consumed', en als activity_log-regel vastgelegd.
-	 * De verplichting staat dus op het scherm van de host op /admin/live en gaat
-	 * niet verloren doordat de speler de kaart niet gezien heeft — maar hij is ook
-	 * niet opnieuw op te roepen, want er is geen openstaande rij meer.
+	 * De strafshot komt hier WEL terug, en dat is nieuw. Hij is immediate_use en
+	 * staat na het toekennen op 'consumed', dus `pendingEarnedPowerups` telt hem
+	 * niet — daarom leest de derde bron (`unseenPenalties`) niet de status maar
+	 * acknowledged_at (migratie 0082): is de kaart in beeld geweest, ja of nee.
+	 * Dat is wat de straf na een auto-submit alsnog laat verschijnen, en wat een
+	 * gewone inlevering waarbij de kaart niet weggetikt is een tweede kans geeft.
 	 */
 	let resultPhase = $state<ResultPhase | null>(
 		// `untrack` omdat deze lezing bewust EENMALIG is: dit is de instapfase, geen
 		// waarde die met `data` mee hoort te bewegen. Zonder untrack leest Svelte dit
 		// als een reactieve verwijzing die per ongeluk buiten een $derived is blijven
 		// staan en waarschuwt hij erover — terecht, want dat is meestal een fout.
-		untrack(() => resumePhase(!!data.priorResult, (data.pendingEarnedPowerups ?? []).length))
+		untrack(() =>
+			resumePhase(
+				!!data.priorResult,
+				(data.pendingEarnedPowerups ?? []).length,
+				(data.unseenPenalties ?? []).length
+			)
+		)
 	);
 
 	/**
@@ -1708,7 +1753,12 @@
 			activation={penaltyQueue[0].activation}
 			teamId={data.team.id}
 			setTeams={data.setTeams}
-			onclose={() => (penaltyQueue = penaltyQueue.slice(1))}
+			onclose={() => {
+				// Eerst vastleggen dát hij gezien is, dan pas uit de rij halen: na de
+				// slice is teamPowerupId van deze kaart niet meer te lezen.
+				tikStrafAf(penaltyQueue[0].teamPowerupId);
+				penaltyQueue = penaltyQueue.slice(1);
+			}}
 		/>
 	{/key}
 {/if}
@@ -1731,7 +1781,14 @@
 			teamId={data.team.id}
 			setTeams={data.setTeams}
 			skipRollAnimation={earnedQueue[0].fromSpin === true}
-			onclose={() => (earnedQueue = earnedQueue.slice(1))}
+			onclose={() => {
+				// Ook hier "gezien" vastleggen als het toevallig een straf was. Dat kan:
+				// de Power Spin sluit alleen zichzelf uit van zijn eigen rolpot, dus een
+				// gedraaide penalty_shot komt langs deze kaart. Zonder deze regel zou hij
+				// bij de volgende load nog een keer opkomen als onaangetikte straf.
+				if (isPunishment(earnedQueue[0])) tikStrafAf(earnedQueue[0].teamPowerupId);
+				earnedQueue = earnedQueue.slice(1);
+			}}
 		/>
 	{/key}
 {/if}

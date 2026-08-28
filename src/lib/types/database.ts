@@ -1039,6 +1039,10 @@ export type Database = {
 					used_at: string | null;
 					status: 'pending' | 'held' | 'used' | 'lost' | 'active' | 'consumed';
 					payload: Json;
+					// Migratie 0082 — wanneer de speler de kaart van deze toekenning
+					// weggetikt heeft. NULL = nog niet gezien. Zie de migratie voor waarom
+					// dit een eigen veld is en niet de status.
+					acknowledged_at: string | null;
 				};
 				Insert: {
 					id?: string;
@@ -1050,6 +1054,7 @@ export type Database = {
 					used_at?: string | null;
 					status?: 'pending' | 'held' | 'used' | 'lost' | 'active' | 'consumed';
 					payload?: Json;
+					acknowledged_at?: string | null;
 				};
 				Update: {
 					id?: string;
@@ -1061,6 +1066,7 @@ export type Database = {
 					used_at?: string | null;
 					status?: 'pending' | 'held' | 'used' | 'lost' | 'active' | 'consumed';
 					payload?: Json;
+					acknowledged_at?: string | null;
 				};
 				Relationships: [];
 			};

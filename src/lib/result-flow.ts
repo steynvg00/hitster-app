@@ -84,25 +84,53 @@ export function freshPhase(penaltyCount: number): ResultPhase {
  * De instapfase van een speler die halverwege wegging en TERUGKOMT.
  *
  * `pendingCount` is het aantal team_powerups-rijen van deze challenge dat nog op
- * status 'pending' staat — de rijen waarover nooit een keuze is gemaakt. Dat is
- * de enige duurzame staat die de flow nodig heeft, en hij bestaat al: er is geen
- * kolom en geen migratie voor bijgekomen.
+ * status 'pending' staat — de rijen waarover nooit een keuze is gemaakt.
  *
- *   nog iets open  ->  'points', met de belofte er weer bij
- *   niets open     ->  'details', het resultatenscherm zelf
- *   geen resultaat ->  null, hij heeft nog niet ingeleverd
+ * `unseenPenaltyCount` is het aantal straffen van deze challenge dat nooit is
+ * weggetikt: rijen in categorie 'punishment' met acknowledged_at IS NULL
+ * (migratie 0082).
+ *
+ *   nog een straf open  ->  'penalty', vóór alles, net als bij een verse inzending
+ *   nog powerups open   ->  'points', met de belofte er weer bij
+ *   niets open          ->  'details', het resultatenscherm zelf
+ *   geen resultaat      ->  null, hij heeft nog niet ingeleverd
  *
  * Een terugkeerder zonder openstaande powerups gaat NIET opnieuw langs het
  * puntenscherm: die knop zou niets meer te beloven hebben.
  *
- * Een strafshot brengt hem nooit terug in fase 'penalty'. penalty_shot is
- * immediate_use en dus bij het toekennen al geactiveerd — status 'consumed', met
- * een activity_log-regel die de host op /admin/live ziet staan. De verplichting
- * gaat dus niet verloren als de speler de kaart nooit zag, maar er is ook geen
- * openstaande rij meer om hem opnieuw mee op te roepen.
+ * ── WAAROM ER EEN DERDE ARGUMENT BIJ IS ─────────────────────────────────────
+ *
+ * Hier stond dat een strafshot nooit terugkomt, en dat dat aanvaardbaar was
+ * omdat de verplichting in activity_log staat. Dat klopte als beschrijving van
+ * de code en niet als beschrijving van het spel: een straf die de speler nooit
+ * te zien krijgt is geen straf maar een logregel.
+ *
+ * De reden dat hij niet terugkwam: penalty_shot is immediate_use, wordt bij het
+ * toekennen meteen geactiveerd en staat daarna op 'consumed'. `pendingCount`
+ * telt hem dus niet, en er was geen ander veld dat "gezien" bijhield.
+ *
+ * Dat gat trof twee paden, niet één:
+ *
+ *   auto-submit         de straf wordt toegekend terwijl de telefoon in iemands
+ *                       zak zit. Er is geen scherm en geen terugkeerwaarde.
+ *   normale inlevering  de kaart komt binnen via de terugkeerwaarde van de
+ *                       submit-action. Wie de app wegdrukt vóór hij hem wegtikt,
+ *                       of wie hem door welke reden dan ook niet in beeld kreeg,
+ *                       heeft geen tweede kans — de waarde bestaat alleen in die
+ *                       ene response.
+ *
+ * acknowledged_at maakt van "gezien" een duurzaam feit in plaats van een
+ * toevalligheid van het moment, en dit argument is wat de flow ermee doet: zolang
+ * er een straf onaangetikt is, is dát de instapfase. Daarna schuift nextPhase
+ * hem door naar 'points' of 'details', precies zoals bij een verse inzending.
  */
-export function resumePhase(hasPriorResult: boolean, pendingCount: number): ResultPhase | null {
+export function resumePhase(
+	hasPriorResult: boolean,
+	pendingCount: number,
+	unseenPenaltyCount = 0
+): ResultPhase | null {
 	if (!hasPriorResult) return null;
+	if (unseenPenaltyCount > 0) return 'penalty';
 	return pendingCount > 0 ? 'points' : 'details';
 }
 
