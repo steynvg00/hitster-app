@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { createAddTabGuard } from './add-tab-guard.svelte';
 	import SearchablePicker from '$lib/components/admin/SearchablePicker.svelte';
 
 	type Track = { id: string; artist: string; title: string; year: number };
@@ -10,7 +11,13 @@
 		storage_object_path: string | null;
 	};
 	type Tab = { id: string; position: number; mashup_id?: string | null };
-	type Mashup = { id: string; name: string; audio_storage_path: string; audio_duration_seconds: number | null; audio_url: string };
+	type Mashup = {
+		id: string;
+		name: string;
+		audio_storage_path: string;
+		audio_duration_seconds: number | null;
+		audio_url: string;
+	};
 	type MashupSource = { id: string; mashup_id: string; track_id: string; sort_order: number };
 
 	let {
@@ -27,6 +34,9 @@
 		clips: Clip[];
 	} = $props();
 
+	// Eén guard per formulier — zie ./add-tab-guard.svelte.ts voor de drie lagen.
+	const guardAddTab = createAddTabGuard();
+
 	function sourcesForMashup(mashupId: string): MashupSource[] {
 		return mashupSources
 			.filter((s) => s.mashup_id === mashupId)
@@ -40,7 +50,7 @@
 <section class="mb-8">
 	<div class="mb-3 flex items-center justify-between">
 		<h2 class="text-sm font-bold tracking-widest text-amber-400 uppercase">Tabs (Mashup)</h2>
-		<form method="POST" action="?/addTab" use:enhance class="inline">
+		<form method="POST" action="?/addTab" use:enhance={guardAddTab} class="inline">
 			<button
 				type="submit"
 				class="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-300 hover:bg-zinc-700"
@@ -126,7 +136,12 @@
 							/>
 						</form>
 						{#if mashup?.audio_url}
-							<audio controls crossorigin="anonymous" src={mashup.audio_url} class="mt-2 h-8 w-full rounded"></audio>
+							<audio
+								controls
+								crossorigin="anonymous"
+								src={mashup.audio_url}
+								class="mt-2 h-8 w-full rounded"
+							></audio>
 						{/if}
 					</div>
 

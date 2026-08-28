@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { createAddTabGuard } from './add-tab-guard.svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import type { EffectsConfig, EffectPreset } from '$lib/types/index.js';
 	import { BUILTIN_PRESETS } from '$lib/effects-presets.js';
@@ -46,6 +47,9 @@
 		clips: Clip[];
 		userPresets?: EffectPreset[];
 	} = $props();
+
+	// Eén guard per formulier — zie ./add-tab-guard.svelte.ts voor de drie lagen.
+	const guardAddTab = createAddTabGuard();
 
 	function srcsForTab(tabId: string): Src[] {
 		return sourceTracksByTab
@@ -344,7 +348,7 @@
 <section class="mb-8">
 	<div class="mb-3 flex items-center justify-between">
 		<h2 class="text-sm font-bold tracking-widest text-amber-400 uppercase">Tabs (Effects)</h2>
-		<form method="POST" action="?/addTab" use:enhance class="inline">
+		<form method="POST" action="?/addTab" use:enhance={guardAddTab} class="inline">
 			<button
 				type="submit"
 				class="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-300 hover:bg-zinc-700"

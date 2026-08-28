@@ -7,6 +7,7 @@ import {
 	fieldMapsFromResolved,
 	resolveArtistBonus,
 	scoreSubmission,
+	standingsAtRoundStart,
 	getSourceTracksForTab,
 	type TrackData,
 	type BonusParams,
@@ -237,7 +238,18 @@ export async function scoreAndPersistSubmission(
 	// No set → nothing to scope to, so the old unscoped top-1 query stays as the
 	// fallback for that path. Both branches produce the same shape, so the reduce
 	// below (and its empty-list 0, matching the old `?? 0`) covers both.
-	const [teamRes, standings] = await Promise.all([
+	//
+	// ── The comeback pair is read on a DIFFERENT basis than the position axis ─
+	// `standings` is "right now", which is what the safety net's position axis
+	// wants (it is patched with this team's new total further down, so a team that
+	// just leapt into the lead is not measured as last).
+	//
+	// The comeback multiplier needs the opposite: the standings as they stood
+	// BEFORE anyone played this challenge, so that submit order cannot change the
+	// answer. `scoredThisChallenge` is what makes that reachable — every team's
+	// score on THIS challenge, taken back out by standingsAtRoundStart. See that
+	// function for why "right now" punished the fastest team.
+	const [teamRes, standings, thisChallengeSubs] = await Promise.all([
 		admin.from('teams').select('score, current_streak').eq('id', teamId).single(),
 		playerSetId
 			? getSetStandings(admin, playerSetId)
@@ -246,10 +258,25 @@ export async function scoreAndPersistSubmission(
 					.select('id, score')
 					.order('score', { ascending: false })
 					.limit(1)
-					.then((r) => r.data ?? [])
+					.then((r) => r.data ?? []),
+		admin.from('submissions').select('team_id, score').eq('challenge_id', challengeId)
 	]);
 	const teamRow = teamRes.data;
-	const leaderScore = standings.reduce((max, t) => Math.max(max, t.score), 0);
+
+	const scoredThisChallenge = new Map<string, number>(
+		(thisChallengeSubs.data ?? []).map((s) => [s.team_id, s.score ?? 0])
+	);
+	const roundStart = standingsAtRoundStart(
+		// The submitting team is in `standings` for any real set; the no-set
+		// fallback above is a top-1 row that may not include it, so it is added
+		// here rather than assumed.
+		standings.some((t) => t.id === teamId)
+			? standings
+			: [...standings, { id: teamId, score: teamRow?.score ?? 0 }],
+		scoredThisChallenge
+	);
+	const leaderScore = roundStart.reduce((max, t) => Math.max(max, t.score), 0);
+	const teamScoreAtRoundStart = roundStart.find((t) => t.id === teamId)?.score ?? 0;
 
 	// Load active powerup effects for this team and derive scoring modifiers
 	let effectModifiers: ReturnType<typeof deriveEffectModifiers> = {
@@ -267,7 +294,8 @@ export async function scoreAndPersistSubmission(
 	const bonusParams: BonusParams = {
 		difficulty_rating: challenge.difficulty_rating ?? 3,
 		challenge_multiplier: challengeMultiplier,
-		team_score: teamRow?.score ?? 0,
+		// Both at the start of this challenge — the comeback pair. See above.
+		team_score: teamScoreAtRoundStart,
 		leader_score: leaderScore,
 		current_streak: teamRow?.current_streak ?? 0,
 		streak_thresholds: streakThresholds,

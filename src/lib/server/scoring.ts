@@ -20,8 +20,20 @@ import type {
 export interface BonusParams {
 	difficulty_rating: number; // 1–5; default 3 (neutral)
 	challenge_multiplier: number; // set_challenges.challenge_multiplier; default 1
-	team_score: number; // team's score BEFORE this submission
-	leader_score: number; // highest score among all teams right now
+	// ── The comeback pair ─────────────────────────────────────────────────────
+	// Both are the standings AT THE START OF THIS CHALLENGE — every team's total
+	// with whatever it scored on THIS challenge taken back out (see
+	// standingsAtRoundStart below). They are only ever compared with each other,
+	// by the comeback multiplier, and that comparison is only meaningful when the
+	// two sides are on the same footing.
+	//
+	// They used to be "right now": teams.score for this team, and the live MAX
+	// over the set. That mixes teams at different points in the round — a team
+	// that already submitted carries N challenges of points, one that hasn't
+	// carries N-1 — so it measured who had submitted, not who was behind, and it
+	// PUNISHED SPEED (see standingsAtRoundStart for the whole argument).
+	team_score: number; // this team's score at the start of this challenge
+	leader_score: number; // the highest such score in the set
 	current_streak: number; // team's consecutive-score streak
 	streak_thresholds: Array<{ streak: number; bonus: number }>;
 	elapsed_seconds: number | null;
@@ -865,22 +877,93 @@ export function buildFieldResults(
 }
 
 // ─── Grouping scorer (fragments type) ────────────────────────────────────────
-// actualFragmentNumbers: sorted array of fragment_number values assigned to the matched source track
-// playerFragments: the player's selected fragment numbers for this slot
+//
+// THE RULE: elk juist toegewezen fragment levert zijn deel van de punten op, en
+// alleen fragmenten BOVEN het aantal dat de track echt heeft kosten iets.
+//
+//   deel      = maxPoints / |A|
+//   treffers  = |P ∩ A|
+//   surplus   = max(0, |P| − |A|)
+//   score     = round(deel × max(0, treffers − surplus))
+//
+// waarbij A de fragmentnummers van de track zijn en P die van de speler, allebei
+// als VERZAMELING (dubbele invoer telt één keer).
+//
+// ── Waarom niet langer alles-of-niets ───────────────────────────────────────
+// Het was `P.join() === A.join() ? max : 0`. Op deze set is grouping 5 punten ×
+// 9 beurten = 45 van de 698 verplichte punten, en één verkeerd geplaatst
+// fragment kostte de hele beurt. Dat is de hoogste variantie van elk veld in het
+// spel, op het veld met de meeste punten.
+//
+// ── Waarom surplus wél straft en een misser binnen het budget niet ──────────
+// Dit is exact de regel die scoreArtistField al hanteert (zie
+// PENALTY_PER_SURPLUS_TAG): "Only surplus tags cost anything. A tag that fits
+// within the target count but simply doesn't match already costs the player its
+// share by not matching — it is NOT penalised twice." Twee van de drie goed
+// levert twee derde op, ook al zit er een fout nummer bij: dat foute nummer
+// kostte de speler al het derde deel.
+//
+// Zonder de surplusstraf is er een exploit die één tik kost: ken ALLE negen
+// fragmenten aan elke beurt toe en elke beurt heeft alle drie de treffers
+// binnen. Met de straf wordt dat 3 − 6 = 0.
+//
+// ── Waarom de straf een DEEL is en niet één punt ────────────────────────────
+// Hier wijkt hij bewust af van de artiestenregel, die een vast punt per
+// surplus-tag rekent omdat de host daar om "minimaal" vroeg. Een vast punt is
+// hier niet schaalvast: bij maxPoints 5 sluit het de exploit (3 deel-punten min
+// 6 = 0), maar zou de host grouping op 20 zetten, dan levert "alles aanvinken"
+// 20 − 6 = 14 van de 20 op, oftewel 70 % zonder enige kennis. Een straf van één
+// DEEL sluit de exploit bij elke waarde van maxPoints: alles aanvinken is altijd
+// treffers − surplus = |A| − (totaal − |A|) ≤ 0 zodra er meer dan het dubbele
+// van |A| fragmenten in de beurt zitten.
+//
+// ── De randgevallen, elk expliciet ──────────────────────────────────────────
+//   niets ingevuld        treffers 0, surplus 0 -> 0. Geen straf voor blanco.
+//   te veel toegewezen    elk fragment boven |A| kost een deel (zie boven).
+//   verkeerde track       dat nummer zit niet in A, dus het is geen treffer; het
+//                         telt wel mee voor |P| en wordt dus surplus zodra de
+//                         speler er meer dan |A| aanwijst. Nooit dubbel gestraft.
+//   dubbele invoer        P is een verzameling, dus [1,1,1] telt als {1}.
+//   onbestaand nummer     geen treffer, telt mee voor surplus. Zelfde behandeling
+//                         als een fragment van een andere track.
+//   track zonder clips    |A| = 0 -> 0 (de onscoorbaar-nul-guard hieronder; zonder
+//                         die guard zou een lege inzending vol punten krijgen).
+//
+// ── Wat dit voor gokken betekent ────────────────────────────────────────────
+// Bij 3 fragmenten per track uit een poel van 9 levert willekeurig drie nummers
+// aanwijzen gemiddeld één treffer op, dus een derde van de punten — over alle 84
+// drietallen precies 149/84 = 1,77 van 5, oftewel 35 %. Dat is de rekenkundige
+// consequentie van deelpunten op een kleine gesloten verzameling en geen fout in
+// deze regel — maar het is wel de reden dat de knop `max_points` van grouping
+// (nu 5) zwaarder weegt dan bij een veld dat je moet intypen: onder de oude
+// alles-of-niets-regel leverde datzelfde gokken 1/84 = 1,2 % op.
+// Zie /tmp/rapport-grouping-en-drempels.md voor de doorgerekende gevolgen.
+//
+// Puur; gepind door tests/bots/verify-grouping-partial.ts.
 
 export function scoreGrouping(
 	playerFragments: number[],
 	actualFragmentNumbers: number[],
 	maxPoints: number
 ): number {
+	const actual = new Set(actualFragmentNumbers);
 	// Unscorable-zero guard (same class as scoreField's null-value guard): a source
-	// track with no fragment-numbered clips has an empty actual-nums array, and
-	// [].join === [].join would hand a player who submitted no fragments full points.
-	if (actualFragmentNumbers.length === 0) return 0;
-	const sorted = (arr: number[]) => [...arr].sort((a, b) => a - b);
-	const p = sorted(playerFragments).join(',');
-	const a = sorted(actualFragmentNumbers).join(',');
-	return p === a ? maxPoints : 0;
+	// track with no fragment-numbered clips has an empty actual set, and dividing
+	// by |A| would be a division by zero — while "everything matched" would hand a
+	// player who submitted nothing the full points.
+	if (actual.size === 0) return 0;
+
+	const picked = new Set(playerFragments);
+	let hits = 0;
+	for (const n of picked) if (actual.has(n)) hits++;
+
+	const surplus = Math.max(0, picked.size - actual.size);
+	const credited = Math.max(0, hits - surplus);
+
+	// Rond op het EIND, op de hele breuk, zodat een perfecte inzending exact
+	// maxPoints oplevert (credited === |A|) en de deelpunten niet cumulatief
+	// wegdrijven.
+	return Math.round((maxPoints * credited) / actual.size);
 }
 
 /**
@@ -1283,6 +1366,95 @@ export function getSourceTracksForTab(
 			if (!track) return [];
 			return [{ id: s.id, tabId: tab.id, trackId: s.track_id, sortOrder: s.sort_order, track }];
 		});
+}
+
+// ─── The comeback basis: standings at the start of the round ─────────────────
+//
+// THE RULE: the comeback multiplier compares every team on the same footing —
+// their totals BEFORE anyone played the current challenge.
+//
+// ── What was wrong ──────────────────────────────────────────────────────────
+// The pair used to be read live: this team's teams.score, against MAX(score)
+// over the set at the moment of submitting. Both numbers move DURING a round,
+// because each team's score jumps the instant it submits. So the comparison ran
+// between teams at different points in the round: one carrying N challenges of
+// points, the next carrying N-1.
+//
+// That is not "who is behind", it is "who has submitted", and it lands hardest
+// on the first team to finish:
+//
+//   challenge 1, everyone on 0.
+//   Team A submits first  -> leader is still 0, the `leader_score > 0` guard
+//                            fails, A gets x1.0.
+//   Team B submits second -> leader is now A's 120, B is on 0, 0 < 60, so B
+//                            gets x1.5 — on the first challenge of the game,
+//                            when nobody can possibly be behind.
+//
+// Every team but the fastest got a 50% bonus for being slower. On this set's
+// Hitster (120 points) that is +60, six times the battle win it was played for.
+//
+// ── Why not "compare after this submission" ─────────────────────────────────
+// The obvious repair — measure the team's score INCLUDING what it just scored —
+// is circular: the final score depends on the comeback multiplier, which would
+// depend on the final score. Using the pre-multiplier `base` as a proxy dodges
+// the circularity and does fix challenge 1, but the leader still moves during
+// the round, so it stays order-dependent:
+//
+//   A: 400 before, scores 400.  B: 250 before, scores 30.
+//   B after A -> leader 800, 280 < 400 -> comeback.
+//   B before A -> leader 400, 280 < 200 -> no comeback.
+//
+// Same two teams, same two answers, different bonus — decided by who tapped
+// submit first. Half a fix is not a fix.
+//
+// ── Why the round-start snapshot is right ───────────────────────────────────
+// It is order-independent BY CONSTRUCTION: the snapshot cannot move while the
+// round is being played, so every team playing challenge N is measured against
+// the same numbers no matter when they submit. Speed stops being taxed, and it
+// answers the question the multiplier is actually asking — "how far behind was
+// this team when this challenge started?"
+//
+// On challenge 1 the snapshot is all zeros, so nobody gets a comeback. That is
+// the honest reading: before anyone has played, nobody is behind.
+//
+// ── What "at the start of the round" means exactly ──────────────────────────
+// teams.score minus that team's own submissions.score for THIS challenge.
+//
+//   first attempt   the team has no submission yet, so nothing is subtracted
+//                   and its own basis is unchanged.
+//   other teams     their score for this challenge comes back out — this is
+//                   the whole of the fix.
+//   Resurrection    the retry's row still holds the OLD final, and teams.score
+//                   still contains it, so subtracting lands on the same
+//                   pre-round total everyone else is measured against.
+//
+// Points that moved mid-round for other reasons (a lucky_dice roll, a crown
+// steal, bonus_points) deliberately stay in. They are genuinely part of the
+// standings, they are worth 1–6 points against challenges worth 120–300, and
+// they do not depend on submit order.
+//
+// Pure and exported so the arithmetic is asserted directly
+// (tests/bots/verify-comeback-round-start.ts) instead of inferred from a game.
+
+/**
+ * The set's standings as they stood before anyone played `challengeId`.
+ *
+ * @param standings              the set's teams with their CURRENT scores
+ * @param scoredThisChallenge    team id -> what that team already scored on this
+ *                               challenge (absent = has not submitted yet)
+ */
+export function standingsAtRoundStart(
+	standings: Array<{ id: string; score: number }>,
+	scoredThisChallenge: Map<string, number>
+): Array<{ id: string; score: number }> {
+	return standings.map((t) => ({
+		id: t.id,
+		// Never below zero: a submission score can only have been added to
+		// teams.score, so this cannot legitimately go negative — but a manual host
+		// adjustment downward could make it, and a negative leader would hand the
+		// comeback to the whole field.
+		score: Math.max(0, t.score - (scoredThisChallenge.get(t.id) ?? 0))
+	}));
 }
 
 // ─── Bonus scoring ────────────────────────────────────────────────────────────

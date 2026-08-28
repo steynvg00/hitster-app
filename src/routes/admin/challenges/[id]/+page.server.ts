@@ -1,6 +1,7 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { createAdminClient } from '$lib/server/supabase';
+import { createTab } from '$lib/server/tabs';
 import { CHALLENGE_TYPES } from '$lib/variants';
 import { joinTimer } from '$lib/challenge-timer';
 import {
@@ -241,23 +242,10 @@ export const actions: Actions = {
 
 	addTab: async ({ params, locals }) => {
 		const db = createAdminClient();
-
-		const { data: existing } = await db
-			.from('challenge_tabs')
-			.select('position')
-			.eq('challenge_id', params.id)
-			.order('position', { ascending: false })
-			.limit(1);
-
-		const position = (existing?.[0]?.position ?? -1) + 1;
-
-		const { data: newTab, error: e } = await db
-			.from('challenge_tabs')
-			.insert({ challenge_id: params.id, position, created_by: locals.user?.id ?? null })
-			.select('id')
-			.single();
-		if (e || !newTab) return fail(500, { error: e?.message ?? 'Could not create tab' });
-		return { success: true, action: 'addTab', tabId: newTab.id };
+		// Race-veilig (unieke constraint 0081 + retry) — zie $lib/server/tabs.
+		const r = await createTab(db, params.id, locals.user?.id ?? null);
+		if (!r.ok) return fail(500, { error: r.error });
+		return { success: true, action: 'addTab', tabId: r.tabId };
 	},
 
 	removeTab: async ({ request }) => {
