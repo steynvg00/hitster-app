@@ -55,6 +55,15 @@ export type EngineOptions = {
 	streakThresholds?: Array<{ streak: number; bonus: number }> | null; // null = uit de variant_defaults (nu leeg)
 	speedThresholdSeconds?: number | null; // null = uit de challenge (nu NULL)
 	xrayBudget?: number;
+	/**
+	 * De comeback op de LIVE stand meten in plaats van op de stand bij aanvang
+	 * van de ronde — het gedrag van vóór de fix, waarbij wie als eerste inleverde
+	 * de leider optilde voor alle anderen en zelf nooit de bonus kreeg.
+	 *
+	 * Bestaat alleen om het effect van die fix te kunnen meten (--legacy-comeback).
+	 * De echte pijplijn kan dit niet meer doen.
+	 */
+	legacyComeback?: boolean;
 };
 
 type Pending = {
@@ -309,9 +318,12 @@ export function runGame(set: LoadedSet, opts: EngineOptions, rng: Rng): GameOutc
 			const bonus: BonusParams = {
 				difficulty_rating: ch.difficulty_rating,
 				challenge_multiplier: ch.challenge_multiplier,
-				// De comeback-basis, allebei op de stand bij aanvang van de ronde.
-				team_score: roundStartScore.get(team) ?? team.score,
-				leader_score: roundStartLeader,
+				// De comeback-basis, allebei op de stand bij aanvang van de ronde —
+				// tenzij --legacy-comeback het oude, volgorde-afhankelijke gedrag vraagt.
+				team_score: opts.legacyComeback ? team.score : (roundStartScore.get(team) ?? team.score),
+				leader_score: opts.legacyComeback
+					? Math.max(0, ...teams.map((t) => t.score))
+					: roundStartLeader,
 				current_streak: team.streak,
 				streak_thresholds: opts.streakThresholds ?? set.streakThresholdsByVariant[ch.variant] ?? [],
 				elapsed_seconds: elapsed,

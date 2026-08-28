@@ -17,6 +17,8 @@
 //   --streak 3:10         streak_config aan (3 op rij = +10) — vergelijking apart gerapporteerd
 //   --speed 60            speed_threshold_seconds aan — idem
 //   --no-fixes            de bekende datafouten (Icons-posities, Anthems-dubbel) NIET virtueel fixen
+//   --legacy-comeback     comeback op de LIVE stand meten (gedrag van vóór de fix),
+//                         om het effect van die fix te kunnen zien
 //   --print-config <key>  druk de ruwe powerup_config van een variant af (om in de DB te plakken) en stop
 //   --out <pad>           schrijf het rapport naar een bestand (default: alleen stdout)
 //
@@ -62,6 +64,9 @@ async function main() {
 		? [{ streak: Number(streakArg.split(':')[0]), bonus: Number(streakArg.split(':')[1]) }]
 		: null;
 	const speed = arg('speed') ? Number(arg('speed')) : null;
+	// Alleen om het effect van de comeback-fix te kunnen meten; de echte pijplijn
+	// kan niet meer op de live stand meten.
+	const legacyComeback = flag('legacy-comeback');
 
 	if (arg('print-config')) {
 		const v = variantByKey(arg('print-config')!);
@@ -92,7 +97,8 @@ async function main() {
 				teams,
 				rawPowerupConfig: raw,
 				streakThresholds: extra.streak,
-				speedThresholdSeconds: extra.speed
+				speedThresholdSeconds: extra.speed,
+				legacyComeback
 			};
 			withP.push(runGame(set, { ...opts, powerupsEnabled: true }, makeRng(seed * 100003 + r)));
 			withoutP.push(runGame(set, { ...opts, powerupsEnabled: false }, makeRng(seed * 100003 + r)));
@@ -117,6 +123,10 @@ async function main() {
 	notes.push(
 		'Bot-beleid: alles wat op de volgende challenge kan werken wordt daar ingezet; aanvallen op de leider; Double Down voorspelt niveau − 15; Insurance alleen bij niveau < 55; Resurrection op de slechtste challenge (replace). Zie balance-sim/engine.ts.'
 	);
+	if (legacyComeback)
+		notes.push(
+			'--legacy-comeback: de comeback meet op de LIVE stand (gedrag van vóór de fix) — wie als eerste inlevert tilt de leider op voor alle anderen.'
+		);
 	notes.push(
 		'Tijd-aanvallen: time_drain −2 %, freeze −4 %, tap_to_break −2 % nauwkeurigheid op die challenge (12-minutenklok). Hard Gaan geldt voor precies de volgende challenge.'
 	);

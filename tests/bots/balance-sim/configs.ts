@@ -7,14 +7,19 @@
 //   a  hoge-score-exclusief   krachtig, geen onthullers        75–100 / 85–100
 //   b  lage-score-exclusief   hulp, geen troostprijs           20–55
 //   c  altijd verdienbaar     de middenmoot, incl. onthullers  20–100
-//   d  het vangnet            weight_modifier op de hulp-types: ×3 als het
+//   d  het vangnet            weight_modifier op de hulp-types: ×4 als het
 //      team achterligt (positie ≤ 0.35, relatief) OF slecht speelt (aandeel
 //      volledig goede velden ≤ 0.45, absoluut — dus óók als iedereen slecht is)
 //
 // De laagste drempel gaat van 35 naar 20: zonder die verschuiving vuurt de
 // ladder onder 35 % niet en bestaat categorie b niet.
+//
+// `besloten` onderaan is de vastgestelde combinatie — drempels 20/75/100,
+// highest_band, de indeling met het vangnet, en het bonusjaar op 3. Dat is de
+// variant die in de database komt te staan; `--print-config besloten` geeft
+// exact de powerup_config om te plakken.
 
-import { mergeConfigPatch } from '../../../src/lib/server/powerups';
+import { mergeConfigPatch, parseConfig } from '../../../src/lib/server/powerups';
 import type { PowerupTypeOverride, SafetyNetModifier } from '../../../src/lib/types';
 import type { FieldOverride } from './load';
 
@@ -96,12 +101,37 @@ export const CATEGORIE: Record<string, 'a' | 'b' | 'c' | '–'> = {
 	penalty_shot: '–'
 };
 
+/**
+ * De indeling opleggen ZONDER de per-type instellingen te wissen die er al
+ * staan en waar deze indeling niets over zegt.
+ *
+ * mergePowerupConfig voegt `types` één niveau diep samen — per id, niet per
+ * veld — en zegt daar zelf over: "the caller is responsible for merging an
+ * individual type's own override fields before passing it in here." Dat is
+ * precies wat hier gebeurt, en het is niet theoretisch: deze set heeft
+ * `x_ray.reveal_budget = 5` staan, en zonder deze samenvoeging zou het opleggen
+ * van de indeling die instelling stilzwijgend weggooien — X-Ray zou terugvallen
+ * op de standaard van 5 en dat verschil zou pas opvallen als de host hem ooit
+ * op iets anders had gezet.
+ */
+function mergeTypes(
+	stored: Record<string, PowerupTypeOverride>,
+	patch: Record<string, PowerupTypeOverride>
+): Record<string, PowerupTypeOverride> {
+	const out: Record<string, PowerupTypeOverride> = { ...stored };
+	for (const [id, ov] of Object.entries(patch)) {
+		out[id] = { ...(stored[id] ?? {}), ...ov };
+	}
+	return out;
+}
+
 function indelingConfig(raw: unknown): unknown {
+	const storedTypes = (parseConfig(raw).types ?? {}) as Record<string, PowerupTypeOverride>;
 	return mergeConfigPatch(raw, {
 		thresholds_percent: INDELING_THRESHOLDS,
 		band_mode: 'all_bands',
 		threshold_mode: 'per_challenge',
-		types: INDELING_TYPES
+		types: mergeTypes(storedTypes, INDELING_TYPES)
 	});
 }
 
@@ -126,6 +156,16 @@ export const VARIANTS: VariantDef[] = [
 		key: 'bonus3',
 		label: 'INDELING + bonusjaar Icons/Fragments 10 → 3',
 		powerupConfig: indelingConfig,
+		fieldOverrides: BONUS_LAAG
+	},
+	{
+		// De vastgestelde combinatie: besluit 2 (drempel 20), 3 (highest_band),
+		// 4 (bonusjaar 3), 5 (indeling + vangnet). Besluit 7 (streak 3 = +10)
+		// zit niet in powerup_config maar in variant_defaults.streak_config, en
+		// wordt met --streak 3:10 meegegeven.
+		key: 'besloten',
+		label: 'BESLOTEN (drempel 20 + highest_band + indeling/vangnet + bonusjaar 3)',
+		powerupConfig: (raw) => mergeConfigPatch(indelingConfig(raw), { band_mode: 'highest_band' }),
 		fieldOverrides: BONUS_LAAG
 	}
 ];
