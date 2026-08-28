@@ -163,7 +163,6 @@ export function runGame(set: LoadedSet, opts: EngineOptions, rng: Rng): GameOutc
 	const battleAwards: number[][] = [];
 
 	const standings = () => teams.map((t) => ({ id: String(t.idx), score: t.score }));
-	const leaderScore = () => Math.max(0, ...teams.map((t) => t.score));
 
 	const transferCrown = (team: TeamState) => {
 		if (crown.holder === team) return;
@@ -254,6 +253,15 @@ export function runGame(set: LoadedSet, opts: EngineOptions, rng: Rng): GameOutc
 		const finishedLevels: number[] = [];
 		const finalThisChallenge = new Map<TeamState, number>();
 
+		// De comeback-basis: de stand zoals die was VOORDAT iemand deze challenge
+		// speelde — precies wat standingsAtRoundStart in de echte pijplijn doet,
+		// hier simpelweg vastgelegd aan het begin van de ronde omdat de simulator
+		// weet wanneer een ronde begint. Het alternatief (live Math.max over
+		// teams.score) modelleerde de bug: wie als eerste inleverde tilde de leider
+		// op voor alle anderen, en kreeg zelf nooit de bonus.
+		const roundStartLeader = Math.max(0, ...teams.map((t) => t.score));
+		const roundStartScore = new Map(teams.map((t) => [t, t.score]));
+
 		// ── Aanvallen aan het begin van de challenge, op de leider ────────────
 		for (const t of teams) {
 			for (const atk of t.pending.attacks) {
@@ -301,8 +309,9 @@ export function runGame(set: LoadedSet, opts: EngineOptions, rng: Rng): GameOutc
 			const bonus: BonusParams = {
 				difficulty_rating: ch.difficulty_rating,
 				challenge_multiplier: ch.challenge_multiplier,
-				team_score: team.score,
-				leader_score: leaderScore(),
+				// De comeback-basis, allebei op de stand bij aanvang van de ronde.
+				team_score: roundStartScore.get(team) ?? team.score,
+				leader_score: roundStartLeader,
 				current_streak: team.streak,
 				streak_thresholds: opts.streakThresholds ?? set.streakThresholdsByVariant[ch.variant] ?? [],
 				elapsed_seconds: elapsed,
@@ -434,8 +443,14 @@ export function runGame(set: LoadedSet, opts: EngineOptions, rng: Rng): GameOutc
 			{
 				difficulty_rating: ch.difficulty_rating,
 				challenge_multiplier: ch.challenge_multiplier,
-				team_score: team.score,
-				leader_score: leaderScore(),
+				// Zoals standingsAtRoundStart het bij een retry doet: de HUIDIGE
+				// stand, met van elk team de score van de challenge die overgespeeld
+				// wordt eruit gehaald.
+				team_score: Math.max(0, team.score - (team.perChallengeOldFinal[worst] ?? 0)),
+				leader_score: Math.max(
+					0,
+					...teams.map((t) => Math.max(0, t.score - (t.perChallengeOldFinal[worst] ?? 0)))
+				),
 				current_streak: 0,
 				streak_thresholds: [],
 				elapsed_seconds: null,

@@ -20,8 +20,20 @@ import type {
 export interface BonusParams {
 	difficulty_rating: number; // 1–5; default 3 (neutral)
 	challenge_multiplier: number; // set_challenges.challenge_multiplier; default 1
-	team_score: number; // team's score BEFORE this submission
-	leader_score: number; // highest score among all teams right now
+	// ── The comeback pair ─────────────────────────────────────────────────────
+	// Both are the standings AT THE START OF THIS CHALLENGE — every team's total
+	// with whatever it scored on THIS challenge taken back out (see
+	// standingsAtRoundStart below). They are only ever compared with each other,
+	// by the comeback multiplier, and that comparison is only meaningful when the
+	// two sides are on the same footing.
+	//
+	// They used to be "right now": teams.score for this team, and the live MAX
+	// over the set. That mixes teams at different points in the round — a team
+	// that already submitted carries N challenges of points, one that hasn't
+	// carries N-1 — so it measured who had submitted, not who was behind, and it
+	// PUNISHED SPEED (see standingsAtRoundStart for the whole argument).
+	team_score: number; // this team's score at the start of this challenge
+	leader_score: number; // the highest such score in the set
 	current_streak: number; // team's consecutive-score streak
 	streak_thresholds: Array<{ streak: number; bonus: number }>;
 	elapsed_seconds: number | null;
@@ -1283,6 +1295,95 @@ export function getSourceTracksForTab(
 			if (!track) return [];
 			return [{ id: s.id, tabId: tab.id, trackId: s.track_id, sortOrder: s.sort_order, track }];
 		});
+}
+
+// ─── The comeback basis: standings at the start of the round ─────────────────
+//
+// THE RULE: the comeback multiplier compares every team on the same footing —
+// their totals BEFORE anyone played the current challenge.
+//
+// ── What was wrong ──────────────────────────────────────────────────────────
+// The pair used to be read live: this team's teams.score, against MAX(score)
+// over the set at the moment of submitting. Both numbers move DURING a round,
+// because each team's score jumps the instant it submits. So the comparison ran
+// between teams at different points in the round: one carrying N challenges of
+// points, the next carrying N-1.
+//
+// That is not "who is behind", it is "who has submitted", and it lands hardest
+// on the first team to finish:
+//
+//   challenge 1, everyone on 0.
+//   Team A submits first  -> leader is still 0, the `leader_score > 0` guard
+//                            fails, A gets x1.0.
+//   Team B submits second -> leader is now A's 120, B is on 0, 0 < 60, so B
+//                            gets x1.5 — on the first challenge of the game,
+//                            when nobody can possibly be behind.
+//
+// Every team but the fastest got a 50% bonus for being slower. On this set's
+// Hitster (120 points) that is +60, six times the battle win it was played for.
+//
+// ── Why not "compare after this submission" ─────────────────────────────────
+// The obvious repair — measure the team's score INCLUDING what it just scored —
+// is circular: the final score depends on the comeback multiplier, which would
+// depend on the final score. Using the pre-multiplier `base` as a proxy dodges
+// the circularity and does fix challenge 1, but the leader still moves during
+// the round, so it stays order-dependent:
+//
+//   A: 400 before, scores 400.  B: 250 before, scores 30.
+//   B after A -> leader 800, 280 < 400 -> comeback.
+//   B before A -> leader 400, 280 < 200 -> no comeback.
+//
+// Same two teams, same two answers, different bonus — decided by who tapped
+// submit first. Half a fix is not a fix.
+//
+// ── Why the round-start snapshot is right ───────────────────────────────────
+// It is order-independent BY CONSTRUCTION: the snapshot cannot move while the
+// round is being played, so every team playing challenge N is measured against
+// the same numbers no matter when they submit. Speed stops being taxed, and it
+// answers the question the multiplier is actually asking — "how far behind was
+// this team when this challenge started?"
+//
+// On challenge 1 the snapshot is all zeros, so nobody gets a comeback. That is
+// the honest reading: before anyone has played, nobody is behind.
+//
+// ── What "at the start of the round" means exactly ──────────────────────────
+// teams.score minus that team's own submissions.score for THIS challenge.
+//
+//   first attempt   the team has no submission yet, so nothing is subtracted
+//                   and its own basis is unchanged.
+//   other teams     their score for this challenge comes back out — this is
+//                   the whole of the fix.
+//   Resurrection    the retry's row still holds the OLD final, and teams.score
+//                   still contains it, so subtracting lands on the same
+//                   pre-round total everyone else is measured against.
+//
+// Points that moved mid-round for other reasons (a lucky_dice roll, a crown
+// steal, bonus_points) deliberately stay in. They are genuinely part of the
+// standings, they are worth 1–6 points against challenges worth 120–300, and
+// they do not depend on submit order.
+//
+// Pure and exported so the arithmetic is asserted directly
+// (tests/bots/verify-comeback-round-start.ts) instead of inferred from a game.
+
+/**
+ * The set's standings as they stood before anyone played `challengeId`.
+ *
+ * @param standings              the set's teams with their CURRENT scores
+ * @param scoredThisChallenge    team id -> what that team already scored on this
+ *                               challenge (absent = has not submitted yet)
+ */
+export function standingsAtRoundStart(
+	standings: Array<{ id: string; score: number }>,
+	scoredThisChallenge: Map<string, number>
+): Array<{ id: string; score: number }> {
+	return standings.map((t) => ({
+		id: t.id,
+		// Never below zero: a submission score can only have been added to
+		// teams.score, so this cannot legitimately go negative — but a manual host
+		// adjustment downward could make it, and a negative leader would hand the
+		// comeback to the whole field.
+		score: Math.max(0, t.score - (scoredThisChallenge.get(t.id) ?? 0))
+	}));
 }
 
 // ─── Bonus scoring ────────────────────────────────────────────────────────────
