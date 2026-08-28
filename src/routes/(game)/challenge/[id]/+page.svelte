@@ -48,6 +48,7 @@
 		splitEarned,
 		type ResultPhase
 	} from '$lib/result-flow';
+	import { toetsenbordBedekking, toetsenbordOpenBij } from '$lib/keyboard-inset';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -1459,10 +1460,16 @@
 
 	   Op iOS krimpt het layout-viewport niet als het toetsenbord opengaat, dus
 	   de onderrand waar een sticky element vanaf rekent blijft staan.
-	   visualViewport weet wél hoeveel er bedekt is. Diezelfde meting doet nu
-	   twee dingen: ze zet `--kb-inset` (de verbergstand van .pu-bar gebruikt hem
-	   als schuifafstand) en ze zet `toetsenbordOpen`, de vlag die die stand
-	   aanzet.
+	   visualViewport weet wél hoeveel er bedekt is. Diezelfde meting doet twee
+	   dingen: ze zet `--kb-inset` (de verbergstand van .pu-bar gebruikt hem als
+	   schuifafstand) en ze zet `toetsenbordOpen`, de vlag die die stand aanzet.
+
+	   DE SOM ZELF staat in $lib/keyboard-inset, met de meting erbij waarom
+	   `visualViewport.offsetTop` er NIET in hoort: die verschuiving loopt op met
+	   hoe laag het gefocuste veld staat, trok de uitkomst onder de drempel, en
+	   liet de balk daardoor terugkomen — bovenop het toetsenbord. Dat is de
+	   terugkeer die hier onderzocht is; de CSS-verbergstand was al die tijd
+	   ongewijzigd aanwezig.
 
 	   Browsers zonder visualViewport houden 0 en false, en gedragen zich als
 	   voorheen. */
@@ -1471,10 +1478,11 @@
 		if (!vv) return;
 		const root = document.documentElement;
 		const update = () => {
-			const covered = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-			// Onder de ~80px is het geen toetsenbord maar de in-/uitklappende
-			// adresbalk; die mag de balk niet laten wiebelen tijdens het scrollen.
-			const open = covered > 80;
+			const covered = toetsenbordBedekking({
+				innerHeight: window.innerHeight,
+				viewportHeight: vv.height
+			});
+			const open = toetsenbordOpenBij(covered);
 			toetsenbordOpen = open;
 			root.style.setProperty('--kb-inset', open ? `${Math.round(covered)}px` : '0px');
 		};
