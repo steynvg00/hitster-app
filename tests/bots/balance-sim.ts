@@ -19,6 +19,8 @@
 //   --no-fixes            de bekende datafouten (Icons-posities, Anthems-dubbel) NIET virtueel fixen
 //   --legacy-comeback     comeback op de LIVE stand meten (gedrag van vóór de fix),
 //                         om het effect van die fix te kunnen zien
+//   --thresholds 20,88    overschrijf thresholds_percent van de gekozen variant
+//   --band-mode all_bands overschrijf band_mode (all_bands | highest_band)
 //   --print-config <key>  druk de ruwe powerup_config van een variant af (om in de DB te plakken) en stop
 //   --out <pad>           schrijf het rapport naar een bestand (default: alleen stdout)
 //
@@ -31,6 +33,7 @@
 import { writeFileSync } from 'node:fs';
 import { fetchDump, readDump, saveDump, buildSet } from './balance-sim/load';
 import { VARIANTS, variantByKey } from './balance-sim/configs';
+import { mergeConfigPatch } from '../../src/lib/server/powerups';
 import { runGame } from './balance-sim/engine';
 import { aggregate, renderMarkdown, type Aggregate } from './balance-sim/report';
 import { makeRng } from './balance-sim/rng';
@@ -68,10 +71,33 @@ async function main() {
 	// kan niet meer op de live stand meten.
 	const legacyComeback = flag('legacy-comeback');
 
+	// De twee ladderknoppen los overschrijfbaar, bovenop de gekozen variant. Ze
+	// staan hier en niet als extra varianten in configs.ts omdat de vraag "waar
+	// moet de tweede drempel liggen" een schuifknop is en geen lijstje: het
+	// antwoord hangt af van wat het beste team op déze set haalt (96–98 %), en dat
+	// wil je kunnen aftasten zonder de code aan te raken.
+	const thresholdsOverride = arg('thresholds')
+		?.split(',')
+		.map(Number)
+		.filter((n) => Number.isFinite(n));
+	const bandModeArg = arg('band-mode');
+	const bandModeOverride =
+		bandModeArg === 'all_bands' || bandModeArg === 'highest_band' ? bandModeArg : undefined;
+
+	const applyLadderOverrides = (raw: unknown): unknown => {
+		if (!thresholdsOverride?.length && !bandModeOverride) return raw;
+		return mergeConfigPatch(raw, {
+			...(thresholdsOverride?.length ? { thresholds_percent: thresholdsOverride } : {}),
+			...(bandModeOverride ? { band_mode: bandModeOverride } : {})
+		});
+	};
+
 	if (arg('print-config')) {
 		const v = variantByKey(arg('print-config')!);
 		const set = buildSet(dump, { fixes });
-		console.log(JSON.stringify(v.powerupConfig(set.rawPowerupConfig), null, 2));
+		console.log(
+			JSON.stringify(applyLadderOverrides(v.powerupConfig(set.rawPowerupConfig)), null, 2)
+		);
 		return;
 	}
 
@@ -89,7 +115,7 @@ async function main() {
 		const set = buildSet(dump, { fixes, fieldOverrides: v.fieldOverrides });
 		fixesApplied = set.fixesApplied;
 		challengeTitles = set.challenges.map((c) => c.title);
-		const raw = v.powerupConfig(set.rawPowerupConfig);
+		const raw = applyLadderOverrides(v.powerupConfig(set.rawPowerupConfig));
 		const withP = [];
 		const withoutP = [];
 		for (let r = 0; r < runs; r++) {
@@ -106,19 +132,26 @@ async function main() {
 		aggs.push(aggregate(label, teams, withP, withoutP, set.challenges.length));
 	};
 
+	// Een overschreven ladder MOET in het label staan, anders draait het rapport
+	// onder de naam van een variant die het niet meer is.
+	const ladderSuffix =
+		thresholdsOverride?.length || bandModeOverride
+			? ` [${bandModeOverride ?? 'band_mode ongewijzigd'}, drempels ${thresholdsOverride?.join('/') ?? 'ongewijzigd'}]`
+			: '';
+
 	for (const key of variantKeys) {
-		runVariant(variantByKey(key).label, key, { streak: null, speed: null });
+		const base = variantByKey(key).label + ladderSuffix;
+		runVariant(base, key, { streak: null, speed: null });
 		if (streak || speed) {
-			runVariant(
-				`${variantByKey(key).label} + streak ${streakArg ?? 'uit'} / speed ${speed ?? 'uit'} s`,
-				key,
-				{ streak, speed }
-			);
+			runVariant(`${base} + streak ${streakArg ?? 'uit'} / speed ${speed ?? 'uit'} s`, key, {
+				streak,
+				speed
+			});
 		}
 	}
 
 	notes.push(
-		'Teammodel: niveau L = kans dat een veld volledig goed is; fout jaar 30/20/50 % er 1/2/≥3 naast; foute tekst leeg; artiesten per naam; grouping alles-of-niets. Zie balance-sim/team-model.ts.'
+		'Teammodel: niveau L = kans dat een veld volledig goed is; fout jaar 30/20/50 % er 1/2/≥3 naast; foute tekst leeg; artiesten per naam; grouping per fragment, waarbij een fout fragment vervangen wordt door een willekeurig nummer uit de tab. Zie balance-sim/team-model.ts.'
 	);
 	notes.push(
 		'Bot-beleid: alles wat op de volgende challenge kan werken wordt daar ingezet; aanvallen op de leider; Double Down voorspelt niveau − 15; Insurance alleen bij niveau < 55; Resurrection op de slechtste challenge (replace). Zie balance-sim/engine.ts.'

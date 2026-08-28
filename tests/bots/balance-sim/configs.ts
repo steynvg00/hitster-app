@@ -164,8 +164,39 @@ export const VARIANTS: VariantDef[] = [
 		// zit niet in powerup_config maar in variant_defaults.streak_config, en
 		// wordt met --streak 3:10 meegegeven.
 		key: 'besloten',
-		label: 'BESLOTEN (drempel 20 + highest_band + indeling/vangnet + bonusjaar 3)',
+		label: 'BESLOTEN — highest_band, drempels 20/75/100',
 		powerupConfig: (raw) => mergeConfigPatch(indelingConfig(raw), { band_mode: 'highest_band' }),
+		fieldOverrides: BONUS_LAAG
+	},
+	// ── De derde weg: all_bands met ver uit elkaar liggende drempels ──────────
+	//
+	// Onder highest_band krijgt iedereen die de laagste drempel haalt precies één
+	// trekking, hoe goed hij verder ook speelde — planAwards klapt de gehaalde
+	// drempels samen tot één (`crossed = [Math.max(...crossed)]`) en de WAARDE van
+	// die hoogste drempel wordt nergens meer gebruikt. Inspanning telt dan alleen
+	// nog in de kwaliteit van de pool, niet in het aantal.
+	//
+	// Met all_bands telt elke gehaalde drempel weer als een eigen trekking. Twee
+	// ver uit elkaar liggende drempels geven dus: bijna iedereen één, en alleen
+	// wie echt uitblinkt twee. Geen derde trekking op 100 meer.
+	{
+		key: 'bands85',
+		label: 'all_bands — drempels 20/85',
+		powerupConfig: (raw) =>
+			mergeConfigPatch(indelingConfig(raw), {
+				band_mode: 'all_bands',
+				thresholds_percent: [20, 85]
+			}),
+		fieldOverrides: BONUS_LAAG
+	},
+	{
+		key: 'bands90',
+		label: 'all_bands — drempels 20/90',
+		powerupConfig: (raw) =>
+			mergeConfigPatch(indelingConfig(raw), {
+				band_mode: 'all_bands',
+				thresholds_percent: [20, 90]
+			}),
 		fieldOverrides: BONUS_LAAG
 	}
 ];
