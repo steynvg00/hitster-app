@@ -19,6 +19,7 @@
 		"bots:verify-battle": "tsx tests/bots/verify-battle.ts",
 		"bots:verify-tab-position-race": "tsx tests/bots/verify-tab-position-race.ts",
 		"bots:verify-comeback-round-start": "tsx tests/bots/verify-comeback-round-start.ts",
+		"bots:verify-grouping-partial": "tsx tests/bots/verify-grouping-partial.ts",
 		"bots:balance-sim": "tsx tests/bots/balance-sim.ts",
 		"bots:verify-recap-flow": "tsx tests/bots/verify-recap-flow.ts",
 		"bots:verify-battle-integration": "tsx tests/bots/verify-battle-integration.ts",

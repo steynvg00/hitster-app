@@ -8,7 +8,14 @@
 //   tekstveld   fout → leeg
 //   artiesten   elke naam onafhankelijk met kans L; 10 % kans op een extra
 //               foute tag (surplus-straf)
-//   grouping    goed met kans L (alles-of-niets); fout → één nummer te weinig
+//   grouping    elk fragment onafhankelijk met kans L op de juiste beurt; een
+//               fragment dat fout gaat wordt vervangen door een willekeurig
+//               nummer uit de tab (dat toevallig alsnog goed kan zijn). Het
+//               aantal aangewezen nummers blijft gelijk aan het aantal dat de
+//               track echt heeft, want dat is wat een speler doet: negen
+//               fragmenten over drie beurten verdelen. Daardoor is er geen
+//               surplus — de surplusstraf van scoreGrouping wordt in de
+//               harness getest, niet hier.
 //
 // Onthullingen en aanvallen werken op het concept, niet op de score:
 //   reveals     gekozen velden worden op het juiste antwoord gezet
@@ -22,7 +29,8 @@ import {
 	artistTargets,
 	groupingNumbersForTrack,
 	type TabInput,
-	type SlotDraft
+	type SlotDraft,
+	type TabClipData
 } from '../../../src/lib/server/scoring';
 import { ARTIST_TAG_SEPARATOR } from '../../../src/lib/artist-tags';
 import type { LoadedChallenge, Rng } from './types';
@@ -64,6 +72,19 @@ export const cellKey = (c: { tabIndex: number; slotIndex: number; field: string 
 	`${c.tabIndex}:${c.slotIndex}:${c.field}`;
 
 /**
+ * Alle fragmentnummers van een tab — de poel waaruit een speler kiest. Dat is
+ * de hele tab en niet alleen de track, want de speler verdeelt álle fragmenten
+ * over de beurten en weet niet welke bij welke track hoort.
+ */
+function allFragmentNumbers(tabClips: TabClipData[]): number[] {
+	return [
+		...new Set(
+			tabClips.filter((c) => c.fragmentNumber !== null).map((c) => c.fragmentNumber as number)
+		)
+	].sort((a, b) => a - b);
+}
+
+/**
  * Bouw het concept van een team voor een challenge. Geeft naast de TabInputs
  * (met playerDraft gevuld) ook terug welke cellen door hulp goed werden — dat
  * is de basis voor de "punten uit onthullers"-post in het grootboek.
@@ -102,7 +123,21 @@ export function buildDraft(
 
 				if (field === 'grouping') {
 					const nums = groupingNumbersForTrack(tab.clips, t.id);
-					fragments = correct ? nums : nums.slice(0, Math.max(0, nums.length - 1));
+					if (correct) {
+						fragments = nums;
+					} else {
+						// Per fragment: goed met kans p, anders een willekeurig nummer uit
+						// de hele tab — dat toevallig alsnog juist kan zijn, wat precies de
+						// gok-ondergrens is die scoreGrouping's regel met zich meebrengt.
+						// Het AANTAL blijft gelijk aan wat de track echt heeft, dus geen
+						// surplus; een speler verdeelt negen fragmenten over drie beurten.
+						const pool = allFragmentNumbers(tab.clips);
+						fragments = [
+							...new Set(
+								nums.map((n) => (rng() < p ? n : (pool[Math.floor(rng() * pool.length)] ?? n)))
+							)
+						];
+					}
 					continue;
 				}
 				if (field === 'year') {
