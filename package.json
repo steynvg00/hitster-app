@@ -53,6 +53,7 @@
 		"bots:verify-result-flow": "tsx tests/bots/verify-result-flow.ts",
 		"bots:verify-keyboard-inset": "tsx tests/bots/verify-keyboard-inset.ts",
 		"bots:verify-host-tools": "tsx tests/bots/verify-host-tools.ts",
+		"bots:verify-top-zone": "tsx tests/bots/verify-top-zone.ts",
 		"sim:screenshots": "tsx scripts/sim-spelersflow.ts"
 	},
 	"devDependencies": {
