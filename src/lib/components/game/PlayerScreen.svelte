@@ -50,9 +50,10 @@
 		 */
 		pageScroll?: boolean;
 		/**
-		 * De inhoud begint DIRECT onder de dynamic island in plaats van op de
-		 * designmarge van 56px. Zie `.player-screen--flush-top` hieronder voor de
-		 * meting en het waarom; alleen scherm 7B (het antwoordformulier) zet hem aan.
+		 * Geen bovenmarge: dit scherm regelt zijn eigen bovenzone, inclusief de
+		 * safe-area-inset. Aan op scherm 7B, waar het bovenste element een
+		 * instrumentenbalk is die tot de schermrand hoort door te lopen. Zie
+		 * `.player-screen--flush-top` hieronder voor de meting en het waarom.
 		 */
 		flushTop?: boolean;
 		class?: string;
@@ -142,40 +143,51 @@
 		color: var(--color-mixup-paper);
 	}
 
-	/* ── Inhoud strak onder de dynamic island ──────────────────────────────────
-	   De bovenmarge hierboven stapelt drie dingen op elkaar die alle drie
-	   "ruimte boven" betekenen: de designmarge van 56px, de safe-area-inset, en
-	   nog eens 14px. env(safe-area-inset-top) EINDIGT al onder de island — dat is
-	   precies wat een safe-area-inset is — dus alles wat er nog bij komt is een
-	   lege strook tussen de island en de eerste inhoud.
+	/* ── GEEN bovenmarge: het scherm regelt zijn eigen bovenzone ───────────────
+	   Alleen scherm 7B (het antwoordformulier) zet dit aan. Daar is het bovenste
+	   element geen inhoud met een marge erboven maar een INSTRUMENTENBALK — de
+	   teampil, de klok, de segmentbalk — en die hoort tot de schermrand door te
+	   lopen.
 
-	   GEMETEN in WebKit met de toestelmaten opgelegd (venster 402x714, de
-	   inset als vaste waarde omdat env() in een headless browser 0 is). De
-	   achtergrondlaag is .player-screen__backdrop, `fixed; top: 0`, met de
-	   kristal-hoek linksboven op zijn eigen 0,8%:
+	   ── Waarom dit géén padding meer is ─────────────────────────────────────
+	   Eerder stond hier `padding-top: max(8px, env(safe-area-inset-top))`. Dat
+	   zette de teampil exact op de onderrand van de dynamic island, en dat deel
+	   klopte ook — maar er bleef een zichtbare strook staan. GEMETEN, met de
+	   letterlijke stijlblokken van dit bestand en van challenge/[id]/+page.svelte,
+	   in WebKit op 390x844 (env() vervangen door een vaste inset, want een
+	   headless browser levert er 0):
 
-	     inset   backdrop   hoek l.b.   teampil (NU)   gat onder de island
-	     59px    y=0        y=5,7       y=73           14px
-	     47px    y=0        y=5,7       y=61           14px
-	      0px    y=0        y=5,7       y=56           56px
+	     doos                     inset 0    inset 59    eigen achtergrond
+	     .player-screen             y=0         y=0      nee
+	     .player-screen__backdrop   y=0         y=0      nee (alleen de gradient)
+	     .player-screen__body       y=8        y=59      nee
+	     .top-zone                  y=8        y=59      JA
+	     pilrij / teampil           y=8        y=59      -
 
-	   Met deze stand:
+	   Geen enkele doos ertussen heeft een eigen padding, margin of border, en de
+	   safe-area-inset zit exact één keer in de som — er was dus geen vierde term
+	   om weg te halen. De pil stond al goed.
 
-	     59px    y=0        y=5,7       y=59           0px
-	     47px    y=0        y=5,7       y=47           0px
-	      0px    y=0        y=5,7       y=8            8px
+	   Wat je zag was de BAND. `.top-zone` is de enige doos in de keten met een
+	   eigen achtergrond, en die begon op dezelfde hoogte als de pil. Daarboven
+	   bleef de paginagradient staan: op een toestel een naad op de onderrand van
+	   de island, op een schermafdruk zonder island een lichte strook van 8px
+	   bovenaan.
 
-	   De 8px-ondergrens geldt alleen waar geen inset bestaat (desktop, Android-
-	   browsers zonder notch); daar zou 0 de inhoud tegen de vensterrand plakken.
-	   Op een toestel MET inset wint de inset altijd, dus daar is de uitkomst
-	   exact de onderrand van de island.
+	   De padding is daarom verhuisd naar `.top-zone` zelf (zie dat blok in
+	   challenge/[id]/+page.svelte). De band begint dan op y=0 en loopt tot achter
+	   de island door, terwijl de INHOUD nog steeds op de inset begint:
 
-	   Bewust een aparte stand en niet de standaardmarge: de andere spelerschermen
-	   (poort, resultaat, /play/thanks) staan op de designmarge van 56px en horen
-	   daar te blijven — dit is de zone met de teampil en de klok, waar de lege
-	   strook opviel. */
+	     .top-zone                  y=0         y=0      JA  <- band tot de rand
+	     pilrij / teampil           y=8        y=59      -   <- onveranderd
+
+	   DE PRIJS, eerlijk erbij: de twee kristal-hoeken bovenaan verdwijnen op dit
+	   ene scherm achter de band. Ze stonden er al half achter (de band begon op
+	   y=59 en de hoek loopt tot y=84); nu is dat helemaal. Op de poort, het
+	   resultaatscherm en /play/thanks staan ze ongewijzigd — daar is de bovenkant
+	   geen balk maar een marge. */
 	.player-screen--flush-top {
-		padding-top: max(8px, env(safe-area-inset-top, 0px));
+		padding-top: 0;
 	}
 
 	/* Vaste viewporthoogte: de kolom mag niet met de inhoud meegroeien, anders

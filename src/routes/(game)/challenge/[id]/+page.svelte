@@ -3298,11 +3298,31 @@
 	   daarbinnen, zodat het niet alsnog naar het document ketent. */
 
 	/* Kop (teampil + klok) · segmentbalk · audiokaart.
-	   GEEN eigen safe-area-padding meer: die zat er omdat een sticky `top: 0`
-	   aan de VENSTERrand plakte en de padding van PlayerScreen daar niet meer
-	   meetelde. Nu de zone gewoon in de flow staat doet PlayerScreen's eigen
-	   padding-top (max(56px, safe-area + 14px)) dat werk weer, en zou een tweede
-	   inzet de klok onnodig naar beneden duwen.
+
+	   ── De safe-area-inzet zit HIER, en dat is de hele fix ──────────────────
+	   PlayerScreen staat op dit scherm op `flushTop`, dus daar is de bovenmarge
+	   0 en begint deze doos op y=0 — achter de dynamic island. De inzet die de
+	   INHOUD onder de island houdt is de padding hieronder.
+
+	   Waarom niet op PlayerScreen, waar hij eerst stond: deze zone is de enige
+	   doos in de keten met een eigen achtergrond. Zat de inzet een niveau hoger,
+	   dan begon de BAND pas op de pil en bleef de paginagradient erboven staan —
+	   een naad op de onderrand van de island, en op een schermafdruk zonder
+	   island een lichte strook bovenaan. Gemeten (WebKit 390x844, env() als
+	   vaste inset):
+
+	     inzet   band begint   teampil     zichtbare strook
+	      0px    y=8           y=8         8px      <- was
+	      0px    y=0           y=8         0px      <- is
+	     59px    y=59          y=59        59px     <- was
+	     59px    y=0           y=59        0px      <- is
+
+	   De pil beweegt niet; de band schuift naar de rand. Dat is het verschil
+	   tussen de drie eerdere pogingen (die de pil verplaatsten) en deze.
+
+	   De 8px-ondergrens geldt alleen waar geen inset bestaat — desktop, Android
+	   zonder notch, en de screenshot-harness. Op een toestel met inset wint de
+	   inset altijd.
 
 	   De achtergrond blijft ondoorzichtig met een slagschaduw eronder: het
 	   scrollgebied schuift er strak tegenaan, en de schaduw is wat de twee dozen
@@ -3310,6 +3330,7 @@
 	.top-zone {
 		flex: 0 0 auto;
 		z-index: 30;
+		padding-top: max(8px, env(safe-area-inset-top, 0px));
 		padding-bottom: 8px;
 		background: linear-gradient(180deg, #0b0b1f 78%, rgba(11, 11, 31, 0.94) 100%);
 		box-shadow: 0 10px 22px rgba(11, 11, 31, 0.55);
