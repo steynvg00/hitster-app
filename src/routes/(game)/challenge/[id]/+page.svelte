@@ -2381,7 +2381,14 @@
 		gezien hebben" — een jaarslider onder de vouw wordt niet gemist. De
 		antwoordkaart heeft nog altijd geen eigen scrollbalk.
 	-->
-	<PlayerScreen fitViewport class="answer-screen">
+	<!--
+		`flushTop`: de teampil en de klok beginnen direct onder de dynamic island in
+		plaats van 14px eronder. De meting staat bij .player-screen--flush-top in
+		PlayerScreen.svelte. Alleen dit scherm zet hem aan — hier is de bovenzone een
+		instrumentenbalk die tegen de schermrand hoort te zitten, niet een pagina met
+		een designmarge erboven.
+	-->
+	<PlayerScreen fitViewport flushTop class="answer-screen">
 		<!-- Freeze overlay (stuk 2): blocking frost layer, clears itself after 30s
 		     client-side — no server round-trip, it's a marker row only. De
 		     vormgeving zit sinds fase 4 in FreezeOverlay; `freezeUntil` en
