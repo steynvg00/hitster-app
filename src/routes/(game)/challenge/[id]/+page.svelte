@@ -642,6 +642,10 @@
 	let drainToast = $state<{ sourceName: string } | null>(null);
 	let drainToastTimer: ReturnType<typeof setTimeout> | undefined;
 
+	/** Tijd die de host heeft bijgegeven — zie de time_boost-tak in de realtime-handler. */
+	let boostToast = $state<{ seconds: number } | null>(null);
+	let boostToastTimer: ReturnType<typeof setTimeout> | undefined;
+
 	// ── Incoming lock attack (stuk 3 FINAL: tap_to_break) ──────────────────────
 	// UNLIKE freeze/time_drain's pre-consumed markers, tap_to_break's team_effects
 	// row stays ACTIVE (no consumed_at) until broken — loadActiveEffects already
@@ -945,9 +949,23 @@
 						payload: Record<string, unknown>;
 					};
 					if (row.effect_type === 'time_boost') {
-						const p = row.payload as { added_seconds?: number; challenge_id?: string };
+						const p = row.payload as {
+							added_seconds?: number;
+							challenge_id?: string;
+							source?: string;
+						};
 						if (p.challenge_id === data.challenge.id) {
 							timerBoostMs += (p.added_seconds ?? 30) * 1000;
+							// Tijd die de HOST bijgeeft heeft geen kaart en geen animatie voor
+							// zich uit: zonder melding springt de klok gewoon vooruit, en dat
+							// is even verwarrend als tijd die verdwijnt (waar time_drain wél
+							// een toast voor heeft). Een eigen powerup-activatie krijgt er
+							// geen — daar is de kaart zelf de aankondiging.
+							if (p.source === 'host') {
+								boostToast = { seconds: p.added_seconds ?? 30 };
+								if (boostToastTimer) clearTimeout(boostToastTimer);
+								boostToastTimer = setTimeout(() => (boostToast = null), 5000);
+							}
 						}
 					} else if (row.effect_type === 'freeze') {
 						const p = row.payload as {
@@ -1084,6 +1102,7 @@
 		return () => {
 			if (iv) clearInterval(iv);
 			if (drainToastTimer) clearTimeout(drainToastTimer);
+			if (boostToastTimer) clearTimeout(boostToastTimer);
 			supabaseBrowser.removeChannel(effectsBoostChannel);
 			supabaseBrowser.removeChannel(attemptChannel);
 			supabaseBrowser.removeChannel(submissionInsertChannel);
@@ -2501,6 +2520,20 @@
 						class="h-[26px] w-[26px] shrink-0 object-contain"
 					/>
 					<span>−15s — {drainToast.sourceName} pakte je tijd af!</span>
+				</div>
+			</div>
+		{/if}
+
+		<!-- Extra tijd van de host. Zelfde vorm als de time-drain-toast hierboven,
+		     andere kleur: die twee mogen op een halve seconde kijken niet op elkaar
+		     lijken, want ze betekenen het tegenovergestelde. -->
+		{#if boostToast}
+			<div class="fixed inset-x-0 top-4 z-50 flex justify-center px-4">
+				<div
+					class="flex items-center gap-2.5 rounded-mixup-sm border border-mixup-cyan/45 bg-mixup-cyan/10 px-4 py-2.5 text-[13px] font-bold text-mixup-paper shadow-2xl backdrop-blur-[14px] squircle"
+				>
+					<span class="text-base">⏱</span>
+					<span>+{boostToast.seconds}s van de host erbij!</span>
 				</div>
 			</div>
 		{/if}

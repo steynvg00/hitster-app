@@ -4,6 +4,13 @@ import { createAdminClient } from '$lib/server/supabase';
 import { TEAM_COLOR_ORDER } from '$lib/server/randomize';
 import { parseBattleConfig } from '$lib/battle-ranking';
 import { resolveBattle } from '$lib/server/battle';
+import {
+	adjustTeamScore,
+	grantExtraTime,
+	grantPowerup,
+	resetTeamChallenge,
+	type HostActor
+} from '$lib/server/host-tools';
 
 // Battle mode (stuk 2) turnout shape — module-scoped so BOTH the early-return
 // (no active sets) and main load() branches agree on the type; otherwise
@@ -20,6 +27,19 @@ type BattleStatus = {
 	ranking: BattleRankEntry[] | null;
 	outstandingTeamIds: string[];
 	hasSubmission: boolean;
+};
+
+// The powerup catalog as the host-tools sheet needs it: enough to render the
+// picker AND to say, before the confirm step, what granting this type will do.
+// Module-scoped for the same reason as BattleStatus above — the no-active-sets
+// early return and the main branch must agree on the type.
+type PowerupTypeOption = {
+	id: string;
+	name: string;
+	icon: string | null;
+	category: string | null;
+	immediate_use: boolean;
+	holdable: boolean;
 };
 
 export const load: PageServerLoad = async ({ url }) => {
@@ -77,6 +97,7 @@ export const load: PageServerLoad = async ({ url }) => {
 			submissions: [],
 			activity: [],
 			teamPowerups: [],
+			powerupTypes: [] as PowerupTypeOption[],
 			battleStatus: {} as Record<string, BattleStatus>
 		};
 	}
@@ -154,6 +175,22 @@ export const load: PageServerLoad = async ({ url }) => {
 				: { data: [] as never[] }
 		]);
 
+	// Powerup catalog for the host-tools sheet. coming_soon types are excluded:
+	// granting one would write a row that no activation branch can act on.
+	const { data: powerupTypeRows } = await db
+		.from('powerup_types')
+		.select('id, name, icon, category, immediate_use, holdable, coming_soon')
+		.eq('coming_soon', false)
+		.order('sort_order');
+	const powerupTypes: PowerupTypeOption[] = (powerupTypeRows ?? []).map((t) => ({
+		id: t.id,
+		name: t.name,
+		icon: t.icon,
+		category: t.category,
+		immediate_use: t.immediate_use,
+		holdable: t.holdable
+	}));
+
 	// Sort challenges by their position in the set
 	const challenges = (challengeResult.data ?? []).sort(
 		(a, b) => (positionMap.get(a.id) ?? 0) - (positionMap.get(b.id) ?? 0)
@@ -212,9 +249,21 @@ export const load: PageServerLoad = async ({ url }) => {
 		submissions: subsResult.data ?? [],
 		activity: activityResult.data ?? [],
 		teamPowerups,
+		powerupTypes,
 		battleStatus
 	};
 };
+
+/**
+ * Wie de ingreep doet. Uit de ingelogde host-sessie, niet uit het formulier —
+ * een client mag nooit kunnen kiezen wiens naam er in het log komt.
+ *
+ * Deze route valt onder de /admin-layoutguard, dus locals.user is hier gevuld.
+ * De fallback bestaat alleen voor de dev-sessie zonder Supabase-login.
+ */
+function actorOf(locals: App.Locals): HostActor {
+	return { id: locals.user?.id ?? null, email: locals.user?.email ?? null };
+}
 
 export const actions: Actions = {
 	toggleScoresHidden: async ({ request }) => {
@@ -237,42 +286,109 @@ export const actions: Actions = {
 		return { success: true };
 	},
 
-	resetTeamAttempt: async ({ request }) => {
+	// ── Host-ingrepen ─────────────────────────────────────────────────────────
+	//
+	// Vier dunne wrappers om $lib/server/host-tools. De logica staat daar zodat
+	// hij zonder database te controleren is (tests/bots/verify-host-tools.ts);
+	// hier blijft alleen over wat een action moet doen: formulier lezen, de
+	// ingelogde host als `actor` meegeven, en de uitkomst als bericht teruggeven.
+	//
+	// De reden is bij alle vier verplicht en wordt in host-tools afgedwongen, niet
+	// hier — dan kan één van de vier hem niet stilletjes overslaan.
+
+	adjustScore: async ({ request, locals }) => {
 		const db = createAdminClient();
-		const data = await request.formData();
-		const challengeId = data.get('challenge_id') as string;
-		const teamId = data.get('team_id') as string;
+		const fd = await request.formData();
+		const teamId = fd.get('team_id') as string;
+		const setId = (fd.get('set_id') as string | null) || null;
+		const delta = Number.parseInt(fd.get('delta') as string, 10);
+		const reason = (fd.get('reason') as string) ?? '';
+		if (!teamId) return fail(400, { error: 'Missing team_id' });
 
-		if (!challengeId || !teamId) return fail(400, { error: 'Missing challenge_id or team_id' });
+		const res = await adjustTeamScore(db, { teamId, setId, delta, reason, actor: actorOf(locals) });
+		if (!res.ok) return fail(400, { error: res.error });
+		const teken = res.newScore - res.oldScore >= 0 ? '+' : '';
+		return {
+			success: true,
+			message:
+				`Score bijgewerkt: ${res.oldScore} → ${res.newScore} (${teken}${res.newScore - res.oldScore})` +
+				(res.clamped ? ' — geklemd op 0, want lager kan een score in dit spel niet.' : '')
+		};
+	},
 
-		const { data: sub } = await db
-			.from('submissions')
-			.select('score')
-			.eq('challenge_id', challengeId)
-			.eq('team_id', teamId)
-			.maybeSingle();
-
-		if (sub?.score) {
-			const { data: team } = await db.from('teams').select('score').eq('id', teamId).single();
-			await db
-				.from('teams')
-				.update({ score: Math.max(0, (team?.score ?? 0) - sub.score) })
-				.eq('id', teamId);
+	grantPowerup: async ({ request, locals }) => {
+		const db = createAdminClient();
+		const fd = await request.formData();
+		const teamId = fd.get('team_id') as string;
+		const setId = fd.get('set_id') as string;
+		const typeId = fd.get('powerup_type_id') as string;
+		const reason = (fd.get('reason') as string) ?? '';
+		if (!teamId || !setId || !typeId) {
+			return fail(400, { error: 'Missing team_id, set_id or powerup_type_id' });
 		}
 
-		await Promise.all([
-			db.from('submissions').delete().eq('challenge_id', challengeId).eq('team_id', teamId),
-			db.from('challenge_attempts').delete().eq('challenge_id', challengeId).eq('team_id', teamId)
-		]);
+		const res = await grantPowerup(db, { teamId, setId, typeId, reason, actor: actorOf(locals) });
+		if (!res.ok) return fail(400, { error: res.error });
+		return {
+			success: true,
+			message:
+				res.gedrag === 'in_voorraad'
+					? 'Powerup staat in de voorraad van het team.'
+					: res.activated
+						? 'Powerup is direct afgegaan.'
+						: 'Powerup toegekend, maar de activatie is niet gelukt — zie de activity log.'
+		};
+	},
 
-		await db.from('activity_log').insert({
-			event_type: 'attempt_reset',
-			team_id: teamId,
-			challenge_id: challengeId,
-			payload: { score_deducted: sub?.score ?? 0, reset_by: 'host' }
+	grantExtraTime: async ({ request, locals }) => {
+		const db = createAdminClient();
+		const fd = await request.formData();
+		const teamId = fd.get('team_id') as string;
+		const setId = (fd.get('set_id') as string | null) || null;
+		const challengeId = fd.get('challenge_id') as string;
+		const seconds = Number.parseInt(fd.get('seconds') as string, 10);
+		const reason = (fd.get('reason') as string) ?? '';
+		if (!teamId || !challengeId) return fail(400, { error: 'Missing team_id or challenge_id' });
+
+		const res = await grantExtraTime(db, {
+			teamId,
+			setId,
+			challengeId,
+			seconds,
+			reason,
+			actor: actorOf(locals)
 		});
+		if (!res.ok) return fail(400, { error: res.error });
+		return { success: true, message: `+${res.seconds}s — staat al op de telefoon van het team.` };
+	},
 
-		return { success: true };
+	resetTeamAttempt: async ({ request, locals }) => {
+		const db = createAdminClient();
+		const fd = await request.formData();
+		const teamId = fd.get('team_id') as string;
+		const setId = (fd.get('set_id') as string | null) || null;
+		const challengeId = fd.get('challenge_id') as string;
+		const reason = (fd.get('reason') as string) ?? '';
+		if (!teamId || !challengeId) return fail(400, { error: 'Missing team_id or challenge_id' });
+
+		const res = await resetTeamChallenge(db, {
+			teamId,
+			setId,
+			challengeId,
+			reason,
+			actor: actorOf(locals)
+		});
+		if (!res.ok) return fail(400, { error: res.error });
+		return {
+			success: true,
+			message:
+				`Teruggezet: −${res.pointsDeducted} punten (${res.oldScore} → ${res.newScore}), ` +
+				`${res.submissionsDeleted} inlevering(en) weg` +
+				(res.powerupsRevoked > 0
+					? `, ${res.powerupsRevoked} ongebruikte powerup(s) ingetrokken`
+					: '') +
+				'.'
+		};
 	},
 
 	// Battle mode (stuk 2): the host's absentee fallback. The auto-hook in
