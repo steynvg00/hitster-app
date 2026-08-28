@@ -81,6 +81,64 @@ export function freshPhase(penaltyCount: number): ResultPhase {
 }
 
 /**
+ * WANNEER de instapfase van een verse inlevering vastgelegd mag worden.
+ *
+ * Dit is de fix voor de verdwenen strafkaart, en de reden dat het een eigen
+ * functie is in plaats van een regel in een $effect is dat de fout precies in
+ * die regel zat en er niet uit te lezen was.
+ *
+ * ── WAT ER MIS GING ─────────────────────────────────────────────────────────
+ *
+ * `use:enhance` van SvelteKit (2.58.0, runtime/app/forms.js) doet na een
+ * geslaagde actie TWEE dingen, in deze volgorde:
+ *
+ *   1. await invalidateAll()   de load draait opnieuw -> `data` is nieuw
+ *   2. await applyAction()     de terugkeerwaarde landt -> `form` is nieuw
+ *
+ * Na stap 1 staat de inzending al in de database, dus `data.priorResult` is
+ * gevuld en `result` op de pagina wordt waar. De TOEGEKENDE POWERUPS bestaan op
+ * dat moment nog nergens: die zitten alleen in de terugkeerwaarde van de actie,
+ * en die komt pas in stap 2. Wie de instapfase in stap 1 uitrekent, telt een
+ * lege strafwachtrij en landt op 'points'.
+ *
+ * Daarna is er geen weg terug. `nextPhase` loopt alleen vooruit
+ * (penalty -> points -> powerups -> details), en het instap-effect zelf is
+ * afgeschermd met "alleen als er nog geen fase is". De straf die in stap 2
+ * binnenkomt blijft in de wachtrij staan en wordt nooit gerenderd:
+ * `{#if resultPhase === 'penalty' && penaltyQueue.length > 0}` is nooit waar.
+ * Daarmee wordt acknowledged_at ook nooit geschreven — de rij blijft
+ * onaangetikt, en dat is precies wat er in de database te zien was.
+ *
+ * ── DE REGEL ────────────────────────────────────────────────────────────────
+ *
+ * `settled` is "er is geen inlevering meer onderweg" — op de pagina de
+ * omkering van `submitting`, die pas op false gaat NA `await update()`, dus na
+ * allebei de stappen hierboven. `inboxPending` is de wachtkamer tussen "de
+ * server heeft iets toegekend" en "de kaart gaat open"; zolang die niet leeg is
+ * staat nog niet vast wat er in de wachtrijen komt.
+ *
+ * Zolang één van beide nog loopt: GEEN fase. `null` betekent hier "nog niet
+ * beslissen", niet "geen resultaat" — het aanroepende effect laat de fase dan
+ * ongemoeid en probeert het opnieuw zodra er iets verandert.
+ *
+ * Alle argumenten worden onvoorwaardelijk gelezen. Dat is met opzet: in een
+ * $effect bepaalt de eerste `return` welke signalen het effect volgt, en een
+ * afgekorte voorwaarde laat een effect achter dat niet meer wakker wordt van
+ * het signaal waar het op wacht. Dat was hier de tweede helft van de fout.
+ */
+export function freshEntry(
+	hasResult: boolean,
+	settled: boolean,
+	inboxPending: number,
+	penaltyCount: number
+): ResultPhase | null {
+	if (!hasResult) return null;
+	if (!settled) return null;
+	if (inboxPending > 0) return null;
+	return freshPhase(penaltyCount);
+}
+
+/**
  * De instapfase van een speler die halverwege wegging en TERUGKOMT.
  *
  * `pendingCount` is het aantal team_powerups-rijen van deze challenge dat nog op

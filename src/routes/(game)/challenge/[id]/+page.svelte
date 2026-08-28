@@ -40,7 +40,7 @@
 	import { teamHex as teamHexFor, teamOnColor } from '$lib/team-theme';
 	import { stripSetNameFromTitle } from '$lib/challenge-title';
 	import {
-		freshPhase,
+		freshEntry,
 		isPunishment,
 		nextPhase,
 		pointsButton,
@@ -1347,12 +1347,21 @@
 	/**
 	 * De instapfase na een VERSE inlevering.
 	 *
-	 * Het wachten op een lege `pendingEarned` is wat maakt dat hier al vaststaat
-	 * of er een straf tussen zit: de wachtkamer loopt in dezelfde ronde leeg.
+	 * De voorwaarden staan in `freshEntry` ($lib/result-flow), inclusief de
+	 * meting waarom `submitting` erbij hoort: `use:enhance` draait eerst
+	 * `invalidateAll()` en pas daarna `applyAction()`, dus tussen die twee is
+	 * `result` al waar terwijl `earnedPowerups` nog niet bestaat. Wie daar de
+	 * fase vastlegt, legt hem vast op een lege strafwachtrij — en komt er nooit
+	 * meer op terug, want `nextPhase` loopt alleen vooruit. Dat is de strafkaart
+	 * die verdween.
+	 *
+	 * Hier staat alleen nog de afscherming die over de fase zelf gaat: is er al
+	 * een fase, dan is dit een terugkeerder en heeft `resumePhase` het al gedaan.
 	 */
 	$effect(() => {
-		if (!result || resultPhase !== null || pendingEarned.length) return;
-		resultPhase = freshPhase(penaltyQueue.length);
+		if (resultPhase !== null) return;
+		const instap = freshEntry(!!result, !submitting, pendingEarned.length, penaltyQueue.length);
+		if (instap) resultPhase = instap;
 	});
 
 	/**
@@ -2771,8 +2780,15 @@
 					submitting = true;
 					formData.set('answers_json', JSON.stringify(buildAnswersForSubmit()));
 					return async ({ update }) => {
-						await update();
-						submitting = false;
+						// `finally`, want `submitting` is sinds de fix niet alleen de tekst op
+						// de knop maar ook de poort van de instapfase (zie freshEntry). Blijft
+						// hij op true hangen doordat `update()` gooit, dan komt de speler nooit
+						// op zijn puntenscherm.
+						try {
+							await update();
+						} finally {
+							submitting = false;
+						}
 					};
 				}}
 				class="mx-4 flex flex-col gap-3 rounded-mixup-hero p-4 mixup-glass-strong squircle {isFrozen

@@ -29,6 +29,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
+	freshEntry,
 	freshPhase,
 	nextPhase,
 	pointsButton,
@@ -246,6 +247,111 @@ function check(naam: string, ok: boolean, detail: string) {
 	);
 }
 
+// ── REGRESSIE: de straf staat in de DB maar wordt niet getoond ──────────────
+//
+// Dit is het geval dat op het toestel misging en dat de tabel hierboven NIET
+// ving: er is een strafkaart toegekend, de rij staat met acknowledged_at IS NULL
+// in team_powerups, en de speler krijgt hem toch nooit te zien.
+//
+// De reden zit niet in een van de fasefuncties maar in het MOMENT waarop de
+// instapfase vastgelegd wordt. `use:enhance` van SvelteKit doet na een geslaagde
+// actie twee stappen, in deze volgorde (2.58.0, runtime/app/forms.js):
+//
+//   stap 1  await invalidateAll()   de load draait opnieuw  -> `data` is nieuw
+//   stap 2  await applyAction()     de terugkeerwaarde landt -> `form` is nieuw
+//
+// Na stap 1 staat de inzending al in de database, dus `data.priorResult` is
+// gevuld en `result` is waar — terwijl `earnedPowerups`, en dus de straf, pas in
+// stap 2 bestaat. Wie in stap 1 beslist, telt een lege strafwachtrij.
+//
+// De simulatie hieronder loopt precies die twee stappen af en gebruikt daarvoor
+// de ECHTE functies. Hij is daarmee een uitspraak over de code die draait, niet
+// over een nabouw ervan.
+{
+	type Stand = {
+		result: boolean;
+		submitting: boolean;
+		inbox: number;
+		penalties: number;
+		prizes: number;
+		fase: ResultPhase | null;
+	};
+
+	/** Eén beslismoment, zoals het $effect op de pagina hem doet. */
+	function beslis(s: Stand): Stand {
+		if (s.fase !== null) return s;
+		const instap = freshEntry(s.result, !s.submitting, s.inbox, s.penalties);
+		return instap ? { ...s, fase: instap } : s;
+	}
+
+	/**
+	 * De volledige verse inlevering, met de twee stappen uit elkaar getrokken.
+	 * `toegekend` is wat de submit-action teruggeeft.
+	 */
+	function leverIn(toegekend: EarnedLike[]): { fase: ResultPhase | null; strafInRij: number } {
+		const { penalties, prizes } = splitEarned(toegekend);
+		// Vertrekpunt: het antwoordformulier staat in beeld, de POST is onderweg.
+		let s: Stand = {
+			result: false,
+			submitting: true,
+			inbox: 0,
+			penalties: 0,
+			prizes: 0,
+			fase: null
+		};
+
+		// STAP 1 — invalidateAll: `data.priorResult` is gevuld, `form` nog niet.
+		s = beslis({ ...s, result: true });
+
+		// STAP 2 — applyAction: de terugkeerwaarde landt in de wachtkamer …
+		s = beslis({ ...s, inbox: toegekend.length });
+		// … en de wachtkamer loopt leeg in de wachtrijen.
+		s = beslis({ ...s, inbox: 0, penalties: penalties.length, prizes: prizes.length });
+
+		// Pas hierna zet de enhance-callback `submitting` op false.
+		s = beslis({ ...s, submitting: false });
+
+		return { fase: s.fase, strafInRij: s.penalties };
+	}
+
+	const metStraf = leverIn([straf(), prijs(), prijs()]);
+	check(
+		'verse inlevering met straf landt op de strafkaart',
+		metStraf.fase === 'penalty' && metStraf.strafInRij === 1,
+		`na de twee enhance-stappen -> '${metStraf.fase}' met ${metStraf.strafInRij} straf in de rij — niet 'points' met een straf die blijft staan`
+	);
+
+	const zonderStraf = leverIn([prijs()]);
+	check(
+		'verse inlevering zonder straf blijft op het puntenscherm',
+		zonderStraf.fase === 'points',
+		`-> '${zonderStraf.fase}', ongewijzigd gedrag`
+	);
+
+	// DE FALSIFICATIE, en meteen de kern van de bug: beslissen zodra `result` waar
+	// is — de oude regel — zet de fase in stap 1 vast op 'points'. De straf komt
+	// daarna binnen en er is geen weg terug, want nextPhase loopt alleen vooruit.
+	{
+		const inStap1 = freshPhase(0); // strafwachtrij is in stap 1 per definitie leeg
+		const naDeStraf = nextPhase(inStap1, { penalties: 1, prizes: 2 });
+		check(
+			'falsificatie · de oude regel verliest de straf aantoonbaar',
+			inStap1 === 'points' && naDeStraf === 'points',
+			`beslissen in stap 1 geeft '${inStap1}', en met een straf in de rij blijft dat '${naDeStraf}' — de kaart wordt nooit gerenderd en acknowledged_at wordt nooit geschreven`
+		);
+	}
+
+	// De poort zelf, los: zolang er iets onderweg is valt er niets te beslissen.
+	const tijdensStap1 = freshEntry(true, false, 0, 0);
+	const wachtkamerVol = freshEntry(true, true, 3, 0);
+	const nogGeenResultaat = freshEntry(false, true, 0, 1);
+	check(
+		'freshEntry wacht tot de inlevering rond is',
+		tijdensStap1 === null && wachtkamerVol === null && nogGeenResultaat === null,
+		`onderweg -> ${tijdensStap1}, wachtkamer nog vol -> ${wachtkamerVol}, geen resultaat -> ${nogGeenResultaat}`
+	);
+}
+
 // ── De belofte: het AANTAL, en de Power Spin-prijs telt niet mee ────────────
 {
 	const metSpin = promisedCount([prijs(), spinPrijs()]);
@@ -281,7 +387,7 @@ function check(naam: string, ok: boolean, detail: string) {
 		'utf8'
 	);
 	const importeert = /from '\$lib\/result-flow'/.test(bron);
-	const nodig = ['freshPhase', 'nextPhase', 'pointsButton', 'promisedCount', 'resumePhase'];
+	const nodig = ['freshEntry', 'nextPhase', 'pointsButton', 'promisedCount', 'resumePhase'];
 	const ontbreekt = nodig.filter((fn) => !new RegExp(`\\b${fn}\\s*\\(`).test(bron));
 	check(
 		'de challenge-pagina gebruikt deze module',
@@ -289,6 +395,21 @@ function check(naam: string, ok: boolean, detail: string) {
 		importeert && ontbreekt.length === 0
 			? `roept alle vijf de beslissingen hier aan (${nodig.join(', ')})`
 			: `pagina rekent fasen zelf uit — ontbrekend: ${ontbreekt.join(', ') || 'de import'}`
+	);
+
+	// De instapfase moet de INLEVERING-ONDERWEG-stand meekrijgen, en die staat op
+	// de pagina in `submitting`. Zonder dat argument beslist het effect weer in
+	// stap 1 van enhance en is de straf opnieuw weg — de regressie zelf.
+	const poortOpSubmitting = /freshEntry\(\s*!!result,\s*!submitting,/.test(bron);
+	// En `submitting` moet ook echt aflopen als update() gooit, anders komt de
+	// speler nooit voorbij het antwoordformulier.
+	const submittingLooptAf = /finally\s*\{\s*submitting = false;/.test(bron);
+	check(
+		'de instapfase wacht op een afgeronde inlevering',
+		poortOpSubmitting && submittingLooptAf,
+		poortOpSubmitting && submittingLooptAf
+			? 'freshEntry krijgt !submitting mee, en submitting loopt in een finally af'
+			: `!submitting meegegeven: ${poortOpSubmitting}, finally aanwezig: ${submittingLooptAf}`
 	);
 
 	// De straf-resume is pas echt aangesloten als de pagina de derde bron ook
