@@ -87,11 +87,20 @@ async function verifyInverseEarning() {
 			types: { penalty_shot: { enabled: true, chance: 1 }, lifeline: { chance: 1 } },
 			categories: {}
 		};
-		const { awards, newHighwater } = planAwards(cfg, types, { ...baseCtx, submissionPct: 20 }, () => 0);
-		assert('low score (20% < 40% bound): both inverse types fire', awards.sort((a, b) => a.typeId.localeCompare(b.typeId)), [
-			{ typeId: 'lifeline', channel: 'inverse' },
-			{ typeId: 'penalty_shot', channel: 'inverse' }
-		]);
+		const { awards, newHighwater } = planAwards(
+			cfg,
+			types,
+			{ ...baseCtx, submissionPct: 20 },
+			() => 0
+		);
+		assert(
+			'low score (20% < 40% bound): both inverse types fire',
+			awards.sort((a, b) => a.typeId.localeCompare(b.typeId)),
+			[
+				{ typeId: 'lifeline', channel: 'inverse' },
+				{ typeId: 'penalty_shot', channel: 'inverse' }
+			]
+		);
 		assert('the ladder never crossed anything (thresholds_percent is empty)', newHighwater, null);
 	}
 
@@ -141,8 +150,16 @@ async function verifyInverseEarning() {
 			categories: {}
 		};
 		const { awards } = planAwards(cfg, types, { ...baseCtx, submissionPct: 10 }, () => 0);
-		assert('penalty_shot opt-in default: absent without an override', awards.find((a) => a.typeId === 'penalty_shot'), undefined);
-		assert('lifeline enabled_by_default=true: fires without an override', awards.find((a) => a.typeId === 'lifeline'), { typeId: 'lifeline', channel: 'inverse' });
+		assert(
+			'penalty_shot opt-in default: absent without an override',
+			awards.find((a) => a.typeId === 'penalty_shot'),
+			undefined
+		);
+		assert(
+			'lifeline enabled_by_default=true: fires without an override',
+			awards.find((a) => a.typeId === 'lifeline'),
+			{ typeId: 'lifeline', channel: 'inverse' }
+		);
 	}
 
 	// chance=0 is the deterministic non-firing edge (verify-earning.ts's own
@@ -244,9 +261,109 @@ async function verifyCategorySwitch() {
 	}
 }
 
+/**
+ * DE TWEE KANALEN TELLEN BIJ ELKAAR OP.
+ *
+ * Alles hierboven isoleert het inverse kanaal met een LEGE thresholds_percent,
+ * juist om te bewijzen dat het niet van de ladder afhangt. Daardoor stond
+ * nergens vastgelegd wat er gebeurt als ze allebei vuren op dezelfde inlevering
+ * — en dat is precies de uitkomst die op een toestel voor verwarring zorgde:
+ * 29% onder highest_band met drempels [20,75,100] levert TWEE powerups op, niet
+ * één.
+ *
+ * Dat is bedoeld gedrag, en het bestaat uit twee onafhankelijke helften:
+ *
+ *   ladder    29% haalt band 20; highest_band collapst naar de hoogste gehaalde
+ *             band, dus precies één trekking. Nooit meer, bij geen enkel
+ *             percentage.
+ *   invers    lifeline en penalty_shot staan allebei op 0-40 (migraties 0071 en
+ *             0057) en lopen náást de ladder. Bij 29% zijn ze in bereik.
+ *
+ * Deze sectie pint die optelsom, plus de tegenproef: boven de 40% valt de
+ * inverse helft weg en blijft er één over.
+ */
+async function verifyBeideKanalen() {
+	console.log('\n── de twee kanalen op dezelfde inlevering ─────────────────────────');
+
+	const types = [
+		// Ladder: één type dat over het hele bereik meedoet, zodat de ladderhelft
+		// altijd precies één trekking oplevert en de telling leesbaar blijft.
+		{
+			id: 'give_a_shot',
+			category: 'social',
+			coming_soon: false,
+			enabled_by_default: true,
+			default_inverse: false,
+			default_min_score_pct: 0,
+			default_max_score_pct: 100
+		},
+		{
+			id: 'lifeline',
+			category: 'defensive',
+			coming_soon: false,
+			enabled_by_default: true,
+			default_inverse: true,
+			default_min_score_pct: 0,
+			default_max_score_pct: 40
+		},
+		{
+			id: 'penalty_shot',
+			category: 'punishment',
+			coming_soon: false,
+			enabled_by_default: true,
+			default_inverse: true,
+			default_min_score_pct: 0,
+			default_max_score_pct: 40
+		}
+	] as never[];
+
+	const cfg = {
+		version: 2 as const,
+		threshold_mode: 'per_challenge' as const,
+		band_mode: 'highest_band' as const,
+		thresholds_percent: [20, 75, 100],
+		types: { lifeline: { chance: 1 }, penalty_shot: { chance: 1 } },
+		categories: {}
+	};
+	const ctx = (pct: number): PlanContext => ({
+		submissionPct: pct,
+		cumulativePct: 0,
+		thresholdMode: 'per_challenge',
+		bandMode: 'highest_band',
+		lastThresholdCrossed: 0
+	});
+	const tel = (pct: number) => {
+		const { awards } = planAwards(cfg, types, ctx(pct), () => 0);
+		return {
+			ladder: awards.filter((a) => a.channel === 'ladder').length,
+			invers: awards.filter((a) => a.channel === 'inverse').length
+		};
+	};
+
+	// Het gemelde geval.
+	assert('29%: één ladder + twee inverse = drie', tel(29), { ladder: 1, invers: 2 });
+
+	// De ladderhelft alleen, over het hele bereik. highest_band collapst altijd
+	// naar één — dit is de controle die "misschien collapst hij niet in dit pad"
+	// beantwoordt.
+	for (const pct of [20, 29, 50, 74, 75, 97, 100]) {
+		assert(`highest_band: ${pct}% geeft precies één laddertrekking`, tel(pct).ladder, 1);
+	}
+	assert('19%: onder de laagste drempel vuurt de ladder niet', tel(19).ladder, 0);
+
+	// De tegenproef: boven de 40% valt het inverse kanaal weg. Dat is waarom 97%
+	// er één oplevert en 29% er drie — hetzelfde ladderaantal, ander bereik.
+	assert('41%: inverse kanaal buiten bereik', tel(41), { ladder: 1, invers: 0 });
+	assert('97%: alleen de ladder, dus één', tel(97), { ladder: 1, invers: 0 });
+
+	// En de rand van het bereik, inclusief zoals scoreInRange belooft.
+	assert('40%: nog net in bereik', tel(40).invers, 2);
+}
+
 async function main() {
 	await verifyInverseEarning();
 	await verifyCategorySwitch();
+	await verifyBeideKanalen();
 
 	const failed = checks.filter((c) => !c.pass);
 	console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);
