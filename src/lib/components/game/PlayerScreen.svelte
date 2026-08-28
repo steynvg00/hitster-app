@@ -49,6 +49,12 @@
 		 * worden over de hele hoogte.
 		 */
 		pageScroll?: boolean;
+		/**
+		 * De inhoud begint DIRECT onder de dynamic island in plaats van op de
+		 * designmarge van 56px. Zie `.player-screen--flush-top` hieronder voor de
+		 * meting en het waarom; alleen scherm 7B (het antwoordformulier) zet hem aan.
+		 */
+		flushTop?: boolean;
 		class?: string;
 		children?: Snippet;
 	};
@@ -60,6 +66,7 @@
 		backdrop = null,
 		fitViewport = false,
 		pageScroll = false,
+		flushTop = false,
 		class: className = '',
 		children
 	}: Props = $props();
@@ -69,6 +76,7 @@
 	class="player-screen"
 	class:player-screen--fit={fitViewport}
 	class:player-screen--page-scroll={pageScroll}
+	class:player-screen--flush-top={flushTop}
 >
 	<!--
 		Alle achtergrondlagen zitten in ÉÉN vaste laag, buiten de doos van
@@ -132,6 +140,42 @@
 		padding-right: env(safe-area-inset-right, 0px);
 		font-family: var(--font-ui);
 		color: var(--color-mixup-paper);
+	}
+
+	/* ── Inhoud strak onder de dynamic island ──────────────────────────────────
+	   De bovenmarge hierboven stapelt drie dingen op elkaar die alle drie
+	   "ruimte boven" betekenen: de designmarge van 56px, de safe-area-inset, en
+	   nog eens 14px. env(safe-area-inset-top) EINDIGT al onder de island — dat is
+	   precies wat een safe-area-inset is — dus alles wat er nog bij komt is een
+	   lege strook tussen de island en de eerste inhoud.
+
+	   GEMETEN in WebKit met de toestelmaten opgelegd (venster 402x714, de
+	   inset als vaste waarde omdat env() in een headless browser 0 is). De
+	   achtergrondlaag is .player-screen__backdrop, `fixed; top: 0`, met de
+	   kristal-hoek linksboven op zijn eigen 0,8%:
+
+	     inset   backdrop   hoek l.b.   teampil (NU)   gat onder de island
+	     59px    y=0        y=5,7       y=73           14px
+	     47px    y=0        y=5,7       y=61           14px
+	      0px    y=0        y=5,7       y=56           56px
+
+	   Met deze stand:
+
+	     59px    y=0        y=5,7       y=59           0px
+	     47px    y=0        y=5,7       y=47           0px
+	      0px    y=0        y=5,7       y=8            8px
+
+	   De 8px-ondergrens geldt alleen waar geen inset bestaat (desktop, Android-
+	   browsers zonder notch); daar zou 0 de inhoud tegen de vensterrand plakken.
+	   Op een toestel MET inset wint de inset altijd, dus daar is de uitkomst
+	   exact de onderrand van de island.
+
+	   Bewust een aparte stand en niet de standaardmarge: de andere spelerschermen
+	   (poort, resultaat, /play/thanks) staan op de designmarge van 56px en horen
+	   daar te blijven — dit is de zone met de teampil en de klok, waar de lege
+	   strook opviel. */
+	.player-screen--flush-top {
+		padding-top: max(8px, env(safe-area-inset-top, 0px));
 	}
 
 	/* Vaste viewporthoogte: de kolom mag niet met de inhoud meegroeien, anders

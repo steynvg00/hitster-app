@@ -41,6 +41,7 @@
 	import { stripSetNameFromTitle } from '$lib/challenge-title';
 	import {
 		freshPhase,
+		isPunishment,
 		nextPhase,
 		pointsButton,
 		promisedCount,
@@ -48,6 +49,7 @@
 		splitEarned,
 		type ResultPhase
 	} from '$lib/result-flow';
+	import { toetsenbordBedekking, toetsenbordOpenBij } from '$lib/keyboard-inset';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -314,11 +316,32 @@
 	);
 
 	// Fragment chip toggle
-	function toggleFragment(tabIdx: number, slotIdx: number, fragNum: number) {
+	/**
+	 * Een fragmentnummer aan- of uitvinken, met een BOVENGRENS.
+	 *
+	 * `max` is het aantal fragmenten dat één track binnen deze tab heeft — de
+	 * server leidt het af uit de clips (zie maxFragmentsPerSlot in de load), het
+	 * staat hier niet als getal. Zit de speler op de grens, dan doet een nieuw
+	 * nummer niets tot hij er eerst één weghaalt; uitvinken kan altijd.
+	 *
+	 * De grens staat HIER én op de knop, en dat is met opzet: `disabled` is wat de
+	 * speler ziet, deze regel is wat het waar maakt. Een uitgeschakelde knop is
+	 * een mededeling, geen grens — hij verdwijnt bij elke andere aanroeper.
+	 *
+	 * De onthulpaden (free_answer / X-Ray / Gratis Tab) komen hier NIET langs:
+	 * die schrijven het serverantwoord in één keer weg (zie applyRevealToDraft).
+	 * Dat hoort ook niet begrensd te worden — dat ís het goede antwoord, en het
+	 * past per definitie binnen de grens.
+	 *
+	 * max <= 0 betekent "geen grens" (een tab zonder afleidbare groepsgrootte) en
+	 * laat het oude gedrag staan.
+	 */
+	function toggleFragment(tabIdx: number, slotIdx: number, fragNum: number, max: number) {
 		const frags = allDrafts[tabIdx][slotIdx].fragments ?? [];
 		if (frags.includes(fragNum)) {
 			allDrafts[tabIdx][slotIdx].fragments = frags.filter((n) => n !== fragNum);
 		} else {
+			if (max > 0 && frags.length >= max) return;
 			allDrafts[tabIdx][slotIdx].fragments = [...frags, fragNum].sort((a, b) => a - b);
 		}
 	}
@@ -618,6 +641,10 @@
 
 	let drainToast = $state<{ sourceName: string } | null>(null);
 	let drainToastTimer: ReturnType<typeof setTimeout> | undefined;
+
+	/** Tijd die de host heeft bijgegeven — zie de time_boost-tak in de realtime-handler. */
+	let boostToast = $state<{ seconds: number } | null>(null);
+	let boostToastTimer: ReturnType<typeof setTimeout> | undefined;
 
 	// ── Incoming lock attack (stuk 3 FINAL: tap_to_break) ──────────────────────
 	// UNLIKE freeze/time_drain's pre-consumed markers, tap_to_break's team_effects
@@ -922,9 +949,23 @@
 						payload: Record<string, unknown>;
 					};
 					if (row.effect_type === 'time_boost') {
-						const p = row.payload as { added_seconds?: number; challenge_id?: string };
+						const p = row.payload as {
+							added_seconds?: number;
+							challenge_id?: string;
+							source?: string;
+						};
 						if (p.challenge_id === data.challenge.id) {
 							timerBoostMs += (p.added_seconds ?? 30) * 1000;
+							// Tijd die de HOST bijgeeft heeft geen kaart en geen animatie voor
+							// zich uit: zonder melding springt de klok gewoon vooruit, en dat
+							// is even verwarrend als tijd die verdwijnt (waar time_drain wél
+							// een toast voor heeft). Een eigen powerup-activatie krijgt er
+							// geen — daar is de kaart zelf de aankondiging.
+							if (p.source === 'host') {
+								boostToast = { seconds: p.added_seconds ?? 30 };
+								if (boostToastTimer) clearTimeout(boostToastTimer);
+								boostToastTimer = setTimeout(() => (boostToast = null), 5000);
+							}
 						}
 					} else if (row.effect_type === 'freeze') {
 						const p = row.payload as {
@@ -1061,6 +1102,7 @@
 		return () => {
 			if (iv) clearInterval(iv);
 			if (drainToastTimer) clearTimeout(drainToastTimer);
+			if (boostToastTimer) clearTimeout(boostToastTimer);
 			supabaseBrowser.removeChannel(effectsBoostChannel);
 			supabaseBrowser.removeChannel(attemptChannel);
 			supabaseBrowser.removeChannel(submissionInsertChannel);
@@ -1187,6 +1229,42 @@
 		if (seed.length) pendingEarned = [...untrack(() => pendingEarned), ...seed];
 	});
 
+	/**
+	 * NOOIT WEGGETIKTE STRAFFEN — de tweede resume-bron.
+	 *
+	 * Deze gaan NIET door de wachtkamer hierboven, maar rechtstreeks in de
+	 * strafwachtrij. De wachtkamer bestaat om een verse toekenning niet over het
+	 * puntenscherm heen te laten vallen; een straf die hier binnenkomt is per
+	 * definitie niet vers — hij is bij een eerdere inzending toegekend en toen niet
+	 * in beeld geweest. `resultPhase` hieronder start dan al op 'penalty'.
+	 *
+	 * Dit is het pad dat de straf na een AUTO-SUBMIT alsnog laat verschijnen: daar
+	 * bestaat geen submit-response om hem uit te halen, alleen de rij in de
+	 * database met acknowledged_at IS NULL.
+	 */
+	let seededPenalties = false;
+	$effect(() => {
+		if (seededPenalties) return;
+		seededPenalties = true;
+		const straffen = (data.unseenPenalties ?? []) as EarnedPowerup[];
+		if (straffen.length) penaltyQueue = [...untrack(() => penaltyQueue), ...straffen];
+	});
+
+	/**
+	 * De kaart is weggetikt: leg dat vast, zodat hij niet nog een keer opkomt.
+	 *
+	 * Best-effort en zonder te wachten — de kaart is al van het scherm en de speler
+	 * hoeft niet op het netwerk te wachten om verder te kunnen. Mislukt de POST,
+	 * dan blijft acknowledged_at leeg en verschijnt de straf bij de volgende load
+	 * opnieuw. Dat is de goede kant om op te falen: liever een keer te veel getoond
+	 * dan een straf die stilletjes verdwijnt.
+	 */
+	function tikStrafAf(teamPowerupId: string) {
+		const body = new FormData();
+		body.set('team_powerup_id', teamPowerupId);
+		fetch('?/acknowledgePowerup', { method: 'POST', body }).catch(() => {});
+	}
+
 	$effect(() => {
 		if (!pendingEarned.length) return;
 		const binnen = pendingEarned;
@@ -1235,6 +1313,7 @@
 	 * `priorResult` gevuld. Waar hij dan landt, hangt af van wat er nog
 	 * openstaat — en dat weet de server al vóór de eerste frame:
 	 *
+	 *   nog een straf onaangetikt ->  'penalty', vóór alles
 	 *   nog openstaande powerups  ->  'points', met de belofte er weer bij
 	 *   niets meer open           ->  'details', het resultatenscherm zelf
 	 *
@@ -1244,18 +1323,25 @@
 	 * bestaan — daar stond het antwoordformulier nog in beeld — dus daar mag de
 	 * overgang wél uit een effect komen.
 	 *
-	 * Een strafshot komt hier niet terug. Hij is immediate_use: bij het toekennen
-	 * meteen geactiveerd, status 'consumed', en als activity_log-regel vastgelegd.
-	 * De verplichting staat dus op het scherm van de host op /admin/live en gaat
-	 * niet verloren doordat de speler de kaart niet gezien heeft — maar hij is ook
-	 * niet opnieuw op te roepen, want er is geen openstaande rij meer.
+	 * De strafshot komt hier WEL terug, en dat is nieuw. Hij is immediate_use en
+	 * staat na het toekennen op 'consumed', dus `pendingEarnedPowerups` telt hem
+	 * niet — daarom leest de derde bron (`unseenPenalties`) niet de status maar
+	 * acknowledged_at (migratie 0082): is de kaart in beeld geweest, ja of nee.
+	 * Dat is wat de straf na een auto-submit alsnog laat verschijnen, en wat een
+	 * gewone inlevering waarbij de kaart niet weggetikt is een tweede kans geeft.
 	 */
 	let resultPhase = $state<ResultPhase | null>(
 		// `untrack` omdat deze lezing bewust EENMALIG is: dit is de instapfase, geen
 		// waarde die met `data` mee hoort te bewegen. Zonder untrack leest Svelte dit
 		// als een reactieve verwijzing die per ongeluk buiten een $derived is blijven
 		// staan en waarschuwt hij erover — terecht, want dat is meestal een fout.
-		untrack(() => resumePhase(!!data.priorResult, (data.pendingEarnedPowerups ?? []).length))
+		untrack(() =>
+			resumePhase(
+				!!data.priorResult,
+				(data.pendingEarnedPowerups ?? []).length,
+				(data.unseenPenalties ?? []).length
+			)
+		)
 	);
 
 	/**
@@ -1459,10 +1545,16 @@
 
 	   Op iOS krimpt het layout-viewport niet als het toetsenbord opengaat, dus
 	   de onderrand waar een sticky element vanaf rekent blijft staan.
-	   visualViewport weet wél hoeveel er bedekt is. Diezelfde meting doet nu
-	   twee dingen: ze zet `--kb-inset` (de verbergstand van .pu-bar gebruikt hem
-	   als schuifafstand) en ze zet `toetsenbordOpen`, de vlag die die stand
-	   aanzet.
+	   visualViewport weet wél hoeveel er bedekt is. Diezelfde meting doet twee
+	   dingen: ze zet `--kb-inset` (de verbergstand van .pu-bar gebruikt hem als
+	   schuifafstand) en ze zet `toetsenbordOpen`, de vlag die die stand aanzet.
+
+	   DE SOM ZELF staat in $lib/keyboard-inset, met de meting erbij waarom
+	   `visualViewport.offsetTop` er NIET in hoort: die verschuiving loopt op met
+	   hoe laag het gefocuste veld staat, trok de uitkomst onder de drempel, en
+	   liet de balk daardoor terugkomen — bovenop het toetsenbord. Dat is de
+	   terugkeer die hier onderzocht is; de CSS-verbergstand was al die tijd
+	   ongewijzigd aanwezig.
 
 	   Browsers zonder visualViewport houden 0 en false, en gedragen zich als
 	   voorheen. */
@@ -1471,10 +1563,11 @@
 		if (!vv) return;
 		const root = document.documentElement;
 		const update = () => {
-			const covered = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-			// Onder de ~80px is het geen toetsenbord maar de in-/uitklappende
-			// adresbalk; die mag de balk niet laten wiebelen tijdens het scrollen.
-			const open = covered > 80;
+			const covered = toetsenbordBedekking({
+				innerHeight: window.innerHeight,
+				viewportHeight: vv.height
+			});
+			const open = toetsenbordOpenBij(covered);
 			toetsenbordOpen = open;
 			root.style.setProperty('--kb-inset', open ? `${Math.round(covered)}px` : '0px');
 		};
@@ -1489,38 +1582,27 @@
 		};
 	});
 
-	// ── Tutorial overlay ──────────────────────────────────────────────────────
+	/* ── Uitleg-sheet ─────────────────────────────────────────────────────────
+	   ALLEEN NOG OP AANVRAAG, via de ⓘ-knop in de bovenzone.
+
+	   De sheet ging vroeger vanzelf open zodra de challenge startte. Dat was een
+	   herhaling geworden: de pre-game-poort (scherm 6) toont dezelfde
+	   `tutorialText` al onder de kop HOE WERKT HET, met daaronder het overzicht
+	   van wat er te raden valt. De speler las de tekst, drukte op "Start de
+	   challenge", en kreeg hem meteen daarna nog een keer — nu als bottom-sheet
+	   met een tweede startknop.
+
+	   Er stond wel een onderdrukking, maar die werkte niet meer: het effect dat op
+	   de poort "gezien" wegschreef gebruikte de VARIANT als sleutel, terwijl het
+	   openen op de challenge-id keek. Sinds migratie 0080 (uitleg per challenge)
+	   zijn dat twee verschillende sleutels, dus de sheet zag nooit dat de poort de
+	   tekst al getoond had. Beide localStorage-sleutels zijn met deze wijziging
+	   overbodig en weg — de poort is de plek waar de uitleg staat, en de ⓘ-knop is
+	   hoe je hem tijdens het spelen terughaalt. */
 	let showTutorial = $state(false);
 	const tutorialEntry = $derived(
 		data.tutorialText ? [{ variant: data.challenge.variant, tutorial_text: data.tutorialText }] : []
 	);
-
-	onMount(() => {
-		if (data.tutorialText && data.team?.id && data.attempt) {
-			// Gesleuteld op de CHALLENGE, niet op de variant. Sinds migratie 0080 kan
-			// elke challenge een eigen uitlegtekst hebben, en Hitster en Icons zijn
-			// allebei variant 'standard' — met de oude sleutel zou het lezen van
-			// Hitster de uitleg van Icons voorgoed onderdrukken.
-			const key = `tutorial_seen_${data.team.id}_${data.challenge.id}`;
-			if (!localStorage.getItem(key)) {
-				showTutorial = true;
-				localStorage.setItem(key, '1');
-			}
-		}
-	});
-
-	$effect(() => {
-		if (
-			!data.attempt &&
-			!result &&
-			data.challenge.status === 'active' &&
-			data.tutorialText &&
-			data.team?.id &&
-			typeof localStorage !== 'undefined'
-		) {
-			localStorage.setItem(`tutorial_seen_${data.team.id}_${data.challenge.variant}`, '1');
-		}
-	});
 
 	// ── Field labels ──────────────────────────────────────────────────────────
 	// Speler-facing labels zijn Nederlands, net als de rest van de speler-flow
@@ -1657,12 +1739,14 @@
 	});
 </script>
 
+<!--
+	De uitleg-sheet, alleen nog via de ⓘ-knop. Geen `primaryLabel="Start"` meer:
+	die knop hoorde bij het automatisch openen vlak na de poort, en de challenge
+	is op dat moment allang begonnen. De standaardtekst ("Begrepen") is wat een
+	sheet die je zelf opent hoort te zeggen.
+-->
 {#if showTutorial && tutorialEntry.length > 0}
-	<TutorialOverlay
-		tutorials={tutorialEntry}
-		onclose={() => (showTutorial = false)}
-		primaryLabel="Start"
-	/>
+	<TutorialOverlay tutorials={tutorialEntry} onclose={() => (showTutorial = false)} />
 {/if}
 
 <!--
@@ -1679,7 +1763,12 @@
 			activation={penaltyQueue[0].activation}
 			teamId={data.team.id}
 			setTeams={data.setTeams}
-			onclose={() => (penaltyQueue = penaltyQueue.slice(1))}
+			onclose={() => {
+				// Eerst vastleggen dát hij gezien is, dan pas uit de rij halen: na de
+				// slice is teamPowerupId van deze kaart niet meer te lezen.
+				tikStrafAf(penaltyQueue[0].teamPowerupId);
+				penaltyQueue = penaltyQueue.slice(1);
+			}}
 		/>
 	{/key}
 {/if}
@@ -1702,7 +1791,14 @@
 			teamId={data.team.id}
 			setTeams={data.setTeams}
 			skipRollAnimation={earnedQueue[0].fromSpin === true}
-			onclose={() => (earnedQueue = earnedQueue.slice(1))}
+			onclose={() => {
+				// Ook hier "gezien" vastleggen als het toevallig een straf was. Dat kan:
+				// de Power Spin sluit alleen zichzelf uit van zijn eigen rolpot, dus een
+				// gedraaide penalty_shot komt langs deze kaart. Zonder deze regel zou hij
+				// bij de volgende load nog een keer opkomen als onaangetikte straf.
+				if (isPunishment(earnedQueue[0])) tikStrafAf(earnedQueue[0].teamPowerupId);
+				earnedQueue = earnedQueue.slice(1);
+			}}
 		/>
 	{/key}
 {/if}
@@ -2381,7 +2477,14 @@
 		gezien hebben" — een jaarslider onder de vouw wordt niet gemist. De
 		antwoordkaart heeft nog altijd geen eigen scrollbalk.
 	-->
-	<PlayerScreen fitViewport class="answer-screen">
+	<!--
+		`flushTop`: de teampil en de klok beginnen direct onder de dynamic island in
+		plaats van 14px eronder. De meting staat bij .player-screen--flush-top in
+		PlayerScreen.svelte. Alleen dit scherm zet hem aan — hier is de bovenzone een
+		instrumentenbalk die tegen de schermrand hoort te zitten, niet een pagina met
+		een designmarge erboven.
+	-->
+	<PlayerScreen fitViewport flushTop class="answer-screen">
 		<!-- Freeze overlay (stuk 2): blocking frost layer, clears itself after 30s
 		     client-side — no server round-trip, it's a marker row only. De
 		     vormgeving zit sinds fase 4 in FreezeOverlay; `freezeUntil` en
@@ -2417,6 +2520,20 @@
 						class="h-[26px] w-[26px] shrink-0 object-contain"
 					/>
 					<span>−15s — {drainToast.sourceName} pakte je tijd af!</span>
+				</div>
+			</div>
+		{/if}
+
+		<!-- Extra tijd van de host. Zelfde vorm als de time-drain-toast hierboven,
+		     andere kleur: die twee mogen op een halve seconde kijken niet op elkaar
+		     lijken, want ze betekenen het tegenovergestelde. -->
+		{#if boostToast}
+			<div class="fixed inset-x-0 top-4 z-50 flex justify-center px-4">
+				<div
+					class="flex items-center gap-2.5 rounded-mixup-sm border border-mixup-cyan/45 bg-mixup-cyan/10 px-4 py-2.5 text-[13px] font-bold text-mixup-paper shadow-2xl backdrop-blur-[14px] squircle"
+				>
+					<span class="text-base">⏱</span>
+					<span>+{boostToast.seconds}s van de host erbij!</span>
 				</div>
 			</div>
 		{/if}
@@ -2737,6 +2854,15 @@
 							-->
 							{#if field === 'grouping'}
 								{#if hasGrouping && activeTab}
+									<!--
+										De bovengrens op het aantal fragmenten: zodra er evenveel gekozen
+										zijn als één track er heeft, gaan de overige chips op slot tot er
+										één weggehaald wordt. Het getal komt van de server
+										(maxFragmentsPerSlot, afgeleid uit de clips) — hier staat geen 3.
+									-->
+									{@const maxFrags = activeTab.maxFragmentsPerSlot ?? 0}
+									{@const gekozen = allDrafts[activeTabIndex]?.[slotIdx]?.fragments ?? []}
+									{@const opDeGrens = maxFrags > 0 && gekozen.length >= maxFrags}
 									<div class="flex flex-col gap-2">
 										<!-- Dezelfde labelrij als elk ander veld: opschrift links, de
 										     X-Ray-onthulknop rechts. Grouping was hier tot nu toe van
@@ -2768,19 +2894,32 @@
 												<span>Onthuld: {revealFor('grouping', slotIdx)}</span>
 											</div>
 										{/if}
+										<!--
+											De teller maakt de grens leesbaar in plaats van alleen
+											voelbaar: zonder die regel lijkt een chip die niets doet een
+											kapotte knop.
+										-->
+										{#if maxFrags > 0}
+											<span class="text-[11px] font-semibold text-mixup-dim">
+												{gekozen.length} van {maxFrags} gekozen
+											</span>
+										{/if}
 										<div class="flex flex-wrap gap-2">
 											{#each activeTab.clips as clipItem, ci}
 												{@const fragNum = clipItem.fragmentNumber ?? ci + 1}
-												{@const selected = (
-													allDrafts[activeTabIndex]?.[slotIdx]?.fragments ?? []
-												).includes(fragNum)}
+												{@const selected = gekozen.includes(fragNum)}
+												{@const opSlot = opDeGrens && !selected}
 												<button
 													type="button"
-													onclick={() => toggleFragment(activeTabIndex, slotIdx, fragNum)}
-													class="rounded-mixup-chip px-3.5 py-2 text-sm font-bold transition-colors squircle"
+													disabled={opSlot}
+													aria-disabled={opSlot}
+													onclick={() => toggleFragment(activeTabIndex, slotIdx, fragNum, maxFrags)}
+													class="rounded-mixup-chip px-3.5 py-2 text-sm font-bold transition-colors squircle disabled:cursor-not-allowed"
 													style={selected
 														? `background: ${teamHex}; color: ${teamOn}; border: 1px solid ${teamHex}; box-shadow: 0 0 18px ${teamHex}80;`
-														: 'background: rgba(229,242,255,0.05); color: #9FB1D9; border: 1px solid rgba(229,242,255,0.16);'}
+														: opSlot
+															? 'background: rgba(229,242,255,0.02); color: #4A5578; border: 1px solid rgba(229,242,255,0.07);'
+															: 'background: rgba(229,242,255,0.05); color: #9FB1D9; border: 1px solid rgba(229,242,255,0.16);'}
 												>
 													{fragNum}
 												</button>

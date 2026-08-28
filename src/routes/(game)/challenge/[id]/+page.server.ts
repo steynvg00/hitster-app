@@ -26,6 +26,7 @@ import {
 	DEFAULT_FIELD_MAX,
 	buildFieldResults,
 	getSourceTracksForTab,
+	maxFragmentsPerSlot,
 	type TrackData,
 	type SlotDraft,
 	type TabClipData,
@@ -269,6 +270,14 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 			sortOrder: s.sortOrder
 		}));
 
+		// De bovengrens op de fragmentchips. Afgeleid uit de clips, niet vastgezet —
+		// zie maxFragmentsPerSlot in $lib/server/scoring voor de regel en het waarom.
+		const tabMaxFragments = maxFragmentsPerSlot(
+			allTabClipDataLoad.filter((c) => c.tabId === tab.id),
+			resolvedSrcs.map((s) => s.trackId),
+			clipItems.length
+		);
+
 		// C3b fields for THIS tab, resolved with the same resolver the submit path and
 		// the priorResult rebuild use — so "which fields does this tab actually have"
 		// has exactly one definition. resolveTabFields lives in $lib/server and must
@@ -294,6 +303,7 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 			bonusFields: [...tabBonusFields],
 			clips: clipItems,
 			sourceTracks: sourceTrackItems,
+			maxFragmentsPerSlot: tabMaxFragments,
 			// For mashup tabs the audio comes from the mashup file itself (not a clip).
 			// Fall back to first clip URL for all other variants.
 			primaryClipUrl:
@@ -650,6 +660,62 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 			.filter((e): e is { teamPowerupId: string; type: NonNullable<typeof e.type> } => !!e.type);
 	}
 
+	/**
+	 * NOOIT WEGGETIKTE STRAFFEN van DEZE challenge.
+	 *
+	 * De tweede helft van de resume-staat, en de reden dat er wél een kolom bij
+	 * moest (migratie 0082). De query hierboven leunt op status 'pending', en dat
+	 * werkt voor alles waar de speler nog een keuze over moet maken. Een straf
+	 * heeft die keuze niet: penalty_shot is immediate_use, wordt bij het toekennen
+	 * meteen geactiveerd en staat daarna op 'consumed'. Hij stond daardoor NOOIT in
+	 * de lijst hierboven — niet na een auto-submit, en ook niet na een gewone
+	 * inlevering waarbij de speler de kaart niet wegtikte.
+	 *
+	 * Deze query stelt de andere vraag: is de kaart GEZIEN? `acknowledged_at IS
+	 * NULL` is het enige criterium; de status doet er niet toe, want die zegt of
+	 * het effect is toegepast en niet of de speler het weet.
+	 *
+	 * Afgebakend op categorie 'punishment' en niet op het type-id, dezelfde
+	 * scheidslijn die isPunishment in $lib/result-flow trekt: een tweede straf die
+	 * er ooit bij komt landt zo vanzelf op de goede plek.
+	 *
+	 * `granted_from_challenge_id` houdt het bij deze challenge. Een straf die de
+	 * host los uitdeelt (host-tools) heeft geen challenge en komt hier dus niet
+	 * binnenvallen.
+	 */
+	let unseenPenalties: typeof pendingEarnedPowerups = [];
+	if (activeSetId && locals.teamId) {
+		const { data: penaltyRows } = await admin
+			.from('team_powerups')
+			.select(
+				'id, powerup_type_id, powerup_types!inner(id, name, icon, description, holdable, immediate_use, category)'
+			)
+			.eq('team_id', locals.teamId)
+			.eq('set_id', activeSetId)
+			.eq('granted_from_challenge_id', params.id)
+			.is('acknowledged_at', null)
+			.eq('powerup_types.category', 'punishment')
+			.order('granted_at');
+		unseenPenalties = (penaltyRows ?? [])
+			.map((r) => ({
+				teamPowerupId: r.id,
+				type: (
+					r as unknown as {
+						powerup_types: {
+							id: string;
+							name: string;
+							icon: string | null;
+							description: string | null;
+							holdable: boolean;
+							immediate_use: boolean;
+							category: string | null;
+						} | null;
+					}
+				).powerup_types
+			}))
+			.filter((e): e is { teamPowerupId: string; type: NonNullable<typeof e.type> } => !!e.type);
+	}
+
 	// Teams in this set — the target list for offensive-powerup activation (stuk 1).
 	// hasActiveTimedAttempt (stuk 2) lets the picker grey teams a timer attack
 	// (freeze/time_drain) can't hit right now; give_a_shot ignores it.
@@ -775,6 +841,7 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 		tutorialText,
 		heldPowerups,
 		pendingEarnedPowerups,
+		unseenPenalties,
 		activeEffects,
 		freeAnswerReveal,
 		lifelineHints,
@@ -896,6 +963,36 @@ export const actions: Actions = {
 			isFinal: true
 		};
 		return { submitted: true, result, earnedPowerups: outcome.earnedPowerups };
+	},
+
+	/**
+	 * "Ik heb de kaart gezien." Zet acknowledged_at (migratie 0082).
+	 *
+	 * Aangeroepen als de speler een strafkaart wegtikt — zowel de verse uit de
+	 * submit-action als de opnieuw opgeroepen uit de load. Eén schrijfpad voor
+	 * allebei, want het is dezelfde vraag: is deze kaart in beeld geweest.
+	 *
+	 * Bewust NIET gekoppeld aan resolveEarnedPowerup: die gaat over BEWAREN of
+	 * LATEN GAAN, en een straf kent die keuze niet.
+	 *
+	 * Afgeschermd op het team uit de cookie, zodat een telefoon nooit de kaart van
+	 * een ander team kan wegtikken. Idempotent: nog een keer wegtikken schrijft
+	 * dezelfde rij nog een keer weg en verandert niets aan wat de speler ziet.
+	 */
+	acknowledgePowerup: async ({ request, locals }) => {
+		if (!locals.teamId) return fail(401, { error: 'Geen team' });
+		const admin = createAdminClient();
+		const fd = await request.formData();
+		const teamPowerupId = (fd.get('team_powerup_id') as string | null)?.trim();
+		if (!teamPowerupId) return fail(400, { error: 'Missing team_powerup_id' });
+
+		await admin
+			.from('team_powerups')
+			.update({ acknowledged_at: new Date().toISOString() })
+			.eq('id', teamPowerupId)
+			.eq('team_id', locals.teamId);
+
+		return { acknowledged: true };
 	},
 
 	resolveEarnedPowerup: async ({ request }) => {

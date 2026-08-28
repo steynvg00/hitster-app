@@ -3784,8 +3784,15 @@ export async function activatePowerup(
 			// Purely social — no team_effects row (no scoring impact, no carry-over
 			// to any submission), just an activity_log entry so the host sees who
 			// owes a shot on /admin/live, and the powerup is spent immediately.
+			//
+			// challenge_id is carried through (it was dropped before): the host feed
+			// showed "owes a shot" with no way to tell which challenge earned it, and
+			// on a busy evening that is the difference between a usable line and a
+			// notification. Nullable at the source — a shot handed out outside a
+			// challenge simply has none.
 			await supabase.from('activity_log').insert({
 				team_id: tpu.team_id,
+				challenge_id: tpu.granted_from_challenge_id,
 				event_type: 'penalty_shot',
 				payload: { team_id: tpu.team_id }
 			} as never);

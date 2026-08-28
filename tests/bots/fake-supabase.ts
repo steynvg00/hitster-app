@@ -66,7 +66,13 @@ export const TABLE_COLUMNS: Record<string, string[]> = {
 		'granted_from_challenge_id',
 		'used_at',
 		'status',
-		'payload'
+		'payload',
+		// Migratie 0082. NIET uit de live PostgREST-spec gelezen zoals de rest van
+		// deze lijst — die migratie is nog niet gedraaid. Hij staat hier omdat de
+		// leesregel ("lees de echte kolomlijst") bedoeld is tegen verzonnen kolommen,
+		// en deze staat letterlijk in supabase/migrations/0082_powerup_acknowledged.sql.
+		// Zodra 0082 gedraaid is, klopt hij ook met de spec.
+		'acknowledged_at'
 	],
 	teams: [
 		'id',
@@ -182,7 +188,16 @@ export const TABLE_COLUMNS: Record<string, string[]> = {
 		'year_min',
 		'year_max'
 	],
-	challenge_tabs: ['id', 'challenge_id', 'position', 'created_at', 'created_by', 'effects', 'mashup_id', 'fields'],
+	challenge_tabs: [
+		'id',
+		'challenge_id',
+		'position',
+		'created_at',
+		'created_by',
+		'effects',
+		'mashup_id',
+		'fields'
+	],
 	variant_defaults: ['variant', 'points_config', 'streak_config', 'tutorial_text'],
 	challenge_tab_source_tracks: ['id', 'tab_id', 'track_id', 'sort_order'],
 	challenge_tab_clips: ['id', 'tab_id', 'clip_id', 'fragment_number', 'sort_order'],

@@ -44,7 +44,17 @@
 		}
 		if (a.event_type === 'score_reset') return 'Score reset to 0';
 		if (a.event_type === 'challenge_closed') return 'Challenge closed';
+		if (a.event_type === 'attempt_reset' && payload?.reason) {
+			return `Challenge reset (−${payload.score_deducted ?? 0}): ${payload.reason}`;
+		}
 		if (a.event_type === 'attempt_reset') return 'Attempt reset';
+		// Host interventions (host-tools). Both carry a mandatory reason.
+		if (a.event_type === 'host_powerup_granted' && payload) {
+			return `Host granted ${payload.powerup_name ?? 'a powerup'}: ${payload.reason ?? ''}`;
+		}
+		if (a.event_type === 'host_time_granted' && payload) {
+			return `Host gave +${payload.seconds ?? '?'}s: ${payload.reason ?? ''}`;
+		}
 		if (a.event_type === 'team_entry') return 'Team entry scan';
 		return a.event_type.replace(/_/g, ' ');
 	}
@@ -55,6 +65,8 @@
 		score_reset: '↺',
 		challenge_closed: '✕',
 		attempt_reset: '↺',
+		host_powerup_granted: '🎁',
+		host_time_granted: '⏱',
 		team_entry: '→'
 	};
 

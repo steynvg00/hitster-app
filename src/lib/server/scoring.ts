@@ -992,6 +992,49 @@ export function groupingAnswerForTrack(tabClips: TabClipData[], trackId: string)
 	return groupingNumbersForTrack(tabClips, trackId).join(', ');
 }
 
+/**
+ * HOEVEEL FRAGMENTEN ER PER TRACK TE KIEZEN ZIJN — de bovengrens van de chips.
+ *
+ * De speler kon alle negen fragmentnummers aanvinken. scoreGrouping strafte dat
+ * al af (`surplus` trekt elk teveel van de treffers af, dus alles aanvinken
+ * levert nul op), maar afstraffen is niet hetzelfde als verbieden: een keuze die
+ * per definitie nul oplevert hoort niet klikbaar te zijn.
+ *
+ * Het getal wordt AFGELEID, nooit vastgezet: het is de grootste groep clips die
+ * één bron-track binnen deze tab heeft, geteld met exact dezelfde functie die
+ * het goede antwoord oplevert (groupingNumbersForTrack). Bij de gebruikelijke 9
+ * clips over 3 tracks is dat 3; bij een tab die anders is ingericht volgt het
+ * vanzelf mee.
+ *
+ * De GROOTSTE groep en niet het gemiddelde: een bovengrens mag nooit een geldig
+ * antwoord tegenhouden. Zijn de groepen ongelijk (2/3/4), dan moet de speler er
+ * op de track met vier ook vier kunnen kiezen — afkappen op het gemiddelde zou
+ * een goed antwoord onmogelijk maken. Op de tracks met twee of drie kost een
+ * vierde gok hem dan gewoon punten via de surplusregel, precies zoals bedoeld.
+ *
+ * Wat dit VERKLAPT is alleen die bovengrens, en die is toch al zichtbaar zodra
+ * de chips op slot gaan. Welke clip bij welke track hoort blijft waar het hoort:
+ * de speler krijgt geen trackId per clip mee, alleen deze telling steunt erop.
+ *
+ * De terugval (clips gedeeld door tracks, naar boven afgerond) geldt als geen
+ * enkele clip een track kent — dan valt er niets af te leiden en is een gelijke
+ * verdeling de enige aanname die overblijft.
+ *
+ * 0 betekent "geen grens": een tab zonder bron-tracks, en daarmee ook elke
+ * variant die helemaal geen grouping heeft.
+ */
+export function maxFragmentsPerSlot(
+	tabClips: TabClipData[],
+	trackIds: string[],
+	clipCount: number
+): number {
+	if (trackIds.length === 0) return 0;
+	const groepsgroottes = trackIds.map((id) => groupingNumbersForTrack(tabClips, id).length);
+	const grootste = Math.max(...groepsgroottes);
+	if (grootste > 0) return grootste;
+	return Math.ceil(clipCount / trackIds.length);
+}
+
 // ─── Tab scorer ───────────────────────────────────────────────────────────────
 
 export type TabSourceTrackData = {

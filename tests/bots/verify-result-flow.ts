@@ -188,6 +188,64 @@ function check(naam: string, ok: boolean, detail: string) {
 	);
 }
 
+// ── Randgeval 5: de straf die de speler nooit gezien heeft ──────────────────
+//
+// Twee paden komen hier samen, en allebei kwamen ze eerder niet aan bij de
+// speler. penalty_shot is immediate_use: hij is bij het toekennen al geactiveerd
+// en staat op 'consumed', dus `pendingCount` telt hem niet. Het derde argument
+// telt iets anders: straffen met acknowledged_at IS NULL (migratie 0082) — is de
+// kaart in beeld geweest, ja of nee.
+//
+//   auto-submit         de straf wordt toegekend terwijl de telefoon in iemands
+//                       zak zit. Geen scherm, geen terugkeerwaarde.
+//   gewone inlevering   de kaart komt uit de submit-response. Wie hem niet
+//                       wegtikt, heeft geen tweede kans — die waarde bestaat
+//                       alleen in die ene response.
+{
+	const naAutoSubmit = resumePhase(true, 0, 1);
+	check(
+		'straf na auto-submit',
+		naAutoSubmit === 'penalty',
+		`niets 'pending', één onaangetikte straf -> '${naAutoSubmit}' — precies het geval waarin de speler nooit een scherm zag`
+	);
+
+	// En daarna gewoon de rest van de flow, net als bij een verse inzending.
+	const naDeStraf = nextPhase('penalty', { penalties: 0, prizes: 0 });
+	const daarna = nextPhase('points', { penalties: 0, prizes: 0 });
+	check(
+		'de straf blokkeert de flow niet',
+		naDeStraf === 'points' && daarna === 'points',
+		`weggetikt -> '${naDeStraf}', en het puntenscherm heeft zijn eigen knop naar de resultaten`
+	);
+
+	// Straf én openstaande powerups: de straf gaat vóór, de belofte blijft staan.
+	const metPowerups = resumePhase(true, 2, 1);
+	check(
+		'straf gaat vóór openstaande powerups',
+		metPowerups === 'penalty',
+		`2 open powerups + 1 onaangetikte straf -> '${metPowerups}', niet meteen naar de belofte`
+	);
+
+	// Regressie: zonder onaangetikte straf verandert er niets aan wat er was.
+	const zonderStraf = resumePhase(true, 1, 0);
+	const zonderStrafNietsOpen = resumePhase(true, 0, 0);
+	const oudeAanroep = resumePhase(true, 0);
+	check(
+		'zonder straf blijft het gedrag ongewijzigd',
+		zonderStraf === 'points' && zonderStrafNietsOpen === 'details' && oudeAanroep === 'details',
+		`1 open -> '${zonderStraf}', niets open -> '${zonderStrafNietsOpen}', en een aanroep zonder derde argument -> '${oudeAanroep}'`
+	);
+
+	// Een speler die nog niet ingeleverd heeft, krijgt geen strafkaart voor zijn
+	// antwoordformulier — ook niet als er een oude onaangetikte rij zou staan.
+	const nooitIngeleverd = resumePhase(false, 0, 1);
+	check(
+		'geen resultaat, geen strafkaart',
+		nooitIngeleverd === null,
+		`${nooitIngeleverd} — het antwoordformulier blijft staan`
+	);
+}
+
 // ── De belofte: het AANTAL, en de Power Spin-prijs telt niet mee ────────────
 {
 	const metSpin = promisedCount([prijs(), spinPrijs()]);
@@ -231,6 +289,41 @@ function check(naam: string, ok: boolean, detail: string) {
 		importeert && ontbreekt.length === 0
 			? `roept alle vijf de beslissingen hier aan (${nodig.join(', ')})`
 			: `pagina rekent fasen zelf uit — ontbrekend: ${ontbreekt.join(', ') || 'de import'}`
+	);
+
+	// De straf-resume is pas echt aangesloten als de pagina de derde bron ook
+	// binnenhaalt, in de strafwachtrij zet, en het wegtikken vastlegt. Zonder deze
+	// drie zou alles hierboven groen zijn terwijl de speler nog steeds niets ziet.
+	const leestBron = /data\.unseenPenalties/.test(bron);
+	const inStrafwachtrij = /penaltyQueue\s*=\s*\[[^\]]*straffen/.test(bron);
+	const tiktAf = /acknowledgePowerup/.test(bron) && /tikStrafAf\(/.test(bron);
+	check(
+		'de straf-resume is aangesloten',
+		leestBron && inStrafwachtrij && tiktAf,
+		leestBron && inStrafwachtrij && tiktAf
+			? 'de pagina leest unseenPenalties, vult er de strafwachtrij mee, en legt het wegtikken vast'
+			: `unseenPenalties gelezen: ${leestBron}, in de wachtrij: ${inStrafwachtrij}, wegtikken vastgelegd: ${tiktAf}`
+	);
+}
+
+// ── De server levert de straffen ook echt aan ───────────────────────────────
+// De pagina kan niets tonen wat de load niet meestuurt, en de load kan alleen op
+// acknowledged_at filteren — niet op status, want een straf staat op 'consumed'.
+{
+	const bron = readFileSync(
+		resolve(process.cwd(), 'src/routes/(game)/challenge/[id]/+page.server.ts'),
+		'utf8'
+	);
+	const opAcknowledged = /\.is\('acknowledged_at', null\)/.test(bron);
+	const opCategorie = /'powerup_types\.category',\s*'punishment'/.test(bron);
+	const stuurtMee = /\n\t\tunseenPenalties,/.test(bron);
+	const schrijftTerug = /acknowledgePowerup:\s*async/.test(bron);
+	check(
+		'de load levert de onaangetikte straffen',
+		opAcknowledged && opCategorie && stuurtMee && schrijftTerug,
+		opAcknowledged && opCategorie && stuurtMee && schrijftTerug
+			? "gefilterd op acknowledged_at IS NULL en categorie 'punishment', meegestuurd, en er is een actie die het terugschrijft"
+			: `acknowledged_at-filter: ${opAcknowledged}, categoriefilter: ${opCategorie}, meegestuurd: ${stuurtMee}, schrijfactie: ${schrijftTerug}`
 	);
 }
 

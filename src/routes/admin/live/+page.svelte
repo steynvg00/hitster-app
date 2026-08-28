@@ -5,6 +5,7 @@
 	import { supabaseBrowser } from '$lib/supabase-browser';
 	import { livePlaceLabel } from '$lib/standings';
 	import Modal from '$lib/components/ui/Modal.svelte';
+	import HostToolsSheet from '$lib/components/admin/HostToolsSheet.svelte';
 	import type { PageData } from './$types';
 	import type { ActivityLogRow } from '$lib/types/database';
 	import type { ScoreBreakdown } from '$lib/types/index.js';
@@ -28,6 +29,51 @@
 
 	// ── Team detail modal (per-team answer inspection) ────────────────────────
 	let selectedTeamId = $state<string | null>(null);
+
+	/* ── Ingrijpen ─────────────────────────────────────────────────────────────
+	   De vier host-ingrepen (punten, powerup, extra tijd, challenge terugzetten)
+	   openen vanaf de teamkaart en vanaf de cel in het challenge-raster — twee
+	   ingangen, één sheet. Dat het vanuit de cel kan is niet luxe: als je ziet dat
+	   een team vastloopt, kijk je op dat moment naar díe cel.
+
+	   `hostToolsTeamId` is de enige toestand die dit nodig heeft; de sheet leest
+	   de rest uit dezelfde realtime-arrays waar de panelen op draaien, dus wat de
+	   host ziet en waarop hij ingrijpt kan niet uit elkaar lopen. */
+	let hostToolsTeamId = $state<string | null>(null);
+	let hostToolsMelding = $state<string | null>(null);
+	let meldingTimer: ReturnType<typeof setTimeout> | undefined;
+
+	const hostToolsTeam = $derived(teams.find((t) => t.id === hostToolsTeamId) ?? null);
+
+	/**
+	 * De challenge waar dit team NU op zit: een beurt zonder ended_at, en zonder
+	 * afgeronde inlevering. Dezelfde twee voorwaarden die cellStatus gebruikt om
+	 * een cel 'active' te noemen, zodat het raster en de sheet het niet oneens
+	 * kunnen zijn.
+	 */
+	function lopendeChallenge(teamId: string) {
+		for (const c of data.challenges) {
+			const at = getAttempt(c.id, teamId);
+			if (!at || at.ended_at) continue;
+			if (getSubmission(c.id, teamId)?.is_final) continue;
+			return { id: c.id, title: c.title, variant: c.variant };
+		}
+		return null;
+	}
+
+	/** Challenges waar dit team een beurt of een inlevering op heeft staan. */
+	function terugzetbareChallenges(teamId: string) {
+		return data.challenges
+			.filter((c) => getAttempt(c.id, teamId) || getSubmission(c.id, teamId))
+			.map((c) => ({ id: c.id, title: c.title, variant: c.variant }));
+	}
+
+	function toonMelding(msg: string) {
+		hostToolsMelding = msg;
+		hostToolsTeamId = null;
+		if (meldingTimer) clearTimeout(meldingTimer);
+		meldingTimer = setTimeout(() => (hostToolsMelding = null), 6000);
+	}
 
 	// ── Polling state ─────────────────────────────────────────────────────────
 	let pollingActive = $state(false);
@@ -244,7 +290,26 @@
 			return `⚔️ ${teamLabel(a.team_id)} ranked ${ordinal(rank)} (+${awarded})`;
 		}
 		if (a.event_type === 'challenge_closed') return 'Challenge closed';
+		// De host-ingrepen. Elk toont zijn reden, want zonder die reden is een
+		// logregel over een puntenverschuiving een uur later niet meer te plaatsen.
+		if (a.event_type === 'attempt_reset' && payload) {
+			const punten = Number(payload.score_deducted ?? 0);
+			const powerups = Number(payload.powerups_revoked ?? 0);
+			return (
+				`↺ ${teamLabel(a.team_id)} — challenge teruggezet (−${punten}` +
+				(powerups > 0 ? `, ${powerups} powerup(s) ingetrokken` : '') +
+				`): ${payload.reason ?? ''}`
+			);
+		}
 		if (a.event_type === 'attempt_reset') return 'Attempt reset';
+		if (a.event_type === 'host_powerup_granted' && payload) {
+			return `🎁 host gaf ${teamLabel(a.team_id)} ${payload.powerup_name ?? 'een powerup'}${
+				payload.immediate_use ? ' (ging direct af)' : ''
+			}: ${payload.reason ?? ''}`;
+		}
+		if (a.event_type === 'host_time_granted' && payload) {
+			return `⏱ host gaf ${teamLabel(a.team_id)} +${payload.seconds ?? '?'}s: ${payload.reason ?? ''}`;
+		}
 		return a.event_type.replace(/_/g, ' ');
 	}
 
@@ -653,6 +718,23 @@
 									{/each}
 								</div>
 							{/if}
+
+							<!--
+								De ingang naar de vier ingrepen. Een eigen knop en niet de kaart
+								zelf: de kaart opent de antwoord-inspectie, en die twee mogen
+								niet met één vinger door elkaar te halen zijn. stopPropagation
+								houdt de kaartklik eronder tegen.
+							-->
+							<button
+								type="button"
+								onclick={(e) => {
+									e.stopPropagation();
+									hostToolsTeamId = team.id;
+								}}
+								class="mt-2 w-full rounded-lg border border-zinc-700 bg-zinc-950 py-2 text-xs font-semibold text-zinc-300 transition hover:border-zinc-500 hover:text-white"
+							>
+								Ingrijpen
+							</button>
 						</div>
 					{/each}
 				</div>
@@ -779,33 +861,22 @@
 														<span class="text-xs font-bold text-zinc-200">{team.display_name}</span>
 													</div>
 													<div class="mb-2 text-xs {cell.color}">{cell.label}</div>
-													{#if cell.hasAttempt}
-														<form
-															method="POST"
-															action="?/resetTeamAttempt"
-															use:enhance={() => {
-																openPopover = null;
-																return async ({ update }) => update();
-															}}
-														>
-															<input type="hidden" name="challenge_id" value={challenge.id} />
-															<input type="hidden" name="team_id" value={team.id} />
-															<button
-																type="submit"
-																onclick={(e) => {
-																	if (
-																		!confirm(
-																			`Reset ${team.display_name}'s attempt? This will delete their submission and deduct points.`
-																		)
-																	)
-																		e.preventDefault();
-																}}
-																class="w-full rounded-lg bg-red-950 px-2 py-1.5 text-xs font-medium text-red-400 transition hover:bg-red-900"
-															>
-																Force reset
-															</button>
-														</form>
-													{/if}
+													<!--
+														Was een directe "Force reset" met een browser-confirm en zonder
+														reden. Die knop is vervangen door de ingang naar de sheet: daar
+														staat het redenveld, de bevestigingsstap, en de uitgeschreven
+														lijst van wat er wel en niet wordt teruggedraaid.
+													-->
+													<button
+														type="button"
+														onclick={() => {
+															openPopover = null;
+															hostToolsTeamId = team.id;
+														}}
+														class="w-full rounded-lg bg-zinc-800 px-2 py-1.5 text-xs font-medium text-zinc-200 transition hover:bg-zinc-700"
+													>
+														Ingrijpen…
+													</button>
 												</div>
 											{/if}
 										</div>
@@ -866,6 +937,36 @@
 				{/if}
 			</div>
 		</div>
+
+		<!--
+			Ingrijpen — de vier host-ingrepen voor één team. De sheet krijgt de
+			lopende en de terugzetbare challenges uit dezelfde realtime-arrays waar
+			de panelen hierboven op draaien.
+		-->
+		{#if hostToolsTeam}
+			<HostToolsSheet
+				team={hostToolsTeam}
+				setId={data.selectedSetId}
+				teamColor={teamColorHex[hostToolsTeam.color] ?? '#666'}
+				runningChallenge={lopendeChallenge(hostToolsTeam.id)}
+				resettableChallenges={terugzetbareChallenges(hostToolsTeam.id)}
+				powerupTypes={data.powerupTypes}
+				onclose={() => (hostToolsTeamId = null)}
+				ondone={toonMelding}
+			/>
+		{/if}
+
+		<!-- Bevestiging na een ingreep. Blijft 6 seconden staan: lang genoeg om te
+		     lezen wat er gebeurd is, kort genoeg om niet in de weg te zitten. -->
+		{#if hostToolsMelding}
+			<div class="fixed inset-x-0 bottom-4 z-50 flex justify-center px-4">
+				<div
+					class="max-w-md rounded-xl border border-green-800 bg-green-950 px-4 py-3 text-sm font-medium text-green-200 shadow-2xl"
+				>
+					{hostToolsMelding}
+				</div>
+			</div>
+		{/if}
 
 		<!-- Team detail: per-challenge answers + breakdown -->
 		{#if selectedTeam}
