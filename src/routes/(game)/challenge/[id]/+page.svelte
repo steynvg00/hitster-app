@@ -1242,12 +1242,39 @@
 	 * bestaat geen submit-response om hem uit te halen, alleen de rij in de
 	 * database met acknowledged_at IS NULL.
 	 */
-	let seededPenalties = false;
+	/**
+	 * Elke straf die deze pagina al in de wachtrij heeft gezet, op id.
+	 *
+	 * BEWUST EEN SET EN GEEN EENMALIGE VLAG. Hier stond `if (seededPenalties)
+	 * return;`, en dat maakte van de bron een MOMENTOPNAME bij het mounten: een
+	 * straf die later in `data` verschijnt — en dat is precies wat er gebeurt,
+	 * want de load draait bij elke `invalidateAll()` opnieuw — werd nooit meer
+	 * opgepakt. Daarmee was het vangnet uit migratie 0082 alleen bruikbaar op een
+	 * VERSE paginalading, terwijl het juist bedoeld is als de duurzame bron: de
+	 * database weet welke straf nog niet gezien is, het scherm niet.
+	 *
+	 * Met een id-set is de bron gewoon herhaalbaar te lezen en zorgt de set voor
+	 * de enige eigenschap die de vlag echt leverde: geen dubbele kaart. Dat is
+	 * ook nodig, want dezelfde straf komt langs twee wegen binnen — via deze
+	 * bron én via de terugkeerwaarde van de submit-action.
+	 *
+	 * Een weggetikte straf blijft in de set staan, ook als de POST van
+	 * acknowledged_at nog onderweg is: binnen deze paginalading mag hij niet
+	 * terugkomen. Bij een echte herlading is de set leeg en beslist de database
+	 * opnieuw — en die kant is de goede kant om op te falen.
+	 */
+	const straffenInBeeldGeweest = new Set<string>();
+
+	/** Nieuwe straffen in de wachtrij zetten, dubbelen eruit. */
+	function zetStraffenInDeRij(straffen: EarnedPowerup[]) {
+		const nieuw = straffen.filter((s) => !straffenInBeeldGeweest.has(s.teamPowerupId));
+		if (!nieuw.length) return;
+		for (const s of nieuw) straffenInBeeldGeweest.add(s.teamPowerupId);
+		penaltyQueue = [...untrack(() => penaltyQueue), ...nieuw];
+	}
+
 	$effect(() => {
-		if (seededPenalties) return;
-		seededPenalties = true;
-		const straffen = (data.unseenPenalties ?? []) as EarnedPowerup[];
-		if (straffen.length) penaltyQueue = [...untrack(() => penaltyQueue), ...straffen];
+		zetStraffenInDeRij((data.unseenPenalties ?? []) as EarnedPowerup[]);
 	});
 
 	/**
@@ -1260,6 +1287,10 @@
 	 * dan een straf die stilletjes verdwijnt.
 	 */
 	function tikStrafAf(teamPowerupId: string) {
+		// Binnen deze paginalading is hij hoe dan ook klaar, ook als de POST
+		// hieronder faalt: de speler heeft de kaart gezien, en de bron uit de load
+		// mag hem niet nog eens aandragen zolang dit scherm openstaat.
+		straffenInBeeldGeweest.add(teamPowerupId);
 		const body = new FormData();
 		body.set('team_powerup_id', teamPowerupId);
 		fetch('?/acknowledgePowerup', { method: 'POST', body }).catch(() => {});
@@ -1273,11 +1304,17 @@
 		// antwoordformulier — dan is er geen fase om op te wachten en is er ook
 		// niets om een straf vóór te laten gaan.
 		if (!result) {
+			// Een gedraaide penalty_shot gaat hier langs de gewone onthullingskaart
+			// (die tikt hem in zijn onclose af). Hem meteen als "in beeld" boeken
+			// voorkomt dat de bron uit de load hem er straks nóg eens bij zet.
+			for (const e of binnen) if (isPunishment(e)) straffenInBeeldGeweest.add(e.teamPowerupId);
 			earnedQueue = [...untrack(() => earnedQueue), ...binnen];
 			return;
 		}
 		const { penalties, prizes } = splitEarned(binnen);
-		penaltyQueue = [...untrack(() => penaltyQueue), ...penalties];
+		// Langs dezelfde poort als de bron uit de load: dezelfde straf kan via
+		// allebei binnenkomen, en de speler hoort hem één keer te zien.
+		zetStraffenInDeRij(penalties);
 		earnedQueue = [...untrack(() => earnedQueue), ...prizes];
 	});
 

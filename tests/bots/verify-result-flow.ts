@@ -416,7 +416,7 @@ function check(naam: string, ok: boolean, detail: string) {
 	// binnenhaalt, in de strafwachtrij zet, en het wegtikken vastlegt. Zonder deze
 	// drie zou alles hierboven groen zijn terwijl de speler nog steeds niets ziet.
 	const leestBron = /data\.unseenPenalties/.test(bron);
-	const inStrafwachtrij = /penaltyQueue\s*=\s*\[[^\]]*straffen/.test(bron);
+	const inStrafwachtrij = /penaltyQueue\s*=\s*\[[^\]]*nieuw\]/.test(bron);
 	const tiktAf = /acknowledgePowerup/.test(bron) && /tikStrafAf\(/.test(bron);
 	check(
 		'de straf-resume is aangesloten',
@@ -424,6 +424,23 @@ function check(naam: string, ok: boolean, detail: string) {
 		leestBron && inStrafwachtrij && tiktAf
 			? 'de pagina leest unseenPenalties, vult er de strafwachtrij mee, en legt het wegtikken vast'
 			: `unseenPenalties gelezen: ${leestBron}, in de wachtrij: ${inStrafwachtrij}, wegtikken vastgelegd: ${tiktAf}`
+	);
+
+	// De bron mag GEEN momentopname bij het mounten zijn. Een eenmalige vlag
+	// (`if (seededPenalties) return`) leest `data.unseenPenalties` precies één
+	// keer, en zet daarmee het vangnet uit 0082 uit voor elke straf die pas bij
+	// een latere invalidateAll in `data` verschijnt — wat na élke inlevering
+	// gebeurt. Herhaalbaar lezen mag alleen met dubbelbescherming op id.
+	// Op de CODE, niet op het woord: het docblock ernaast citeert de oude regel
+	// met opzet, en dat citaat moet blijven staan.
+	const eenmaligeSeed = /^\s*if \(seededPenalties\) return;/m.test(bron);
+	const dedupOpId = /straffenInBeeldGeweest\.has\(/.test(bron);
+	check(
+		'de straf-bron is herhaalbaar, met dubbelbescherming op id',
+		!eenmaligeSeed && dedupOpId,
+		!eenmaligeSeed && dedupOpId
+			? 'geen eenmalige seed-vlag meer; dubbelen worden op teamPowerupId geweerd'
+			: `eenmalige seed aanwezig: ${eenmaligeSeed}, dedup op id: ${dedupOpId}`
 	);
 }
 
