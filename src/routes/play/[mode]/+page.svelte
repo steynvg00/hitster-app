@@ -111,12 +111,39 @@
 			class="flex min-h-0 flex-1 shrink items-center justify-center"
 			class:pt-5={!data.gamesetLogo}
 		>
-			<img
-				src={MIXUP_LOGO}
-				alt="M!XUP"
-				class="max-h-full w-full object-contain"
-				style="filter: drop-shadow(0 0 40px rgba(124, 77, 255, 0.65));"
-			/>
+			<!--
+				GEEN `filter: drop-shadow()` meer. Dit is de enige overgebleven kandidaat
+				voor de lichte rechthoek achter het logo, en de vierde poging om die weg
+				te krijgen — de eerste die niet aan het BESTAND zit.
+
+				Wat er gemeten is, en waarom het hierop uitkomt:
+
+				· Het asset is schoon. Gedecodeerd door WebKit uit wat de productie-URL
+				  werkelijk serveert (sha256 gelijk aan de repo-versie): alfa 1-4 = 0,00%,
+				  ook 5-8 / 9-16 / 17-32 zitten uitsluitend tegen de letters aan, de vier
+				  40x40-hoeken staan op max 0/0/5/0, en de 20x20-uitsnede linksboven is
+				  volledig nul. De film van 42,30% uit #99 is er niet meer — niet in
+				  bucket 1-4, en ook niet verschoven naar een hogere bucket.
+				· De hele voorouderketen van deze <img> is doorgemeten op background,
+				  background-image, border, box-shadow, backdrop-filter, opacity,
+				  transform, will-change, isolation, mix-blend-mode, contain en
+				  perspective. Er is er GEEN. Deze filter was het enige dat overbleef.
+				· De elementdoos is op elke geteste viewport (390x844 t/m 430x932) exact
+				  gelijk aan het geschilderde logo — `object-contain` laat hier nul loze
+				  ruimte. Een schaduw die op de DOOS gerasterd wordt in plaats van op de
+				  alfavorm geeft dus precies een rechthoek strak om het woordmerk.
+
+				Wat ik NIET kan aantonen: dat iOS Safari dat ook echt doet. In headless
+				WebKit volgt de schaduw netjes de vorm — Δluma 0,0 in alle vier de hoeken
+				van de elementdoos, 4,4 en 8,7 vlak naast een letter. Dat weerlegt niets,
+				want een headless macOS-WebKit rastert op een andere laag dan Safari op
+				een toestel; het betekent alleen dat de reproductie op de iPhone hoort.
+
+				Het logo draagt zijn eigen neonglow al in de artwork, en de vier andere
+				plekken die ditzelfde bestand tonen (leaderboard, podium, wachtscherm,
+				NFC-splash) hebben geen enkele CSS-glow. Deze pagina was de uitzondering.
+			-->
+			<img src={MIXUP_LOGO} alt="M!XUP" class="max-h-full w-full object-contain" />
 		</div>
 
 		{#if form?.error}
