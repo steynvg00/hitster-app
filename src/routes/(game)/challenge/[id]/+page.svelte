@@ -1263,6 +1263,12 @@
 	 * terugkomen. Bij een echte herlading is de set leeg en beslist de database
 	 * opnieuw — en die kant is de goede kant om op te falen.
 	 */
+	// Bewust een KALE Set en geen SvelteSet: deze mag niet reactief zijn. Het
+	// effect hieronder leest `.has()` en schrijft `.add()` in dezelfde doorloop —
+	// met een reactieve set zou het zichzelf ongeldig maken en opnieuw draaien.
+	// Wat hij bijhoudt is boekhouding over wat er al getoond is, geen toestand
+	// waar iets op hoort te hertekenen.
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
 	const straffenInBeeldGeweest = new Set<string>();
 
 	/** Nieuwe straffen in de wachtrij zetten, dubbelen eruit. */
