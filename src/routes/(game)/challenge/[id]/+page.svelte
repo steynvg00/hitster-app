@@ -315,11 +315,32 @@
 	);
 
 	// Fragment chip toggle
-	function toggleFragment(tabIdx: number, slotIdx: number, fragNum: number) {
+	/**
+	 * Een fragmentnummer aan- of uitvinken, met een BOVENGRENS.
+	 *
+	 * `max` is het aantal fragmenten dat één track binnen deze tab heeft — de
+	 * server leidt het af uit de clips (zie maxFragmentsPerSlot in de load), het
+	 * staat hier niet als getal. Zit de speler op de grens, dan doet een nieuw
+	 * nummer niets tot hij er eerst één weghaalt; uitvinken kan altijd.
+	 *
+	 * De grens staat HIER én op de knop, en dat is met opzet: `disabled` is wat de
+	 * speler ziet, deze regel is wat het waar maakt. Een uitgeschakelde knop is
+	 * een mededeling, geen grens — hij verdwijnt bij elke andere aanroeper.
+	 *
+	 * De onthulpaden (free_answer / X-Ray / Gratis Tab) komen hier NIET langs:
+	 * die schrijven het serverantwoord in één keer weg (zie applyRevealToDraft).
+	 * Dat hoort ook niet begrensd te worden — dat ís het goede antwoord, en het
+	 * past per definitie binnen de grens.
+	 *
+	 * max <= 0 betekent "geen grens" (een tab zonder afleidbare groepsgrootte) en
+	 * laat het oude gedrag staan.
+	 */
+	function toggleFragment(tabIdx: number, slotIdx: number, fragNum: number, max: number) {
 		const frags = allDrafts[tabIdx][slotIdx].fragments ?? [];
 		if (frags.includes(fragNum)) {
 			allDrafts[tabIdx][slotIdx].fragments = frags.filter((n) => n !== fragNum);
 		} else {
+			if (max > 0 && frags.length >= max) return;
 			allDrafts[tabIdx][slotIdx].fragments = [...frags, fragNum].sort((a, b) => a - b);
 		}
 	}
@@ -2752,6 +2773,15 @@
 							-->
 							{#if field === 'grouping'}
 								{#if hasGrouping && activeTab}
+									<!--
+										De bovengrens op het aantal fragmenten: zodra er evenveel gekozen
+										zijn als één track er heeft, gaan de overige chips op slot tot er
+										één weggehaald wordt. Het getal komt van de server
+										(maxFragmentsPerSlot, afgeleid uit de clips) — hier staat geen 3.
+									-->
+									{@const maxFrags = activeTab.maxFragmentsPerSlot ?? 0}
+									{@const gekozen = allDrafts[activeTabIndex]?.[slotIdx]?.fragments ?? []}
+									{@const opDeGrens = maxFrags > 0 && gekozen.length >= maxFrags}
 									<div class="flex flex-col gap-2">
 										<!-- Dezelfde labelrij als elk ander veld: opschrift links, de
 										     X-Ray-onthulknop rechts. Grouping was hier tot nu toe van
@@ -2783,19 +2813,32 @@
 												<span>Onthuld: {revealFor('grouping', slotIdx)}</span>
 											</div>
 										{/if}
+										<!--
+											De teller maakt de grens leesbaar in plaats van alleen
+											voelbaar: zonder die regel lijkt een chip die niets doet een
+											kapotte knop.
+										-->
+										{#if maxFrags > 0}
+											<span class="text-[11px] font-semibold text-mixup-dim">
+												{gekozen.length} van {maxFrags} gekozen
+											</span>
+										{/if}
 										<div class="flex flex-wrap gap-2">
 											{#each activeTab.clips as clipItem, ci}
 												{@const fragNum = clipItem.fragmentNumber ?? ci + 1}
-												{@const selected = (
-													allDrafts[activeTabIndex]?.[slotIdx]?.fragments ?? []
-												).includes(fragNum)}
+												{@const selected = gekozen.includes(fragNum)}
+												{@const opSlot = opDeGrens && !selected}
 												<button
 													type="button"
-													onclick={() => toggleFragment(activeTabIndex, slotIdx, fragNum)}
-													class="rounded-mixup-chip px-3.5 py-2 text-sm font-bold transition-colors squircle"
+													disabled={opSlot}
+													aria-disabled={opSlot}
+													onclick={() => toggleFragment(activeTabIndex, slotIdx, fragNum, maxFrags)}
+													class="rounded-mixup-chip px-3.5 py-2 text-sm font-bold transition-colors squircle disabled:cursor-not-allowed"
 													style={selected
 														? `background: ${teamHex}; color: ${teamOn}; border: 1px solid ${teamHex}; box-shadow: 0 0 18px ${teamHex}80;`
-														: 'background: rgba(229,242,255,0.05); color: #9FB1D9; border: 1px solid rgba(229,242,255,0.16);'}
+														: opSlot
+															? 'background: rgba(229,242,255,0.02); color: #4A5578; border: 1px solid rgba(229,242,255,0.07);'
+															: 'background: rgba(229,242,255,0.05); color: #9FB1D9; border: 1px solid rgba(229,242,255,0.16);'}
 												>
 													{fragNum}
 												</button>

@@ -18,7 +18,7 @@
 //                               overal de volle treffers — moet 0 opleveren, en
 //                               wel bij ELKE waarde van maxPoints.
 
-import { scoreGrouping } from '../../src/lib/server/scoring';
+import { scoreGrouping, maxFragmentsPerSlot, type TabClipData } from '../../src/lib/server/scoring';
 
 type Check = { name: string; pass: boolean; detail: string };
 const checks: Check[] = [];
@@ -159,6 +159,80 @@ assert('één fragment per track, goed + 1 extra', scoreGrouping([5, 6], [5], MA
 		'willekeurig drietal levert gemiddeld 35 % van de punten',
 		avg > 1.7 && avg < 1.85,
 		`gemiddeld ${avg.toFixed(2)} van ${MAX} = ${Math.round((avg / MAX) * 100)} %`
+	);
+}
+
+// ─── De bovengrens op de chips ──────────────────────────────────────────────
+//
+// "Alles aanvinken levert nul op" is hierboven bewezen. Dat is de STRAF; de
+// grens hieronder zorgt dat het niet eens kan. maxFragmentsPerSlot leidt af
+// hoeveel fragmenten één track binnen een tab heeft — er staat nergens een 3.
+{
+	const clip = (nr: number, trackId: string): TabClipData => ({
+		id: `c${nr}`,
+		tabId: 't1',
+		clipId: `cl${nr}`,
+		fragmentNumber: nr,
+		sortOrder: nr,
+		trackId
+	});
+
+	// De normale setvorm: 9 clips, 3 tracks, netjes 3 per track.
+	const gelijk = [
+		clip(1, 'A'),
+		clip(4, 'A'),
+		clip(7, 'A'),
+		clip(2, 'B'),
+		clip(5, 'B'),
+		clip(8, 'B'),
+		clip(3, 'C'),
+		clip(6, 'C'),
+		clip(9, 'C')
+	];
+	assert('9 clips over 3 tracks → 3', maxFragmentsPerSlot(gelijk, ['A', 'B', 'C'], 9), 3);
+
+	// Ongelijke groepen: de GROOTSTE wint, want een grens mag geen geldig
+	// antwoord tegenhouden. Op de track met 4 moet de speler er 4 kunnen kiezen.
+	const ongelijk = [
+		clip(1, 'A'),
+		clip(2, 'A'),
+		clip(3, 'B'),
+		clip(4, 'B'),
+		clip(5, 'B'),
+		clip(6, 'C'),
+		clip(7, 'C'),
+		clip(8, 'C'),
+		clip(9, 'C')
+	];
+	assert(
+		'groepen 2/3/4 → 4, niet het gemiddelde',
+		maxFragmentsPerSlot(ongelijk, ['A', 'B', 'C'], 9),
+		4
+	);
+
+	// Geen enkele clip kent zijn track: niets af te leiden, dus een gelijke
+	// verdeling als terugval.
+	const zonderTracks = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({
+		...clip(n, 'A'),
+		trackId: undefined
+	})) as TabClipData[];
+	assert(
+		'geen trackId → clips gedeeld door tracks',
+		maxFragmentsPerSlot(zonderTracks, ['A', 'B', 'C'], 9),
+		3
+	);
+	assert('terugval rondt naar boven af', maxFragmentsPerSlot(zonderTracks, ['A', 'B'], 9), 5);
+
+	// Geen bron-tracks: geen grens. Dat is ook wat elke variant zonder grouping
+	// hier terugkrijgt.
+	assert('geen bron-tracks → geen grens', maxFragmentsPerSlot(gelijk, [], 9), 0);
+
+	// Falsificatie: zou de grens ooit 9 worden, dan is alles-aanvinken weer
+	// mogelijk en is deze hele sectie zinloos.
+	assertTrue(
+		'de grens laat alles-aanvinken niet toe',
+		maxFragmentsPerSlot(gelijk, ['A', 'B', 'C'], 9) < ALL.length,
+		`grens ${maxFragmentsPerSlot(gelijk, ['A', 'B', 'C'], 9)} < ${ALL.length} fragmenten in de tab`
 	);
 }
 

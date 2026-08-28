@@ -26,6 +26,7 @@ import {
 	DEFAULT_FIELD_MAX,
 	buildFieldResults,
 	getSourceTracksForTab,
+	maxFragmentsPerSlot,
 	type TrackData,
 	type SlotDraft,
 	type TabClipData,
@@ -269,6 +270,14 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 			sortOrder: s.sortOrder
 		}));
 
+		// De bovengrens op de fragmentchips. Afgeleid uit de clips, niet vastgezet —
+		// zie maxFragmentsPerSlot in $lib/server/scoring voor de regel en het waarom.
+		const tabMaxFragments = maxFragmentsPerSlot(
+			allTabClipDataLoad.filter((c) => c.tabId === tab.id),
+			resolvedSrcs.map((s) => s.trackId),
+			clipItems.length
+		);
+
 		// C3b fields for THIS tab, resolved with the same resolver the submit path and
 		// the priorResult rebuild use — so "which fields does this tab actually have"
 		// has exactly one definition. resolveTabFields lives in $lib/server and must
@@ -294,6 +303,7 @@ export const load: PageServerLoad = async ({ params, cookies, locals, url }) => 
 			bonusFields: [...tabBonusFields],
 			clips: clipItems,
 			sourceTracks: sourceTrackItems,
+			maxFragmentsPerSlot: tabMaxFragments,
 			// For mashup tabs the audio comes from the mashup file itself (not a clip).
 			// Fall back to first clip URL for all other variants.
 			primaryClipUrl:
